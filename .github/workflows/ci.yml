@@ -1,0 +1,40 @@
+# CI: every push/PR runs lint + both test suites + a production UI build.
+# Backend tests need no Ollama/Docker/torch — that's what the injectable
+# fakes are for, and it's why CI finishes in ~2 minutes.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install (test profile — no ML heavies)
+        run: |
+          pip install fastapi "uvicorn[standard]" sse-starlette "pydantic[email]" \
+            pydantic-settings aiosqlite httpx anyio platformdirs psutil keyring \
+            ollama python-multipart pytest pytest-asyncio ruff
+      - name: Lint
+        run: ruff check python
+      - name: Tests
+        run: cd python && python -m pytest tests/ -v
+
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:ui
+      - run: npm run build:ui

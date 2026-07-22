@@ -1,0 +1,41 @@
+{
+  "name": "arthur",
+  "productName": "Arthur",
+  "version": "0.2.0",
+  "description": "Local-first personal AI assistant. No cloud account, no subscription, your data stays on your machine.",
+  "author": "rian",
+  "license": "MIT",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && cross-env ARTHUR_DEV=1 electron .\"",
+    "build:ui": "vite build",
+    "build:backend": "cd python && pyinstaller arthur-backend.spec --noconfirm",
+    "dist": "npm run build:ui && npm run build:backend && electron-builder",
+    "test:ui": "vitest run",
+    "lint": "eslint ui electron"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.0",
+    "concurrently": "^9.0.0",
+    "cross-env": "^7.0.3",
+    "dompurify": "^3.1.0",
+    "electron": "^43.0.0",
+    "electron-builder": "^26.15.3",
+    "eslint": "^9.0.0",
+    "highlight.js": "^11.10.0",
+    "jsdom": "^25.0.0",
+    "lucide-react": "^0.453.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^9.0.1",
+    "rehype-highlight": "^7.0.0",
+    "remark-gfm": "^4.0.0",
+    "vite": "^5.4.0",
+    "vitest": "^2.1.0",
+    "wait-on": "^8.0.0",
+    "zustand": "^5.0.0"
+  }
+}

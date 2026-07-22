@@ -1,0 +1,28 @@
+# Node
+node_modules/
+dist/
+dist-electron/
+release/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+build/
+*.spec.bak
+.pytest_cache/
+.ruff_cache/
+
+# App data created during dev runs
+python/.arthur-dev-data/
+
+# Secrets — never commit. API keys live in the OS credential vault at runtime;
+# .env is only for local dev overrides.
+.env
+*.pem
+
+# OS noise
+.DS_Store
+Thumbs.db

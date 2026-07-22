@@ -1,0 +1,122 @@
+"""Composition root — every service is constructed HERE, once, and wired by
+constructor injection.
+
+WHY this instead of modules importing each other's singletons: the dependency
+graph stays visible in one file, there are no import-order surprises, and
+tests can build the same graph with fakes (see tests/conftest.py). This is
+plain dependency injection without a framework — the FastAPI-idiomatic way.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+
+from agent.loop import AgentLoop
+from agent.registry import ToolRegistry
+from byok.router import BYOKRouter
+from core.chat_service import ChatService
+from core.config import Settings
+from core.conversations import ConversationStore
+from core.db import Database
+from core.ollama_client import OllamaClient
+from core.personas import PersonaStore
+from memory.embedder import OllamaEmbedder
+from memory.service import MemoryService
+from memory.vector_store import build_vector_store
+from sandbox.runner import SandboxRunner
+from security.approvals import ApprovalBroker
+from security.audit import AuditLog
+from security.gateway import SecurityGateway
+from security.scanners import build_scanner
+from security.vault import SecretsVault
+from tools.coding import ListDirTool, ReadFileTool, RunPythonTool, WriteFileTool
+from tools.computer import ClickTool, OpenAppTool, PressKeysTool, ScreenshotTool, TypeTextTool
+from tools.email_calendar import CreateEventTool, GraphClient, ListEventsTool
+from tools.email_service import (
+    EmailListTool, EmailRouter, EmailSearchTool, EmailSendTool,
+    GraphBackend, SmtpImapBackend,
+)
+from tools.finance import StockHistoryTool, StockQuoteTool
+from tools.research import QuickSearchTool, WebResearchTool
+from voice.transcriber import Transcriber
+
+log = logging.getLogger(__name__)
+
+
+@dataclass
+class AppState:
+    settings: Settings
+    db: Database
+    llm: OllamaClient
+    vault: SecretsVault
+    audit: AuditLog
+    gateway: SecurityGateway
+    approvals: ApprovalBroker
+    sandbox: SandboxRunner
+    memory: MemoryService
+    personas: PersonaStore
+    conversations: ConversationStore
+    registry: ToolRegistry
+    agent: AgentLoop
+    chat: ChatService
+    graph: GraphClient
+    email_router: EmailRouter
+    transcriber: Transcriber
+    byok: BYOKRouter
+
+
+async def build_state(settings: Settings) -> AppState:
+    db = Database(settings.db_path)
+    await db.connect()
+
+    llm = OllamaClient(settings.ollama_host, keep_alive=settings.keep_alive)
+    vault = SecretsVault()
+    audit = AuditLog(db)
+    scanner = build_scanner(settings.scanner_backend)
+    gateway = SecurityGateway(scanner, audit, settings)
+    approvals = ApprovalBroker(timeout_s=settings.approval_timeout_s)
+    sandbox = SandboxRunner()
+
+    embedder = OllamaEmbedder(llm, settings.embed_model)
+    vstore = build_vector_store(settings.chroma_path)
+    memory = MemoryService(db, embedder, vstore)
+    restored = await memory.rebuild_index()
+    if restored:
+        log.info("restored %d memories into the vector index", restored)
+
+    personas = PersonaStore(db)
+    await personas.ensure_default()
+    conversations = ConversationStore(db)
+
+    graph = GraphClient(settings.ms_client_id, settings.data_dir)
+    # Email backend picked PER CALL: SMTP/IMAP (app password, zero cloud
+    # registration) first, MS Graph as fallback — see tools/email_service.py.
+    email_router = EmailRouter(SmtpImapBackend(db, vault), GraphBackend(graph))
+    allow_unsandboxed = bool(await db.get_setting("allow_unsandboxed_network_tools", False))
+
+    registry = ToolRegistry()
+    for tool in (
+        WebResearchTool(vault, sandbox, embedder, allow_unsandboxed=allow_unsandboxed),
+        QuickSearchTool(vault),
+        StockQuoteTool(sandbox),
+        StockHistoryTool(sandbox),
+        ReadFileTool(), ListDirTool(), WriteFileTool(), RunPythonTool(sandbox),
+        OpenAppTool(), ScreenshotTool(), ClickTool(), TypeTextTool(), PressKeysTool(),
+        EmailSendTool(email_router), EmailListTool(email_router), EmailSearchTool(email_router),
+        ListEventsTool(graph), CreateEventTool(graph),  # calendar stays Graph-only (IMAP has no calendar)
+    ):
+        registry.register(tool)
+
+    agent = AgentLoop(llm, registry, gateway, approvals,
+                      max_iterations=settings.max_agent_iterations)
+    byok = BYOKRouter(vault)
+    chat = ChatService(settings, llm, conversations, personas, memory, gateway, agent,
+                       byok_router=byok)
+
+    return AppState(
+        settings=settings, db=db, llm=llm, vault=vault, audit=audit, gateway=gateway,
+        approvals=approvals, sandbox=sandbox, memory=memory, personas=personas,
+        conversations=conversations, registry=registry, agent=agent, chat=chat,
+        graph=graph, email_router=email_router, transcriber=Transcriber(), byok=byok,
+    )

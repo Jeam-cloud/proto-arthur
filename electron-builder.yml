@@ -1,0 +1,44 @@
+# electron-builder — produces arthur-setup.exe (NSIS) with auto-update feed.
+#
+# Pipeline: vite build (dist/ui) + pyinstaller (python/dist/arthur-backend)
+# happen FIRST (`npm run dist` orders this); builder then packs the Electron
+# app and copies the frozen backend into resources/backend, where
+# electron/backend.js expects it.
+appId: dev.rian.arthur
+productName: Arthur
+copyright: Copyright © 2026 rian
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - electron/**/*
+  - dist/ui/**/*
+  - package.json
+
+extraResources:
+  - from: python/dist/arthur-backend
+    to: backend
+
+asar: true
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: build/icon.ico
+  # Code signing: REQUIRED for trustworthy auto-updates (see docs/BUILD.md).
+  # Set CSC_LINK + CSC_KEY_PASSWORD in CI, or use azure trusted signing.
+  # signingHashAlgorithms: [sha256]
+
+nsis:
+  oneClick: false                 # let users pick the install dir
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false # keep memories/chats unless the user wipes them
+  shortcutName: Arthur
+
+publish:
+  provider: github
+  owner: rian        # <- your GitHub username
+  repo: arthur

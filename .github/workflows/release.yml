@@ -1,0 +1,40 @@
+# Release: tag vX.Y.Z -> full Windows build -> GitHub Release with the
+# installer + the update manifest electron-updater consumes.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: |
+          npm ci
+          pip install -r python/requirements-dev.txt
+
+      - name: Build UI
+        run: npm run build:ui
+
+      - name: Freeze backend
+        run: cd python && pyinstaller arthur-backend.spec --noconfirm
+
+      - name: Package + publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Code signing (strongly recommended — see docs/BUILD.md):
+          # CSC_LINK: ${{ secrets.CSC_LINK }}
+          # CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: npx electron-builder --publish always

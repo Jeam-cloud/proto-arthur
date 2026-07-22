@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ARTHUR — Project Tracker</title>
+<style>
+  :root {
+    --bg: #0d0d0d; --surface: #141414; --surface2: #1a1a1a;
+    --border: #252525; --text: #e8e8e8; --dim: #555; --mid: #888;
+    --accent: #7c6af7; --accent-glow: rgba(124,106,247,0.15);
+    --green: #4ade80; --green-bg: rgba(74,222,128,0.08);
+    --yellow: #fbbf24; --red: #f87171; --orange: #fb923c;
+    --radius: 8px; --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 13px; min-height: 100vh; padding: 16px; }
+
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+  .header-left { display: flex; align-items: center; gap: 10px; }
+  .logo { width: 28px; height: 28px; background: var(--accent); border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; box-shadow: 0 0 12px var(--accent-glow); }
+  .app-name { font-size: 15px; font-weight: 700; letter-spacing: 0.05em; }
+  .app-sub { font-size: 10px; color: var(--dim); letter-spacing: 0.08em; text-transform: uppercase; }
+  .phase-pill { background: var(--surface2); border: 1px solid var(--border); border-radius: 20px; padding: 4px 12px; font-size: 11px; color: var(--mid); }
+  .phase-pill span { color: var(--accent); font-weight: 600; }
+
+  .overall-bar { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; margin-bottom: 12px; display: flex; align-items: center; gap: 12px; }
+  .bar-label { font-size: 11px; color: var(--dim); }
+  .bar-track { flex: 1; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .bar-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.4s; box-shadow: 0 0 8px var(--accent-glow); }
+  .bar-pct { font-size: 11px; color: var(--accent); font-weight: 600; }
+
+  /* Stack cards */
+  .stack-section { margin-bottom: 12px; }
+  .stack-section-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--dim); margin-bottom: 6px; }
+  .stack-legend { display: flex; gap: 14px; margin-bottom: 8px; }
+  .stack-legend-item { display: flex; align-items: center; gap: 5px; font-size: 10px; color: var(--dim); }
+  .stack-legend-dot { width: 7px; height: 7px; border-radius: 50%; }
+  .stack-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stack-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; }
+  .stack-card.new-skill  { border-color: rgba(124,106,247,0.35); }
+  .stack-card.extend     { border-color: rgba(251,191,36,0.3); }
+  .stack-card.solid      { border-color: rgba(74,222,128,0.3); }
+  .stack-card-label { font-size: 10px; font-weight: 600; margin-bottom: 7px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .stack-card.new-skill .stack-card-label { color: var(--accent); }
+  .stack-card.extend .stack-card-label    { color: var(--yellow); }
+  .stack-card.solid .stack-card-label     { color: var(--green); }
+  .stack-item { display: flex; align-items: center; gap: 7px; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--mid); }
+  .stack-item:last-child { border-bottom: none; }
+  .stack-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+  .new-skill .stack-dot  { background: var(--accent); }
+  .extend .stack-dot     { background: var(--yellow); }
+  .solid .stack-dot      { background: var(--green); }
+
+  /* Focus */
+  .focus-card { background: var(--accent-glow); border: 1px solid rgba(124,106,247,0.3); border-radius: var(--radius); padding: 10px 14px; margin-bottom: 12px; }
+  .focus-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--accent); font-weight: 600; margin-bottom: 4px; }
+  .focus-text  { font-size: 12px; color: var(--text); line-height: 1.4; }
+
+  /* Phases */
+  .phase { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 8px; overflow: hidden; transition: border-color 0.2s; }
+  .phase.active { border-color: var(--accent); }
+  .phase.done   { border-color: var(--green); }
+  .phase-header { display: flex; align-items: center; gap: 10px; padding: 10px 12px; cursor: pointer; user-select: none; }
+  .phase-header:hover { background: var(--surface2); }
+  .phase-num { width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; flex-shrink: 0; background: var(--surface2); border: 1px solid var(--border); color: var(--dim); }
+  .phase.active .phase-num { background: var(--accent-glow); border-color: var(--accent); color: var(--accent); }
+  .phase.done   .phase-num { background: var(--green-bg); border-color: var(--green); color: var(--green); }
+  .phase-info { flex: 1; min-width: 0; }
+  .phase-title    { font-size: 12px; font-weight: 600; }
+  .phase-subtitle { font-size: 10px; color: var(--dim); margin-top: 1px; }
+  .phase-meta { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .mini-track { width: 48px; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .mini-fill  { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.3s; }
+  .phase.done .mini-fill { background: var(--green); }
+  .phase-count  { font-size: 10px; color: var(--mid); }
+  .phase-toggle { font-size: 10px; color: var(--dim); }
+
+  /* Tasks */
+  .phase-tasks { padding: 0 12px 10px 44px; display: none; flex-direction: column; gap: 4px; }
+  .phase-tasks.open { display: flex; }
+  .task { display: flex; align-items: flex-start; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--border); cursor: pointer; }
+  .task:last-child { border-bottom: none; }
+  .task:hover { opacity: 0.8; }
+  .task-check { width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--border); flex-shrink: 0; margin-top: 1px; display: flex; align-items: center; justify-content: center; font-size: 9px; transition: all 0.15s; }
+  .task.done   .task-check { background: var(--green); border-color: var(--green); color: #000; }
+  .task.active .task-check { background: var(--accent-glow); border-color: var(--accent); color: var(--accent); }
+  .task-text { font-size: 12px; color: var(--mid); line-height: 1.4; flex: 1; }
+  .task.done   .task-text { color: var(--dim); text-decoration: line-through; }
+  .task.active .task-text { color: var(--text); }
+  .task-tag { font-size: 9px; padding: 2px 6px; border-radius: 10px; flex-shrink: 0; margin-top: 1px; }
+  .tag-build    { background: rgba(124,106,247,0.12); color: var(--accent); }
+  .tag-learn    { background: rgba(251,191,36,0.12);  color: var(--yellow); }
+  .tag-setup    { background: rgba(74,222,128,0.12);  color: var(--green); }
+  .tag-security { background: rgba(251,146,60,0.12);  color: var(--orange); }
+
+  .footer { margin-top: 12px; display: flex; justify-content: flex-end; gap: 8px; }
+  .btn { background: var(--surface); border: 1px solid var(--border); color: var(--mid); border-radius: 6px; padding: 5px 10px; font-size: 11px; cursor: pointer; font-family: var(--sans); }
+  .btn:hover { border-color: var(--accent); color: var(--text); }
+  .btn.danger:hover { border-color: var(--red); color: var(--red); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <div class="logo">A</div>
+    <div><div class="app-name">ARTHUR</div><div class="app-sub">Project Tracker</div></div>
+  </div>
+  <div class="phase-pill">Phase <span id="cur-phase">0</span> of 6</div>
+</div>
+
+<div class="overall-bar">
+  <div class="bar-label">Overall</div>
+  <div class="bar-track"><div class="bar-fill" id="bar" style="width:0%"></div></div>
+  <div class="bar-pct" id="pct">0%</div>
+</div>
+
+
+<!-- Architecture Diagram -->
+<div class="stack-section" style="margin-bottom:12px;">
+  <div class="stack-section-label">Data Flow — How ARTHUR Works</div>
+  <div style="background:var(--surface2); border-radius:6px; padding:16px;">
+    <svg viewBox="0 0 400 340" xmlns="http://www.w3.org/2000/svg" style="width:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+      <defs>
+        <marker id="a" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L7,3 z" fill="#555"/>
+        </marker>
+        <marker id="b" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L7,3 z" fill="#7c6af7"/>
+        </marker>
+      </defs>
+
+      <!-- YOU -->
+      <rect x="120" y="10" width="160" height="32" rx="6" fill="#1a1a1a" stroke="#7c6af7" stroke-width="1.5"/>
+      <text x="200" y="28" text-anchor="middle" fill="#e8e8e8" font-size="11" font-weight="600">You type a message</text>
+
+      <line x1="200" y1="42" x2="200" y2="62" stroke="#555" stroke-width="1.5" marker-end="url(#a)"/>
+
+      <!-- ELECTRON -->
+      <rect x="80" y="62" width="240" height="38" rx="6" fill="#141414" stroke="#7c6af7" stroke-width="1.5"/>
+      <text x="200" y="77" text-anchor="middle" fill="#7c6af7" font-size="9" font-weight="700">ELECTRON</text>
+      <text x="200" y="91" text-anchor="middle" fill="#666" font-size="9">React → Zustand → Axios → localhost:8000</text>
+
+      <line x1="200" y1="100" x2="200" y2="120" stroke="#7c6af7" stroke-width="1.5" marker-end="url(#b)"/>
+
+      <!-- FASTAPI -->
+      <rect x="40" y="120" width="320" height="80" rx="6" fill="#141414" stroke="#7c6af7" stroke-width="1.5"/>
+      <text x="60" y="136" fill="#7c6af7" font-size="9" font-weight="700">FASTAPI BACKEND</text>
+
+      <rect x="56" y="142" width="136" height="16" rx="3" fill="#1c1c1c" stroke="#fb923c" stroke-width="1"/>
+      <text x="124" y="153" text-anchor="middle" fill="#fb923c" font-size="8">LLM-Guard scans input</text>
+
+      <rect x="200" y="142" width="144" height="16" rx="3" fill="#1c1c1c" stroke="#4ade80" stroke-width="1"/>
+      <text x="272" y="153" text-anchor="middle" fill="#4ade80" font-size="8">ChromaDB + SQLite recall</text>
+
+      <rect x="56" y="162" width="136" height="16" rx="3" fill="#1c1c1c" stroke="#7c6af7" stroke-width="1"/>
+      <text x="124" y="173" text-anchor="middle" fill="#7c6af7" font-size="8">Ollama reasons → tool call?</text>
+
+      <rect x="200" y="162" width="144" height="16" rx="3" fill="#1c1c1c" stroke="#fb923c" stroke-width="1"/>
+      <text x="272" y="173" text-anchor="middle" fill="#fb923c" font-size="8">Docker runs risky tools</text>
+
+      <text x="200" y="194" text-anchor="middle" fill="#555" font-size="8">LLM-Guard scans output → stream back via SSE</text>
+
+      <!-- arrows to stores -->
+      <line x1="110" y1="200" x2="70" y2="224" stroke="#4ade80" stroke-width="1" marker-end="url(#a)"/>
+      <line x1="170" y1="200" x2="170" y2="224" stroke="#4ade80" stroke-width="1" marker-end="url(#a)"/>
+      <line x1="240" y1="200" x2="240" y2="224" stroke="#4ade80" stroke-width="1" marker-end="url(#a)"/>
+      <line x1="310" y1="200" x2="340" y2="224" stroke="#fb923c" stroke-width="1" marker-end="url(#a)"/>
+
+      <!-- LOCAL STORES -->
+      <rect x="18" y="224" width="80" height="36" rx="5" fill="#141414" stroke="#4ade80" stroke-width="1.5"/>
+      <text x="58" y="238" text-anchor="middle" fill="#4ade80" font-size="9" font-weight="600">Ollama</text>
+      <text x="58" y="251" text-anchor="middle" fill="#555" font-size="8">local model</text>
+
+      <rect x="116" y="224" width="80" height="36" rx="5" fill="#141414" stroke="#4ade80" stroke-width="1.5"/>
+      <text x="156" y="238" text-anchor="middle" fill="#4ade80" font-size="9" font-weight="600">ChromaDB</text>
+      <text x="156" y="251" text-anchor="middle" fill="#555" font-size="8">vector memory</text>
+
+      <rect x="204" y="224" width="80" height="36" rx="5" fill="#141414" stroke="#4ade80" stroke-width="1.5"/>
+      <text x="244" y="238" text-anchor="middle" fill="#4ade80" font-size="9" font-weight="600">SQLite</text>
+      <text x="244" y="251" text-anchor="middle" fill="#555" font-size="8">chat history</text>
+
+      <rect x="302" y="224" width="80" height="36" rx="5" fill="#141414" stroke="#fb923c" stroke-width="1.5"/>
+      <text x="342" y="238" text-anchor="middle" fill="#fb923c" font-size="9" font-weight="600">Docker</text>
+      <text x="342" y="251" text-anchor="middle" fill="#555" font-size="8">sandboxed tools</text>
+
+      <!-- external APIs -->
+      <rect x="80" y="278" width="240" height="30" rx="5" fill="#141414" stroke="#fbbf24" stroke-width="1" stroke-dasharray="4,3"/>
+      <text x="200" y="291" text-anchor="middle" fill="#fbbf24" font-size="8" font-weight="600">External APIs</text>
+      <text x="200" y="302" text-anchor="middle" fill="#555" font-size="8">MS Graph · Tavily · Yahoo Finance  (data only)</text>
+
+      <line x1="200" y1="260" x2="200" y2="278" stroke="#fbbf24" stroke-width="1" stroke-dasharray="3,2" marker-end="url(#a)"/>
+
+      <!-- YOU SEE RESPONSE -->
+      <rect x="120" y="318" width="160" height="16" rx="4" fill="#1a1a1a" stroke="#7c6af7" stroke-width="1"/>
+      <text x="200" y="329" text-anchor="middle" fill="#888" font-size="9">You see the response (live)</text>
+
+      <!-- SSE return arrow on left -->
+      <line x1="80" y1="326" x2="50" y2="326" stroke="#7c6af7" stroke-width="1" stroke-dasharray="3,2"/>
+      <line x1="50" y1="326" x2="50" y2="80" stroke="#7c6af7" stroke-width="1" stroke-dasharray="3,2"/>
+      <line x1="50" y1="80" x2="80" y2="80" stroke="#7c6af7" stroke-width="1" stroke-dasharray="3,2" marker-end="url(#b)"/>
+      <text x="36" y="210" fill="#7c6af7" font-size="7" transform="rotate(-90,36,210)">SSE stream back</text>
+
+    </svg>
+  </div>
+</div>
+<!-- Stack -->
+<div class="stack-section">
+  <div class="stack-section-label">Tech Stack — ARTHUR</div>
+  <div class="stack-legend">
+    <div class="stack-legend-item"><div class="stack-legend-dot" style="background:var(--accent)"></div>New to learn</div>
+    <div class="stack-legend-item"><div class="stack-legend-dot" style="background:var(--yellow)"></div>Extending existing</div>
+    <div class="stack-legend-item"><div class="stack-legend-dot" style="background:var(--green)"></div>Already know</div>
+  </div>
+  <div class="stack-grid">
+
+    <div class="stack-card new-skill">
+      <div class="stack-card-label">🤖 AI Layer</div>
+      <div class="stack-item"><div class="stack-dot"></div>Ollama</div>
+      <div class="stack-item"><div class="stack-dot"></div>Agent loop + tool calling</div>
+      <div class="stack-item"><div class="stack-dot"></div>ChromaDB</div>
+      <div class="stack-item"><div class="stack-dot"></div>nomic-embed-text</div>
+      <div class="stack-item"><div class="stack-dot"></div>RAG pipeline</div>
+      <div class="stack-item"><div class="stack-dot"></div>LLM-Guard</div>
+      <div class="stack-item"><div class="stack-dot"></div>faster-whisper</div>
+    </div>
+
+    <div class="stack-card new-skill">
+      <div class="stack-card-label">🖥️ Desktop Layer</div>
+      <div class="stack-item"><div class="stack-dot"></div>Electron</div>
+      <div class="stack-item"><div class="stack-dot"></div>Electron IPC</div>
+      <div class="stack-item"><div class="stack-dot"></div>Electron Builder</div>
+      <div class="stack-item"><div class="stack-dot"></div>PyInstaller</div>
+      <div class="stack-item"><div class="stack-dot"></div>System tray + widget</div>
+      <div class="stack-item"><div class="stack-dot"></div>Docker</div>
+      <div class="stack-item"><div class="stack-dot"></div>PyAutoGUI</div>
+    </div>
+
+    <div class="stack-card extend">
+      <div class="stack-card-label">⚡ Extending</div>
+      <div class="stack-item"><div class="stack-dot"></div>FastAPI — SSE streaming</div>
+      <div class="stack-item"><div class="stack-dot"></div>React — Zustand</div>
+      <div class="stack-item"><div class="stack-dot"></div>OAuth2 (MS Graph API)</div>
+      <div class="stack-item"><div class="stack-dot"></div>Tavily API</div>
+      <div class="stack-item"><div class="stack-dot"></div>GitHub Actions CI/CD</div>
+    </div>
+
+    <div class="stack-card solid">
+      <div class="stack-card-label">✓ Solidifying</div>
+      <div class="stack-item"><div class="stack-dot"></div>Python + FastAPI</div>
+      <div class="stack-item"><div class="stack-dot"></div>React</div>
+      <div class="stack-item"><div class="stack-dot"></div>SQLite</div>
+      <div class="stack-item"><div class="stack-dot"></div>REST API design</div>
+      <div class="stack-item"><div class="stack-dot"></div>Pydantic + Pytest</div>
+      <div class="stack-item"><div class="stack-dot"></div>Git + GitHub</div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Focus -->
+<div class="focus-card">
+  <div class="focus-label">Current Focus</div>
+  <div class="focus-text" id="focus">Click any task to mark it active</div>
+</div>
+
+<div id="phases"></div>
+
+<div class="footer">
+  <button class="btn" onclick="expandAll()">Expand all</button>
+  <button class="btn" onclick="collapseAll()">Collapse all</button>
+  <button class="btn danger" onclick="resetAll()">Reset</button>
+</div>
+
+<script>
+const PHASES = [
+  { id:0, title:"Phase 0 — Planning", sub:"Stack, tools, decisions locked", tasks:[
+    {id:"p0t1",  text:"Name the app (ARTHUR ✓)", tag:"setup"},
+    {id:"p0t2",  text:"Lock full tech stack", tag:"learn"},
+    {id:"p0t3",  text:"Lock security stack: LLM-Guard + Docker", tag:"security"},
+    {id:"p0t4",  text:"Understand containers + prompt injection", tag:"learn"},
+    {id:"p0t5",  text:"Understand ChromaDB vs SQLite — why both", tag:"learn"},
+    {id:"p0t6",  text:"Understand embeddings and RAG pipeline", tag:"learn"},
+    {id:"p0t7",  text:"Understand SSE streaming vs REST", tag:"learn"},
+    {id:"p0t8",  text:"Understand Zustand vs React Context", tag:"learn"},
+    {id:"p0t9",  text:"Install Node.js, npm, Python, Git", tag:"setup"},
+    {id:"p0t10", text:"Install Docker Desktop (requires WSL2 on Windows)", tag:"setup"},
+    {id:"p0t11", text:"Map installer flow: what bundles vs. what user installs", tag:"learn"},
+    {id:"p0t12", text:"Initialize Git repo + first commit", tag:"setup"},
+    {id:"p0t13", text:"Scaffold folder structure", tag:"build"},
+    {id:"p0t14", text:"Write README: what Arthur is, is not, privacy model", tag:"setup"},
+  ]},
+  { id:1, title:"Phase 1 — Shell", sub:"Real window, security gateway, installable .exe", tasks:[
+    {id:"p1t1",  text:"Initialize Electron project with npm", tag:"build"},
+    {id:"p1t2",  text:"Create main window with correct dimensions", tag:"build"},
+    {id:"p1t3",  text:"Build sidebar layout (nav items, no functionality)", tag:"build"},
+    {id:"p1t4",  text:"Apply dark theme — Odysseus-style", tag:"build"},
+    {id:"p1t5",  text:"Start Python FastAPI backend as subprocess on launch", tag:"build"},
+    {id:"p1t6",  text:"Electron ↔ FastAPI HTTP ping/pong working", tag:"learn"},
+    {id:"p1t7",  text:"Bundle portable Python + all libs (PyInstaller)", tag:"build"},
+    {id:"p1t8",  text:"Setup wizard: detect Ollama → install if missing", tag:"build"},
+    {id:"p1t9",  text:"Setup wizard: detect specs → recommend + pull model", tag:"build"},
+    {id:"p1t10", text:"Setup wizard: detect Docker → install if missing", tag:"build"},
+    {id:"p1t11", text:"Design single security gateway — all messages pass through", tag:"security"},
+    {id:"p1t12", text:"Install LLM-Guard, wire input + output scanners", tag:"security"},
+    {id:"p1t13", text:"Package as .exe with Electron Builder", tag:"build"},
+    {id:"p1t14", text:"Test installer on a clean machine", tag:"build"},
+  ]},
+  { id:2, title:"Phase 2 — Core Chat", sub:"The engine everything is built on", tasks:[
+    {id:"p2t1",  text:"Ollama integration in FastAPI backend", tag:"build"},
+    {id:"p2t2",  text:"Hardware spec detection → model recommendation", tag:"build"},
+    {id:"p2t3",  text:"Model selector dropdown in sidebar", tag:"build"},
+    {id:"p2t4",  text:"Chat UI: message bubbles, input bar (React)", tag:"build"},
+    {id:"p2t5",  text:"SSE streaming: tokens appear live", tag:"learn"},
+    {id:"p2t6",  text:"SQLite: conversation history persists between sessions", tag:"build"},
+    {id:"p2t7",  text:"Zustand: shared UI state across React components", tag:"learn"},
+    {id:"p2t8",  text:"New chat / conversation list in sidebar", tag:"build"},
+    {id:"p2t9",  text:"Agent loop: tool calling end-to-end (built from scratch)", tag:"learn"},
+    {id:"p2t10", text:"Install ChromaDB + nomic-embed-text via Ollama", tag:"setup"},
+    {id:"p2t11", text:"Persistent memory: embed facts → store in ChromaDB", tag:"learn"},
+    {id:"p2t12", text:"Persistent memory: retrieve relevant memories at query time", tag:"learn"},
+    {id:"p2t13", text:"Memory: auto-extract facts from conversation", tag:"build"},
+    {id:"p2t14", text:"Memory: user can view / edit / delete in Settings", tag:"build"},
+    {id:"p2t15", text:"System prompt: tone, persona, few-shot examples", tag:"build"},
+    {id:"p2t16", text:"System prompt: save/load multiple personas", tag:"build"},
+    {id:"p2t17", text:"Computer automation: open apps by name (PyAutoGUI)", tag:"build"},
+    {id:"p2t18", text:"Computer automation: screenshot so Arthur sees the screen", tag:"build"},
+    {id:"p2t19", text:"Computer automation: mouse click + keyboard type", tag:"build"},
+    {id:"p2t20", text:"Global hotkey: summon Arthur from anywhere on PC", tag:"build"},
+    {id:"p2t21", text:"Privilege separation: agent only gets tools for current task", tag:"security"},
+    {id:"p2t22", text:"Human confirmation for all irreversible actions", tag:"security"},
+  ]},
+  { id:3, title:"Phase 3 — Features", sub:"One at a time, in order", tasks:[
+    {id:"p3t1",  text:"3a. Email & Calendar — MS Graph API + OAuth2", tag:"build"},
+    {id:"p3t2",  text:"3a. Scope OAuth token: email/calendar only", tag:"security"},
+    {id:"p3t3",  text:"3b. Deep Research — Tavily API", tag:"build"},
+    {id:"p3t4",  text:"3b. Research pipeline: fetch → chunk → embed → retrieve → summarise", tag:"learn"},
+    {id:"p3t5",  text:"3b. Research container: Docker (outbound HTTP only)", tag:"security"},
+    {id:"p3t6",  text:"3b. LLM-Guard: scan fetched content before RAG", tag:"security"},
+    {id:"p3t7",  text:"3c. Finance — Yahoo Finance API + local AI analysis", tag:"build"},
+    {id:"p3t8",  text:"3c. Finance container: isolated, no cross-tool access", tag:"security"},
+    {id:"p3t9",  text:"3d. Coding assistant — syntax highlight, file read/write", tag:"build"},
+    {id:"p3t10", text:"3d. Code execution container: Docker sandbox, no network", tag:"security"},
+    {id:"p3t11", text:"3d. Scan AI-generated code before running (CodeShield)", tag:"security"},
+    {id:"p3t12", text:"3e. Design — mockup descriptions, SVG output", tag:"build"},
+    {id:"p3t13", text:"3f. Voice — install faster-whisper", tag:"setup"},
+    {id:"p3t14", text:"3f. Voice — mic → transcribe → text enters chat", tag:"build"},
+    {id:"p3t15", text:"3f. Voice — push-to-talk or wake-word mode", tag:"build"},
+    {id:"p3t16", text:"3g. Mini widget / system tray overlay mode", tag:"build"},
+  ]},
+  { id:4, title:"Phase 4 — Polish", sub:"Feels like real software", tasks:[
+    {id:"p4t1",  text:"Onboarding wizard end-to-end (Ollama → model → Docker → launch)", tag:"build"},
+    {id:"p4t2",  text:"Error handling: Ollama down, no internet, mic denied, Docker off", tag:"build"},
+    {id:"p4t3",  text:"Loading + empty states everywhere", tag:"build"},
+    {id:"p4t4",  text:"Keyboard shortcuts", tag:"build"},
+    {id:"p4t5",  text:"Settings: model, theme, memory viewer/editor", tag:"build"},
+    {id:"p4t6",  text:"Settings: system prompt editor", tag:"build"},
+    {id:"p4t7",  text:"Settings: security log", tag:"build"},
+    {id:"p4t8",  text:"Security audit: verify all container boundaries", tag:"security"},
+    {id:"p4t9",  text:"Verify LLM-Guard active on all input/output paths", tag:"security"},
+    {id:"p4t10", text:"Performance: fast startup, responsive UI", tag:"build"},
+  ]},
+  { id:5, title:"Phase 5 — Testing", sub:"Break it before users do", tasks:[
+    {id:"p5t1", text:"Test on clean Windows machine from scratch", tag:"build"},
+    {id:"p5t2", text:"Test every feature with bad/unexpected inputs", tag:"build"},
+    {id:"p5t3", text:"Test edge cases: no Ollama, no internet, no mic, Docker off", tag:"build"},
+    {id:"p5t4", text:"Security: prompt injection via research content", tag:"security"},
+    {id:"p5t5", text:"Security: path traversal on file tools", tag:"security"},
+    {id:"p5t6", text:"Security: malicious code in sandbox — verify containment", tag:"security"},
+    {id:"p5t7", text:"Security: no PII leaks in output scans", tag:"security"},
+    {id:"p5t8", text:"Fix every bug and security gap found", tag:"build"},
+  ]},
+  { id:6, title:"Phase 6 — Ship", sub:"Downloadable by anyone", tasks:[
+    {id:"p6t1", text:"Final installer: arthur-setup.exe (~150MB)", tag:"build"},
+    {id:"p6t2", text:"Verify wizard: Ollama → model (2GB) → Docker → launch", tag:"build"},
+    {id:"p6t3", text:"Clean machine test: normal + low-spec", tag:"build"},
+    {id:"p6t4", text:"Download webpage with system requirements", tag:"build"},
+    {id:"p6t5", text:"User README: what installs, privacy guarantee", tag:"build"},
+    {id:"p6t6", text:"Auto-update mechanism", tag:"build"},
+  ]},
+];
+
+const KEY = 'arthur_v9';
+let state = {}, open = new Set([0]);
+
+function load() { try { const s=JSON.parse(localStorage.getItem(KEY)||'{}'); state=s.state||{}; open=new Set(s.open||[0]); } catch(e){} }
+function save() { try { localStorage.setItem(KEY, JSON.stringify({state, open:[...open]})); } catch(e){} }
+function ts(id) { return state[id]||'todo'; }
+function cycle(id) { const c=ts(id); state[id]=c==='todo'?'active':c==='active'?'done':'todo'; save(); render(); }
+function progress(p) { const d=p.tasks.filter(t=>ts(t.id)==='done').length; return {done:d,total:p.tasks.length,pct:Math.round(d/p.tasks.length*100)}; }
+function overall() { let d=0,t=0; PHASES.forEach(p=>p.tasks.forEach(tk=>{t++;if(ts(tk.id)==='done')d++;})); return Math.round(d/t*100); }
+function getFocus() { for(const p of PHASES) for(const t of p.tasks) if(ts(t.id)==='active') return t.text; return 'Click any task to mark it active'; }
+function curPhase() { for(const p of PHASES) if(progress(p).pct<100) return p.id; return 6; }
+function tagClass(tag) { return `tag-${tag}`; }
+
+function render() {
+  const o=overall();
+  document.getElementById('bar').style.width=o+'%';
+  document.getElementById('pct').textContent=o+'%';
+  document.getElementById('focus').textContent=getFocus();
+  document.getElementById('cur-phase').textContent=curPhase();
+  const el=document.getElementById('phases');
+  el.innerHTML='';
+  PHASES.forEach(p=>{
+    const pr=progress(p), done=pr.pct===100, active=p.tasks.some(t=>ts(t.id)==='active'), isOpen=open.has(p.id);
+    const div=document.createElement('div');
+    div.className=`phase${done?' done':active?' active':''}`;
+    div.innerHTML=`
+      <div class="phase-header" onclick="toggle(${p.id})">
+        <div class="phase-num">${done?'✓':p.id}</div>
+        <div class="phase-info">
+          <div class="phase-title">${p.title}</div>
+          <div class="phase-subtitle">${p.sub}</div>
+        </div>
+        <div class="phase-meta">
+          <div class="mini-track"><div class="mini-fill" style="width:${pr.pct}%"></div></div>
+          <div class="phase-count">${pr.done}/${pr.total}</div>
+          <div class="phase-toggle">${isOpen?'▲':'▼'}</div>
+        </div>
+      </div>
+      <div class="phase-tasks${isOpen?' open':''}">
+        ${p.tasks.map(t=>{const s=ts(t.id);return`<div class="task ${s}" onclick="cycle('${t.id}')"><div class="task-check">${s==='done'?'✓':s==='active'?'→':''}</div><div class="task-text">${t.text}</div><div class="task-tag ${tagClass(t.tag)}">${t.tag}</div></div>`;}).join('')}
+      </div>`;
+    el.appendChild(div);
+  });
+}
+
+function toggle(id){ open.has(id)?open.delete(id):open.add(id); save(); render(); }
+function expandAll(){ PHASES.forEach(p=>open.add(p.id)); save(); render(); }
+function collapseAll(){ open.clear(); save(); render(); }
+function resetAll(){ if(!confirm('Reset all progress?')) return; state={}; open=new Set([0]); save(); render(); }
+load(); render();
+</script>
+</body>
+</html>

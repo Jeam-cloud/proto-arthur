@@ -1,0 +1,41 @@
+# Core API
+fastapi>=0.115
+uvicorn[standard]>=0.30
+sse-starlette>=2.1          # SSE responses with built-in client-disconnect handling + pings
+python-multipart>=0.0.9     # multipart parsing for the voice upload endpoint
+pydantic[email]>=2.7      # [email] -> email-validator, used by SendEmailTool arg validation
+pydantic-settings>=2.2
+aiosqlite>=0.20             # async SQLite — no ORM: raw SQL is fully inspectable and this app has ~7 tables
+httpx>=0.27
+platformdirs>=4.2           # correct per-OS app-data paths (%APPDATA%/Arthur on Windows)
+psutil>=5.9                 # hardware detection for model recommendations
+
+# AI layer
+ollama>=0.4                 # official client; handles NDJSON streaming + tool-call parsing
+chromadb>=0.5               # embedded vector store (telemetry disabled in code — see memory/vector_store.py)
+
+# Security
+llm-guard>=0.3.15           # prompt-injection scanner; heavy (pulls torch) — lazy-loaded, heuristic fallback exists
+numpy<2                     # torch compatibility pin (matches Phase 1 decision)
+keyring>=25                 # OS credential vault (Windows Credential Locker / macOS Keychain) for API keys
+docker>=7                   # sandbox orchestration for risky tools
+
+# Integrations
+msal>=1.28                  # Microsoft OAuth2 (auth-code + PKCE via system browser)
+msal-extensions>=1.1        # encrypted token cache (DPAPI on Windows) — tokens too big for Credential Locker
+tavily-python>=0.5
+yfinance>=0.2.40            # unofficial Yahoo API — wrapped in cache + circuit breaker, expect breakage
+
+# Voice
+faster-whisper>=1.0         # local STT; downloads model on first use (int8, CPU-friendly)
+
+# Computer control
+pyautogui>=0.9.54
+mss>=9.0                    # screenshots ~10x faster than pyautogui's
+pillow>=10                  # image resize for screenshots (imported directly in tools/computer.py)
+
+# Optional/lazy (installed but only imported on use):
+# codeshield — scan AI-generated code pre-execution. Depends on semgrep, which
+# does NOT build on Windows — so it's excluded there and run_python falls back
+# to the regex heuristics + the Docker sandbox (the actual containment layer).
+codeshield>=1.0; sys_platform != "win32"
