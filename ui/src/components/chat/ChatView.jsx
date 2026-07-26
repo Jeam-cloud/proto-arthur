@@ -70,11 +70,11 @@ export default function ChatView({ mode, setMode }) {
           )}
           {slice.error && (
             <div className="message-row assistant">
-              <div className="bubble" style={{ borderColor: "rgba(248,113,113,0.4)" }}>
-                <strong style={{ color: "var(--red)" }}>
+              <div className="bubble error">
+                <strong style={{ color: "var(--red)", fontSize: "1.05em" }}>
                   {slice.error.code === "security_blocked" ? "Blocked by the security gateway" : "Something went wrong"}
                 </strong>
-                <p style={{ marginTop: 4, color: "var(--mid)", fontSize: 12.5 }}>{slice.error.message}</p>
+                <p style={{ marginTop: 7, color: "var(--tmut)", fontSize: "0.92em", lineHeight: 1.55 }}>{slice.error.message}</p>
               </div>
             </div>
           )}

@@ -10,8 +10,21 @@ import { Check, Download, ExternalLink, Loader2 } from "lucide-react";
 import { api, apiUrl, authHeaders } from "../api/client";
 import { useBackend } from "../stores/backend";
 import { useSettings } from "../stores/settings";
+import { LogoMark } from "./ModeRail";
 
 const STEPS = ["welcome", "ollama", "model", "docker", "done"];
+
+// The mockup labels each step "Step N of 4" above the heading instead of
+// numbering the heading itself ("1 · Ollama"). Small thing, but it means the
+// heading is the same size and shape on every step, so the card doesn't
+// visually jump as you click through.
+function StepLabel({ n, note }) {
+  return (
+    <div style={{ fontSize: 11.5, color: "var(--tmut)", fontWeight: 500, marginBottom: 12 }}>
+      Step {n} of 4{note ? ` · ${note}` : ""}
+    </div>
+  );
+}
 
 export default function Onboarding() {
   const [step, setStep] = useState("welcome");
@@ -39,7 +52,10 @@ export default function Onboarding() {
 function Welcome({ onNext }) {
   return (
     <>
-      <h1><span className="logo">A</span> Welcome to Arthur</h1>
+      <h1><span className="logo"><LogoMark size={21} /></span> Welcome to Arthur</h1>
+      <div style={{ fontSize: 12.5, color: "var(--tmut)", margin: "-6px 0 18px 48px" }}>
+        Local-first · No account · No subscription
+      </div>
       <p>
         Arthur runs entirely on this computer, no account, no subscription, and nothing
         leaves your machine unless you switch on a feature that needs the internet.
@@ -64,7 +80,8 @@ function OllamaStep({ status, refresh, onNext }) {
 
   return (
     <>
-      <h1>1 · Ollama {up && <Check color="var(--green)" size={18} />}</h1>
+      <StepLabel n={1} />
+      <h1>Ollama {up && <Check color="var(--green)" size={18} />}</h1>
       <p>
         Ollama runs the AI models locally. {up
           ? "Found it, you're set."
@@ -146,7 +163,8 @@ function ModelStep({ status, refresh, onNext }) {
 
   return (
     <>
-      <h1>2 · Pick your model {chatInstalled && embedInstalled && <Check color="var(--green)" size={18} />}</h1>
+      <StepLabel n={2} />
+      <h1>Pick your model {chatInstalled && embedInstalled && <Check color="var(--green)" size={18} />}</h1>
       {hw ? (
         <p>
           This machine: {hw.ram_gb}GB RAM{hw.gpu ? `, ${hw.gpu.name} (${hw.gpu.vram_gb}GB)` : ", no NVIDIA GPU"}.
@@ -181,7 +199,8 @@ function DockerStep({ status, refresh, onNext }) {
   const up = status?.docker_up;
   return (
     <>
-      <h1>3 · Docker (optional) {up && <Check color="var(--green)" size={18} />}</h1>
+      <StepLabel n={3} note="optional" />
+      <h1>Docker {up && <Check color="var(--green)" size={18} />}</h1>
       <p>
         Docker sandboxes Arthur's risky tools (web research, code execution, finance)
         so they run isolated from your real system. {up
@@ -211,6 +230,7 @@ function Done() {
   };
   return (
     <>
+      <StepLabel n={4} />
       <h1>You're set <Check color="var(--green)" size={18} /></h1>
       <p>
         Tip: press <strong>Ctrl+Shift+A</strong> anywhere to summon the quick widget.

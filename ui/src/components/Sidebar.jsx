@@ -10,6 +10,7 @@ import {
 import { useConversations } from "../stores/conversations";
 import { useOrganize } from "../stores/organize";
 import { useBackend } from "../stores/backend";
+import { useSettings } from "../stores/settings";
 import ContextMenu from "./ContextMenu";
 
 const MIN_WIDTH = 200;
@@ -22,6 +23,7 @@ export default function Sidebar({ view, mode, setView, onOpenPalette }) {
     togglePin, addFolder, toggleFolder, renameFolder, deleteFolder, setConvFolder,
   } = useOrganize();
   const { status } = useBackend();
+  const settings = useSettings((s) => s.values);
   const [collapsed, setCollapsed] = useState(false);
   const [width, setWidth] = useState(260);
   const [menu, setMenu] = useState(null); // {type:'chat'|'folder', id, x, y}
@@ -241,12 +243,18 @@ export default function Sidebar({ view, mode, setView, onOpenPalette }) {
         )}
       </div>
 
+      {/* Footer answers two questions at a glance: is the runtime alive (dot),
+          and which model am I actually talking to (sub). The mockup shows the
+          model name rather than the Ollama version -- the version is trivia,
+          the model is the thing you change several times a day. */}
       <div className="sidebar-footer">
         <span className={`status-dot ${status?.ollama_up ? "" : "off"}`} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="sidebar-footer-name">Ollama</div>
-          <div className="sidebar-footer-sub">
-            {status?.ollama_up ? (status.ollama_version ? `v${status.ollama_version}` : "running") : "not running"}
+          <div className="sidebar-footer-sub" title={settings?.default_model || ""}>
+            {status?.ollama_up
+              ? (settings?.default_model || "no model selected")
+              : "not running"}
           </div>
         </div>
       </div>

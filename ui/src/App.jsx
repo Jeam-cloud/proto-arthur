@@ -6,8 +6,9 @@ import { initApi } from "./api/client";
 import { useBackend } from "./stores/backend";
 import { useConversations } from "./stores/conversations";
 import { useSettings } from "./stores/settings";
-import ModeRail from "./components/ModeRail";
+import ModeRail, { LogoMark } from "./components/ModeRail";
 import Sidebar from "./components/Sidebar";
+import ModelHub from "./components/ModelHub";
 import CommandPalette from "./components/CommandPalette";
 import ChatView from "./components/chat/ChatView";
 import SettingsView from "./components/settings/SettingsView";
@@ -23,6 +24,10 @@ export default function App() {
   const [mode, setMode] = useState("general"); // lifted: rail, sidebar footer, chat header and composer all read it
   const [settingsTab, setSettingsTab] = useState("general");
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // The Model hub is an overlay, not a view: it floats over whatever screen
+  // you're already on so closing it puts you back exactly where you were,
+  // scroll position and all.
+  const [hubOpen, setHubOpen] = useState(false);
   const [booted, setBooted] = useState(false);
   const [bootError, setBootError] = useState(null);
   const { phase, status, startPolling } = useBackend();
@@ -50,19 +55,24 @@ export default function App() {
       if (mod && e.key === "n") { e.preventDefault(); useConversations.getState().createNew(); setView("chat"); }
       if (mod && e.key === "k") { e.preventDefault(); setPaletteOpen((o) => !o); }
       if (mod && e.key === ",") { e.preventDefault(); setView("settings"); }
+      // Esc unwinds one layer at a time, innermost first. The hub handles its
+      // own Esc (it needs to refuse while a download is running), so it's
+      // checked here only to stop this handler from also kicking you out of
+      // Settings underneath it.
       if (e.key === "Escape") {
+        if (hubOpen) return;
         if (paletteOpen) setPaletteOpen(false);
         else setView("chat");
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [paletteOpen]);
+  }, [paletteOpen, hubOpen]);
 
   if (bootError || phase === "failed") {
     return (
       <div className="boot">
-        <div className="logo">A</div>
+        <div className="logo"><LogoMark size={26} /></div>
         <h3 style={{ color: "var(--red)" }}>Arthur couldn't start</h3>
         <p style={{ maxWidth: 420, textAlign: "center", fontSize: 13 }}>
           {bootError || "The local backend stopped responding. Try restarting the app; if it keeps happening, check the logs folder in Settings."}
@@ -81,6 +91,8 @@ export default function App() {
         setMode={setMode}
         settingsActive={view === "settings"}
         onOpenSettings={() => { setSettingsTab("general"); setView("settings"); }}
+        hubActive={hubOpen}
+        onOpenHub={() => setHubOpen(true)}
       />
       <Sidebar view={view} mode={mode} setView={setView} onOpenPalette={() => setPaletteOpen(true)} />
       <div className="main-pane">
@@ -88,9 +100,10 @@ export default function App() {
         <ErrorBoundary>
           {view === "chat"
             ? <ChatView mode={mode} setMode={setMode} />
-            : <SettingsView initialTab={settingsTab} onClose={() => setView("chat")} />}
+            : <SettingsView initialTab={settingsTab} onClose={() => setView("chat")} onOpenHub={() => setHubOpen(true)} />}
         </ErrorBoundary>
       </div>
+      {hubOpen && <ModelHub onClose={() => setHubOpen(false)} />}
       <ApprovalModal />
       <Toasts />
       {paletteOpen && (
@@ -106,6 +119,9 @@ export default function App() {
             setView("settings");
             setPaletteOpen(false);
           }}
+          onOpenHub={() => { setHubOpen(true); setPaletteOpen(false); }}
+          onSetMode={(m) => { setMode(m); setView("chat"); setPaletteOpen(false); }}
+          onNewChat={() => { useConversations.getState().createNew(); setView("chat"); setPaletteOpen(false); }}
         />
       )}
     </div>

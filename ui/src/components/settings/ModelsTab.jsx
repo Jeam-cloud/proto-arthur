@@ -1,232 +1,199 @@
-// Cookbook: search any model in Arthur's catalog and see a live fit score
-// against THIS machine, sortable, with one-click install.
+// Settings > Models: manage what's ALREADY installed. Finding and downloading
+// new models moved to the top-level Model hub page (components/ModelHub.jsx)
+// in the July 2026 mockup update -- this tab is deliberately the boring half:
+// which model is the default, which model each mode uses, and how much disk
+// they're eating.
 //
-// WHY this exists (July 2026, rian's request): Odysseus (AGPL,
-// github.com/odysseus-dev/odysseus) has a "Cookbook" feature -- hardware-aware
-// model recommendations, downloads, and serving, with a search-and-score
-// table. Only the CONCEPT is borrowed here, no code: Odysseus also manages
-// remote SSH servers, vLLM/SGLang serve engines, and raw HuggingFace/GGUF
-// downloads with live benchmarked speed numbers, none of which apply to
-// Arthur (single machine, Ollama-only, no serving step, no benchmark runner).
-// "Score" here is honestly a fit calculation (core/model_recs.catalog_search),
-// not a measured benchmark -- Arthur never runs a model just to time it.
-//
-// WHY search hits a curated catalog instead of live-scraping ollama.com:
-// Ollama has no official search API, and a previous session already learned
-// the hard way that a wrong model tag breaks onboarding (see model_recs.py's
-// module docstring). A small hand-verified catalog beats an "any model"
-// search that quietly returns a tag that doesn't actually exist.
+// The fit dot on each card answers "will this one actually run well here?"
+// using the same budget math as the hub's score and the composer's model menu
+// (core/hardware.py's budget, core/model_recs.py's 1.15x headroom rule), so a
+// model can't read as comfortable in one place and tight in another.
 import React, { useEffect, useState } from "react";
-import { Check, Download, Loader2, RefreshCw, Search, ChevronUp, ChevronDown } from "lucide-react";
+import { CircleCheck, CircleAlert, CircleX, Loader2, RefreshCw, Trash2, Library } from "lucide-react";
 import { api } from "../../api/client";
-import { pullModel } from "../../api/models";
+import { deleteModel } from "../../api/models";
 import { useBackend } from "../../stores/backend";
 import { useSettings } from "../../stores/settings";
 import { useToasts } from "../../stores/toasts";
+import { MODES } from "../ModeRail";
 
-const MODE_LIST = [
-  { id: "general", label: "General" },
-  { id: "research", label: "Research" },
-  { id: "code", label: "Code" },
-  { id: "email", label: "Email" },
-  { id: "finance", label: "Finance" },
-  { id: "computer", label: "Computer" },
-  { id: "design", label: "Design" },
-];
+// Three buckets, matching the mockup's fitOf(): comfortable below ~62% of
+// budget, tight up to 100%, over budget past that. The 62% figure leaves room
+// for the KV-cache and context window, which grow with conversation length.
+//
+// Wording is the coarse three-band version of the hub's four OPTIMAL /
+// SUITABLE / MARGINAL / UNSUITABLE labels. Both describe the hardware
+// relationship rather than grading the model.
+function fitOf(gb, budget) {
+  if (!gb || gb <= budget * 0.62) {
+    return { icon: CircleCheck, color: "var(--green)", bg: "rgba(110,231,183,.12)", label: "Operates within budget" };
+  }
+  if (gb <= budget) {
+    return { icon: CircleAlert, color: "var(--yellow)", bg: "rgba(252,211,77,.12)", label: "Within budget, limited headroom" };
+  }
+  return { icon: CircleX, color: "var(--red)", bg: "rgba(252,165,165,.12)", label: "Exceeds budget, will use system RAM" };
+}
 
-const SORTERS = {
-  model: (r) => r.model,
-  params_b: (r) => r.params_b,
-  size_gb: (r) => r.size_gb,
-  score: (r) => r.score,
-};
+function FitDot({ fit, size = 14 }) {
+  const Icon = fit.icon;
+  return (
+    <span
+      title={fit.label}
+      style={{
+        width: 24, height: 24, borderRadius: 8, flexShrink: 0, display: "inline-flex",
+        alignItems: "center", justifyContent: "center", color: fit.color, background: fit.bg,
+      }}
+    >
+      <Icon size={size} strokeWidth={2.1} />
+    </span>
+  );
+}
 
-export default function ModelsTab() {
+export default function ModelsTab({ onOpenHub }) {
   const { status, refreshStatus } = useBackend();
   const { values, update } = useSettings();
   const pushToast = useToasts((s) => s.push);
 
-  const [catalog, setCatalog] = useState(null); // {budget_gb, ollama_up, results}
-  const [query, setQuery] = useState("");
-  const [sortKey, setSortKey] = useState("score");
-  const [sortDir, setSortDir] = useState("desc");
-  const [pulling, setPulling] = useState(null); // {model, pct}
+  const [budget, setBudget] = useState(null);
+  const [deleting, setDeleting] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const loadCatalog = (q = query) => {
-    api.get(`/models/catalog?q=${encodeURIComponent(q)}`).then(setCatalog).catch(() => {});
-  };
-  useEffect(() => { loadCatalog(""); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Debounced search: re-query the backend (score is computed server-side,
-  // against your real budget) 250ms after typing stops.
+  // Budget comes from the same /models/catalog endpoint the hub uses, rather
+  // than a second hardware call, so both screens always agree on the number.
   useEffect(() => {
-    const t = setTimeout(() => loadCatalog(query), 250);
-    return () => clearTimeout(t);
-  }, [query]); // eslint-disable-line react-hooks/exhaustive-deps
+    api.get("/models/catalog?q=__none__").then((d) => setBudget(d.budget_gb)).catch(() => {});
+  }, []);
 
   const models = status?.models || [];
-  const results = [...(catalog?.results || [])].sort((a, b) => {
-    const dir = sortDir === "asc" ? 1 : -1;
-    const av = SORTERS[sortKey](a), bv = SORTERS[sortKey](b);
-    return av < bv ? -dir : av > bv ? dir : 0;
-  });
+  const totalGb = models.reduce((sum, m) => sum + (m.size_bytes || 0), 0) / 1e9;
 
-  const toggleSort = (key) => {
-    if (sortKey === key) setSortDir((d) => (d === "desc" ? "asc" : "desc"));
-    else { setSortKey(key); setSortDir("desc"); }
+  const refresh = async () => {
+    setRefreshing(true);
+    await refreshStatus();
+    setRefreshing(false);
+    pushToast("Model list refreshed.", "info");
   };
 
-  const install = async (model) => {
-    setPulling({ model, pct: 0 });
+  // Deletion is irreversible, so we warn extra hard when the model is in
+  // active use, and reload settings afterward: the backend clears
+  // default_model / a mode's assignment itself when you delete the model
+  // they point at, and pushing our stale local copy back would undo that.
+  const doDelete = async (name) => {
+    const usedAsDefault = values?.default_model === name;
+    const usedByModes = MODES.filter((m) => (values?.mode_models || {})[m.id] === name).map((m) => m.label);
+    let warning = `Uninstall ${name}. Its disk space will be released and the action cannot be reversed.`;
+    if (usedAsDefault) warning += "\n\nThis model is currently set as the default.";
+    if (usedByModes.length) warning += `\n\nIt is also assigned to the following modes: ${usedByModes.join(", ")}.`;
+    warning += "\n\nProceed.";
+    if (!window.confirm(warning)) return;
+
+    setDeleting(name);
     try {
-      await pullModel(model, (pct) => setPulling({ model, pct }));
-      await refreshStatus();
-      loadCatalog();
-      update({ default_model: model });
-      pushToast(`${model} installed and set as default.`, "success");
+      await deleteModel(name);
+      await Promise.all([refreshStatus(), useSettings.getState().load()]);
+      pushToast(`${name} uninstalled.`, "success");
     } catch (e) {
       pushToast(e.message, "error");
     } finally {
-      setPulling(null);
+      setDeleting(null);
     }
   };
 
-  const SortHead = ({ children, sortKeyName, style }) => (
-    <th style={style}>
-      <button className="data-table-sort" onClick={() => toggleSort(sortKeyName)}>
-        {children}
-        {sortKey === sortKeyName && (sortDir === "desc" ? <ChevronDown size={11} /> : <ChevronUp size={11} />)}
-      </button>
-    </th>
-  );
+  const b = budget || 8;
+  const legend = [
+    { gb: b * 0.3, text: "Within budget" },
+    { gb: b * 0.9, text: "Limited headroom" },
+    { gb: b * 3, text: "Exceeds budget" },
+  ];
 
   return (
     <>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-        <h2 style={{ marginBottom: 0 }}>Cookbook</h2>
-        <button className="btn" style={{ marginLeft: "auto", padding: "6px 12px", fontSize: 12 }} onClick={() => { refreshStatus(); loadCatalog(); }}>
-          <RefreshCw size={12} /> Refresh
+        <h2 style={{ marginBottom: 0 }}>Models</h2>
+        <button
+          className="btn" style={{ marginLeft: "auto", padding: "6px 12px", fontSize: 12, height: 32 }}
+          onClick={refresh} disabled={refreshing}
+        >
+          <RefreshCw size={12} className={refreshing ? "spin" : ""} /> Refresh
         </button>
       </div>
       <div className="section-sub">
-        Search any model in Arthur's catalog. Score is how comfortably it fits THIS
-        machine, not a speed benchmark, higher means faster and more headroom to spare.
+        All models run locally through Ollama. The indicator on each entry reflects its fit
+        against this machine's memory budget. Additional models are available in the Model hub.
       </div>
 
       {!status?.ollama_up && (
         <div className="card" style={{ borderColor: "rgba(252,165,165,0.4)" }}>
           <div className="card-title" style={{ color: "var(--red)" }}>Ollama is not running</div>
-          <div className="card-sub">Start Ollama to install or use models.</div>
+          <div className="card-sub">Ollama must be running before models can be used or managed.</div>
         </div>
       )}
 
-      <div className="cookbook-search">
-        <Search size={15} strokeWidth={1.8} color="var(--tmut)" />
-        <input
-          type="text" placeholder="Search by name, family, or purpose (e.g. code, reasoning, small)…"
-          value={query} onChange={(e) => setQuery(e.target.value)}
-        />
-        {catalog && <span className="cookbook-budget">{catalog.budget_gb}GB budget</span>}
+      <div
+        className="card card-row"
+        style={{ gap: 16, flexWrap: "wrap", fontSize: 11.5, color: "var(--tmut)", padding: "11px 15px" }}
+      >
+        {legend.map((l) => {
+          const fit = fitOf(l.gb, b);
+          return (
+            <span key={l.text} style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
+              <FitDot fit={fit} size={12} /> {l.text}
+            </span>
+          );
+        })}
       </div>
 
-      <table className="data-table">
-        <thead>
-          <tr>
-            <th style={{ width: 20 }}></th>
-            <SortHead sortKeyName="model">Model</SortHead>
-            <SortHead sortKeyName="params_b" style={{ width: 80 }}>Params</SortHead>
-            <SortHead sortKeyName="size_gb" style={{ width: 80 }}>Size</SortHead>
-            <th style={{ width: 90 }}>Fit</th>
-            <SortHead sortKeyName="score" style={{ width: 70 }}>Score</SortHead>
-            <th style={{ width: 120 }}></th>
-          </tr>
-        </thead>
-        <tbody>
-          {results.map((r) => {
-            const isPulling = pulling && pulling.model === r.model;
-            const isDefault = values?.default_model === r.model;
-            return (
-              <tr key={r.model}>
-                <td>
-                  <span
-                    title={r.installed ? "Installed" : r.fits ? "Fits this machine" : "Over budget, will be slow"}
-                    className={`pill ${r.installed ? "ok" : r.fits ? "warn" : "off"}`}
-                    style={{ width: 8, height: 8, borderRadius: "50%", padding: 0, display: "inline-block" }}
-                  />
-                </td>
-                <td>
-                  <div style={{ fontFamily: "var(--mono)", fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
-                    {r.model}{isDefault && <Check size={13} color="var(--green)" />}
-                  </div>
-                  <div style={{ fontSize: 11.5, color: "var(--tmut)", marginTop: 2 }}>{r.desc}</div>
-                </td>
-                <td style={{ fontFamily: "var(--mono)", fontSize: 12.5, color: "var(--tmut)" }}>{r.params_b}B</td>
-                <td style={{ fontFamily: "var(--mono)", fontSize: 12.5, color: "var(--tmut)" }}>{r.size_gb}GB</td>
-                <td>
-                  <span className={`pill ${r.installed ? "ok" : r.fits ? "warn" : "off"}`}>
-                    {r.installed ? "installed" : r.fits ? "fits" : "over budget"}
-                  </span>
-                </td>
-                <td style={{ fontFamily: "var(--mono)", fontWeight: 600, fontSize: 13 }}>{r.score}</td>
-                <td>
-                  {isDefault ? (
-                    <span className="pill ok">default</span>
-                  ) : r.installed ? (
-                    <button className="btn" style={{ padding: "5px 11px", fontSize: 12 }} onClick={() => update({ default_model: r.model })}>Use</button>
-                  ) : isPulling ? (
-                    <span style={{ fontSize: 11.5, color: "var(--tmut)", fontFamily: "var(--mono)", display: "flex", alignItems: "center", gap: 5 }}>
-                      <Loader2 size={12} className="spin" /> {pulling.pct}%
-                    </span>
-                  ) : (
-                    <button
-                      className="btn" style={{ padding: "5px 11px", fontSize: 12 }}
-                      disabled={!!pulling || !status?.ollama_up}
-                      title={r.fits ? "" : "This will run, but slowly, more than your budget"}
-                      onClick={() => install(r.model)}
-                    >
-                      <Download size={11} /> Get
-                    </button>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-          {catalog && results.length === 0 && (
-            <tr><td colSpan={7} style={{ color: "var(--tmut)", padding: "16px 8px" }}>No matches for "{query}".</td></tr>
-          )}
-          {!catalog && (
-            <tr><td colSpan={7} style={{ color: "var(--tmut)", padding: "16px 8px" }}>Loading…</td></tr>
-          )}
-        </tbody>
-      </table>
-
-      <h2 style={{ fontSize: 15, margin: "26px 0 4px" }}>Installed on this machine</h2>
-      <div className="section-sub" style={{ marginBottom: 10 }}>
-        The global default, used by any mode without its own pick below.
-      </div>
-      {models.map((m) => (
-        <div key={m.name} className="card card-row">
-          <div className="grow">
-            <div className="card-title" style={{ fontFamily: "var(--mono)" }}>{m.name}</div>
-            <div className="card-sub">
-              {m.parameter_size || "?"} · {(m.size_bytes / 1e9).toFixed(1)}GB on disk
+      {models.map((m) => {
+        const gb = (m.size_bytes || 0) / 1e9;
+        const fit = fitOf(gb, b);
+        const isDefault = values?.default_model === m.name;
+        return (
+          <div key={m.name} className="card card-row">
+            <FitDot fit={fit} />
+            <div className="grow">
+              <div style={{ fontFamily: "var(--mono)", fontSize: 13.5 }}>{m.name}</div>
+              <div className="card-sub">{m.parameter_size || "?"} · {gb.toFixed(1)}GB on disk</div>
             </div>
+            {isDefault
+              ? <span className="pill ok">default</span>
+              : <button className="btn" style={{ height: 34, padding: "0 15px", fontSize: 12.5 }} onClick={() => update({ default_model: m.name })}>Set as default</button>}
+            <button
+              className="btn danger" style={{ height: 34, padding: "0 10px" }}
+              disabled={deleting === m.name} title={`Uninstall ${m.name}`}
+              onClick={() => doDelete(m.name)}
+            >
+              {deleting === m.name ? <Loader2 size={13} className="spin" /> : <Trash2 size={13} />}
+            </button>
           </div>
-          {values?.default_model === m.name
-            ? <span className="pill ok">default</span>
-            : <button className="btn" onClick={() => update({ default_model: m.name })}>Use</button>}
-        </div>
-      ))}
-      {models.length === 0 && <div className="hint">No models installed yet, install one from the table above.</div>}
+        );
+      })}
 
-      <h2 style={{ fontSize: 15, margin: "26px 0 4px" }}>Model per mode</h2>
-      <div className="section-sub" style={{ marginBottom: 10 }}>
-        Use a stronger model where it matters. "Default" uses the global default above.
-        The picker in the chat header overrides both for a single conversation.
+      {models.length === 0 && (
+        <div className="hint">No models are currently installed. The Model hub lists options compatible with this machine.</div>
+      )}
+
+      <div className="hint" style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        {models.length > 0 && (
+          <span>
+            <strong>{totalGb.toFixed(1)}GB</strong> of disk in use across {models.length} model{models.length === 1 ? "" : "s"}
+            {budget ? ` · ${budget}GB budget per model` : ""}
+          </span>
+        )}
+        {onOpenHub && (
+          <button className="btn" style={{ height: 30, padding: "0 12px", fontSize: 12 }} onClick={onOpenHub}>
+            <Library size={12} /> Open Model hub
+          </button>
+        )}
       </div>
-      {MODE_LIST.map((m) => (
-        <div key={m.id} className="card card-row" style={{ padding: "10px 14px" }}>
-          <span className="grow" style={{ fontSize: 13 }}>{m.label}</span>
+
+      <h2 style={{ fontSize: 15, margin: "28px 0 6px" }}>Model per mode</h2>
+      <div className="section-sub" style={{ marginBottom: 15 }}>
+        Assign a more capable model to the modes that require one. "Default" applies the global
+        default selected above. The picker in the composer overrides both for a single conversation.
+      </div>
+      {MODES.map((m) => (
+        <div key={m.id} className="card card-row" style={{ padding: "11px 16px", marginBottom: 9 }}>
+          <span className="grow" style={{ fontSize: 13.5 }}>{m.label}</span>
           <select
             className="model-picker"
             value={(values?.mode_models || {})[m.id] || ""}
@@ -235,16 +202,10 @@ export default function ModelsTab() {
             })}
           >
             <option value="">Default</option>
-            {models.map((mod) => (
-              <option key={mod.name} value={mod.name}>{mod.name}</option>
-            ))}
+            {models.map((mod) => <option key={mod.name} value={mod.name}>{mod.name}</option>)}
           </select>
         </div>
       ))}
-
-      <div className="hint" style={{ marginTop: 10 }}>
-        Install anything else with <code>ollama pull &lt;name&gt;</code>, then hit refresh.
-      </div>
     </>
   );
 }

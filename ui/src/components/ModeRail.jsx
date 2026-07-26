@@ -10,9 +10,25 @@
 // state to their shared parent is simpler than adding a store for one value.
 import React from "react";
 import {
-  MessageSquare, Search, Code2, Mail, LineChart, Monitor, PenTool, Settings,
+  MessageSquare, Search, Code2, Mail, LineChart, Monitor, PenTool, Settings, Box,
 } from "lucide-react";
 import { useBackend } from "../stores/backend";
+
+// Arthur's mark: a peak with a crossbar, drawn inline rather than imported so
+// the rail badge, the boot screen and the onboarding card all render the exact
+// same path at whatever size they need. It's also what build/icon.png and
+// build/tray.png are generated from, so those stay visually identical.
+export function LogoMark({ size = 18 }) {
+  return (
+    <svg
+      viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor"
+      strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"
+    >
+      <path d="M5 20 12 5l7 15" />
+      <path d="M8.6 14.6h6.8" />
+    </svg>
+  );
+}
 
 export const MODES = [
   { id: "general", label: "General", icon: MessageSquare },
@@ -24,7 +40,7 @@ export const MODES = [
   { id: "design", label: "Design", icon: PenTool },
 ];
 
-export default function ModeRail({ mode, setMode, onOpenSettings, settingsActive }) {
+export default function ModeRail({ mode, setMode, onOpenSettings, settingsActive, onOpenHub, hubActive }) {
   const { status } = useBackend();
   const dockerOff = status && !status.docker_up;
   const emailOff = status && !status.email_configured;
@@ -52,7 +68,7 @@ export default function ModeRail({ mode, setMode, onOpenSettings, settingsActive
 
   return (
     <div className="mode-rail">
-      <div className="logo">A</div>
+      <div className="logo"><LogoMark size={18} /></div>
       <div className="rail-sep" />
       {primary.map(renderMode)}
       <div style={{ height: 46, flexShrink: 0 }} />
@@ -60,6 +76,13 @@ export default function ModeRail({ mode, setMode, onOpenSettings, settingsActive
         {rest.map(renderMode)}
       </div>
       <div className="rail-spacer" />
+      <button
+        className={`rail-btn ${hubActive ? "active" : ""}`}
+        title="Model hub"
+        onClick={onOpenHub}
+      >
+        <Box size={20} strokeWidth={1.8} />
+      </button>
       <button
         className={`rail-btn ${settingsActive ? "active" : ""}`}
         title="Settings"

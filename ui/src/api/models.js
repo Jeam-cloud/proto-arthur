@@ -32,3 +32,22 @@ export async function pullModel(model, onProgress) {
   }
   if (error) throw new Error(error);
 }
+
+// Uninstalls a model and frees its disk space. Returns { cleared: [...] }
+// telling the caller if this was the default model or a mode's model, since
+// the backend already unset those (avoids Arthur pointing at a dead model).
+export async function deleteModel(model) {
+  const res = await fetch(apiUrl(`/models/${encodeURIComponent(model)}`), {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    let message = `Delete failed (${res.status})`;
+    try {
+      const d = await res.json();
+      message = d.message || d.detail || message;
+    } catch { /* no JSON body */ }
+    throw new Error(message);
+  }
+  return res.json();
+}

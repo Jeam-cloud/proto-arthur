@@ -10,23 +10,35 @@
 @import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap');
 
 :root {
-  --bg: #0b0d12;       /* app background */
-  --bg2: #14171d;      /* sidebar, cards, modals -- one step up from bg */
-  --muted: #1a1e26;    /* inputs, pills, hover-free surfaces */
-  --emph: #232833;     /* hovered rows, track backgrounds, code chrome */
-  --border: #262b35;
-  --text: #e9eaee;
-  --tmut: #8b93a3;     /* secondary/muted text */
-  --inv: #10131a;      /* text/icon on top of --accent */
+  /* Tokens copied verbatim from the mockup's dark theme object (Arthur.dc.html
+     renderVals()). Two things here are deliberately counter-intuitive and were
+     wrong in the first pass, so don't "fix" them:
+
+     1. --bg is LIGHTER than --bg2. The main chat pane is the lit surface and
+        the rail/sidebar/cards recede into a darker frame around it. Most dark
+        UIs do the opposite; this one doesn't.
+     2. --muted / --emph / --border are translucent white, not solid hexes.
+        That's what makes a card sitting on --bg2 read differently from the
+        same card on --bg without needing two sets of surface tokens. */
+  --bg: #1a1c21;       /* main pane -- the lit surface */
+  --bg2: #121418;      /* rail, sidebar, cards, modals -- the darker frame */
+  --muted: rgba(244, 246, 250, 0.05);  /* inputs, pills, hover-free surfaces */
+  --emph: rgba(244, 246, 250, 0.09);   /* hovered rows, tracks, code chrome */
+  --border: rgba(244, 246, 250, 0.08);
+  --text: #f4f6fa;
+  --tmut: #9aa3b2;     /* secondary/muted text */
+  --inv: #0b0d12;      /* text/icon on top of --accent */
   /* Neutral accent (July 2026): rian asked to drop the purple in favor of the
      monochrome look from his reference screenshots. --accent now drives every
      "this is the active/primary thing" fill (send button, active rail icon,
      progress bars, toggle-on) as an off-white, with --inv (near-black) as the
      text/icon that sits on top of it -- same roles the purple filled before,
      just a different hue. */
-  --accent: #d9dbe1;
+  --accent: #f4f6fa;
   --accent-soft: rgba(255, 255, 255, 0.07);
-  --sel: rgba(255, 255, 255, 0.18);
+  /* Yellow text selection is the one spot of colour in the whole palette --
+     it's from the mockup, not an oversight. */
+  --sel: rgba(253, 224, 71, 0.35);
   --green: #6ee7b7;
   --yellow: #fcd34d;
   --red: #fca5a5;
@@ -64,7 +76,7 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
 ::selection { background: var(--sel); }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: var(--emph); border-radius: 5px; }
-::-webkit-scrollbar-thumb:hover { background: #2c3341; }
+::-webkit-scrollbar-thumb:hover { background: rgba(244, 246, 250, 0.14); }
 ::-webkit-scrollbar-track { background: transparent; }
 
 @keyframes blink { 50% { opacity: 0; } }
@@ -86,18 +98,20 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
 .mode-rail .logo { width: 32px; height: 32px; border-radius: 10px; margin-bottom: 0; }
 .rail-sep { width: 24px; height: 1px; background: var(--border); margin: 14px 0 12px; flex-shrink: 0; }
 .rail-btn {
-  width: 38px; height: 38px; border-radius: 10px; border: none; background: none;
+  width: 42px; height: 42px; border-radius: 12px; border: none; background: none;
   color: var(--tmut); display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0; margin-bottom: 5px;
+  flex-shrink: 0; margin-bottom: 5px; transition: background 0.13s, color 0.13s;
 }
 .rail-btn:hover { background: var(--muted); color: var(--text); }
-/* Active mode = a bright solid fill (same treatment as a primary button),
-   not a tinted color -- matches the "current thing is the one that's lit up"
-   look in the reference screenshots, and reads clearly at 20px icon size
-   where a subtle color tint would not. */
-.rail-btn.active { background: var(--accent); color: var(--inv); }
+/* Active rail item = a raised surface (--emph) with full-strength text, NOT a
+   solid accent fill. An earlier pass used the accent here; the updated mockup
+   walks that back, and it's the right call -- the rail can have two things lit
+   at once (a mode AND the hub/settings page you're on), and two solid white
+   blocks in one 62px column fights for attention. */
+.rail-btn.active { background: var(--emph); color: var(--text); }
 .rail-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 .rail-spacer { flex: 1; }
+.logo-mark { color: var(--inv); display: flex; }
 
 /* ---------- sidebar (conversations) ---------- */
 .sidebar {
@@ -109,6 +123,10 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
   width: 46px; flex-shrink: 0; background: var(--bg2); border-right: 1px solid var(--border);
   display: flex; flex-direction: column; align-items: center; padding: 15px 0; gap: 6px;
 }
+/* The collapsed strip is 46px wide, so the rail's 42px buttons would fill it
+   edge to edge. Scale them down here rather than adding inline styles at every
+   call site. */
+.sidebar-collapsed .rail-btn { width: 30px; height: 30px; border-radius: 8px; margin-bottom: 0; }
 .sidebar-resize-handle {
   position: absolute; top: 0; right: -3px; width: 6px; height: 100%; cursor: col-resize; z-index: 6;
 }
@@ -254,11 +272,23 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
 .model-pull { font-size: 11px; color: var(--tmut); display: flex; align-items: center; gap: 4px; flex-shrink: 0; font-family: var(--mono); }
 
 .message-list { flex: 1; overflow-y: auto; padding: 14px 0 22px; }
-.message-row { display: flex; padding: 4px 24px; }
+.message-row { display: flex; padding: 8px 26px; }
 .message-row.user { justify-content: flex-end; }
-.bubble { max-width: 72%; padding: 10px 14px; border-radius: 15px; line-height: 1.6; font-size: 14px; overflow-wrap: break-word; }
-.message-row.user .bubble { background: var(--muted); border: 1px solid var(--border); border-bottom-right-radius: 4px; }
-.message-row.assistant .bubble { background: var(--bg2); border: 1px solid var(--border); border-bottom-left-radius: 4px; max-width: 85%; }
+.bubble { line-height: 1.65; font-size: 14px; overflow-wrap: break-word; }
+/* Only the USER gets a bubble. The assistant's reply is bare text on the page
+   background -- the mockup does this on purpose and it's worth keeping: replies
+   here are long and often contain code blocks and activity cards, and wrapping
+   all of that in a second bordered box makes the page read as nested frames.
+   The right-alignment and the surface on the user side are enough to tell the
+   two speakers apart. */
+.message-row.user .bubble {
+  max-width: 64%; padding: 11px 15px; background: var(--emph);
+  border-radius: 15px 15px 5px 15px;
+}
+.message-row.assistant .bubble { max-width: 86%; padding: 2px 0; }
+/* Errors are the exception: a red left rule marks them without reintroducing
+   a full box. */
+.message-row.assistant .bubble.error { border-left: 2px solid rgba(252, 165, 165, 0.5); padding-left: 15px; }
 .bubble p + p { margin-top: 8px; }
 .bubble ul, .bubble ol { margin: 6px 0 6px 20px; }
 .bubble a { color: var(--text); text-underline-offset: 3px; }
@@ -292,7 +322,7 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
 
 /* ---------- code blocks ---------- */
 .codeblock { position: relative; margin: 8px 0; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); }
-.codeblock pre { background: #0d0f14 !important; padding: 12px; overflow-x: auto; font-family: var(--mono); font-size: 12.5px; line-height: 1.5; }
+.codeblock pre { background: var(--bg2) !important; padding: 12px; overflow-x: auto; font-family: var(--mono); font-size: 12.5px; line-height: 1.5; }
 .codeblock code { font-family: var(--mono); background: none; }
 .bubble :not(pre) > code { background: var(--emph); border-radius: 5px; padding: 1px 5px; font-family: var(--mono); font-size: 12px; }
 .codeblock-bar {
@@ -372,7 +402,7 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
   word-break: break-word; color: var(--text);
 }
 .approval-code {
-  margin: 6px 10px 8px; padding: 10px 12px; background: #0d0f14; border-radius: 10px;
+  margin: 6px 10px 8px; padding: 10px 12px; background: var(--bg2); border-radius: 10px;
   font-family: var(--mono); font-size: 12px; line-height: 1.5; overflow-x: auto;
   white-space: pre; color: var(--tmut); max-height: 180px; overflow-y: auto;
 }
@@ -389,6 +419,119 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .countdown { font-size: 12px; color: var(--tmut); margin-right: auto; align-self: center; font-family: var(--mono); }
 
+/* ---------- model hub (centered popup, opened from the rail) ----------
+   WHY a modal and not a page: you visit the hub to answer one question ("what
+   should I install?"), then go straight back to what you were doing. A page
+   navigation throws away your chat scroll position to do that; a popup floats
+   over it and Esc puts you back exactly where you were. It's also why the hub
+   is NOT part of App's `view` state -- it's an overlay flag, so it can open on
+   top of chat or settings without either of them unmounting. */
+.hub-backdrop {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); z-index: 65;
+  display: flex; align-items: center; justify-content: center; padding: 40px 20px;
+  animation: fade-in 0.14s ease;
+}
+.hub-modal {
+  width: 900px; max-width: 100%; height: 100%; max-height: 760px;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 16px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6); display: flex; flex-direction: column;
+  overflow: hidden; animation: scale-in 0.18s cubic-bezier(.16,1,.3,1);
+}
+.hub-header {
+  display: flex; align-items: center; gap: 11px; padding: 16px 20px 0; flex-shrink: 0;
+}
+.hub-header h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.015em; flex: 1; }
+.hub-header-icon {
+  width: 28px; height: 28px; border-radius: 9px; background: var(--emph); color: var(--text);
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.hub-close {
+  width: 28px; height: 28px; border-radius: 8px; border: none; background: none; color: var(--tmut);
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.hub-close:hover { background: var(--muted); color: var(--text); }
+
+/* Underline tabs rather than pills: they sit flush on the header's bottom rule,
+   so the tab row and the panel edge are one line instead of two stacked ones. */
+.hub-tabs {
+  display: flex; gap: 4px; padding: 0 20px; margin-top: 12px;
+  border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.hub-tab {
+  display: inline-flex; align-items: center; gap: 7px; padding: 9px 12px;
+  border: none; background: none; color: var(--tmut); font-size: 13px; font-weight: 500;
+  border-bottom: 1.5px solid transparent; margin-bottom: -1px; transition: color 0.12s;
+}
+.hub-tab:hover { color: var(--text); }
+.hub-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.hub-tab-count { font-size: 11px; color: var(--tmut); font-family: var(--mono); }
+
+.hub-body { flex: 1; overflow-y: auto; padding: 20px; min-height: 0; }
+.hub-inner { max-width: 100%; }
+.hub-card-title { font-size: 15px; font-weight: 600; letter-spacing: -0.015em; }
+.hub-card-sub { color: var(--tmut); font-size: 12.5px; margin-top: 5px; line-height: 1.55; }
+
+.hub-pull-row { display: flex; gap: 10px; margin-top: 14px; }
+.hub-pull-row input {
+  flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 10px; padding: 11px 14px; font-size: 13.5px; color: var(--text);
+  outline: none; font-family: var(--mono);
+}
+.hub-pull-row input:focus { border-color: rgba(244, 246, 250, 0.22); }
+.hub-pull-progress {
+  display: flex; align-items: center; gap: 6px; font-family: var(--mono);
+  font-size: 12.5px; color: var(--tmut); flex-shrink: 0; align-self: center;
+}
+
+.hub-filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 15px; }
+.hub-search {
+  display: flex; align-items: center; gap: 8px; flex: 1; min-width: 140px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 9px; padding: 7px 12px;
+}
+.hub-search input { flex: 1; min-width: 0; background: none; border: none; outline: none; font-size: 12.5px; color: var(--text); }
+.hub-budget { font-size: 11.5px; color: var(--tmut); font-family: var(--mono); flex-shrink: 0; }
+
+.hub-chips { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 13px; align-items: center; }
+.hub-chips-label { font-size: 11px; color: var(--tmut); }
+.hub-chip {
+  font-size: 11px; color: var(--tmut); background: var(--bg); border: 1px solid var(--border);
+  padding: 4px 10px; border-radius: 7px; font-family: var(--mono);
+}
+
+.hub-thead {
+  display: flex; align-items: center; gap: 7px; padding: 12px 12px 8px; margin-top: 12px;
+  font-size: 10px; font-weight: 600; color: var(--tmut); text-transform: uppercase;
+  letter-spacing: 0.07em; border-bottom: 1px solid var(--border);
+}
+.hub-row {
+  display: flex; align-items: center; gap: 7px; padding: 11px 12px; border-radius: 10px;
+  cursor: pointer; font-size: 12.5px; transition: background 0.12s;
+}
+.hub-row:hover { background: var(--emph); }
+.hub-row.open { background: var(--emph); }
+.hub-fit { font-size: 10px; font-weight: 700; letter-spacing: 0.05em; width: 56px; flex-shrink: 0; }
+.hub-name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; overflow: hidden; }
+.hub-name-text { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hub-tag {
+  font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 5px;
+  background: var(--emph); color: var(--tmut); letter-spacing: 0.05em; flex-shrink: 0;
+}
+.hub-tag.installed { background: rgba(110, 231, 183, 0.12); color: var(--green); }
+.hub-cell { flex-shrink: 0; color: var(--tmut); font-family: var(--mono); }
+.hub-score { font-family: var(--mono); font-size: 13px; font-weight: 600; width: 44px; text-align: right; flex-shrink: 0; }
+.hub-detail {
+  margin: 2px 0 8px; padding: 14px; border-radius: 11px; border: 1px solid var(--border);
+  background: var(--bg); animation: scale-in 0.16s cubic-bezier(.16,1,.3,1);
+}
+.hub-detail-head { display: flex; align-items: center; gap: 10px; }
+.hub-detail-name { font-family: var(--mono); font-size: 13px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hub-detail-source {
+  font-size: 10.5px; color: var(--tmut); background: var(--emph); padding: 3px 9px;
+  border-radius: 6px; font-weight: 500; flex-shrink: 0;
+}
+.hub-detail-sub { color: var(--tmut); font-size: 12.5px; margin-top: 7px; line-height: 1.55; }
+.hub-msg { color: var(--tmut); font-size: 13px; padding: 18px 12px; }
+
 /* ---------- settings ---------- */
 .settings { flex: 1; display: flex; min-height: 0; }
 .settings-nav { width: 200px; border-right: 1px solid var(--border); padding: 18px 10px; display: flex; flex-direction: column; gap: 2px; }
@@ -404,8 +547,11 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
 .settings-body-inner { max-width: 740px; }
 .settings-body h2 { font-size: 21px; font-weight: 600; letter-spacing: -0.02em; margin-bottom: 6px; }
 .settings-body .section-sub { color: var(--tmut); font-size: 13.5px; margin-bottom: 24px; line-height: 1.55; }
+.settings-body code { background: var(--emph); border-radius: 5px; padding: 1px 6px; font-family: var(--mono); font-size: 12px; }
 
-/* Cookbook search bar + score table */
+/* Legacy Cookbook search bar. The Cookbook UI moved to the Model hub page
+   (.hub-* rules above); these classes stay only because .data-table is still
+   a generic table style other tabs can use. */
 .cookbook-search {
   display: flex; align-items: center; gap: 10px; background: var(--muted);
   border: 1px solid var(--border); border-radius: 12px; padding: 11px 14px; margin-bottom: 16px;
@@ -414,6 +560,17 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
   flex: 1; background: none; border: none; outline: none; font-size: 13.5px; color: var(--text);
 }
 .cookbook-budget { font-size: 11px; color: var(--tmut); font-family: var(--mono); flex-shrink: 0; }
+
+.terminal-input {
+  display: flex; align-items: center; gap: 9px; background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 9px 12px; font-family: var(--mono);
+}
+.terminal-input:focus-within { border-color: rgba(255, 255, 255, 0.22); }
+.terminal-prompt { color: var(--green); font-size: 13px; flex-shrink: 0; user-select: none; }
+.terminal-input input {
+  flex: 1; background: none; border: none; outline: none; color: var(--text); font-family: var(--mono); font-size: 13px;
+}
+.terminal-progress { font-size: 12px; color: var(--tmut); display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 
 .data-table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
 .data-table th {
@@ -467,9 +624,24 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
   background: var(--muted); color: var(--tmut); display: inline-flex; align-items: center; gap: 5px;
   cursor: pointer;
 }
-.mode-chip:hover { color: var(--text); border-color: rgba(255, 255, 255, 0.2); }
-.mode-chip.active { background: var(--accent); border-color: var(--accent); color: var(--inv); font-weight: 600; }
+.mode-chip:hover { color: var(--text); border-color: rgba(244, 246, 250, 0.2); }
+/* Selected chip = raised surface, not an accent fill. Same reasoning as
+   .rail-btn.active: these appear in groups, and one solid white block in a row
+   of chips reads as a primary button you're supposed to press. */
+.mode-chip.active { background: var(--emph); color: var(--text); font-weight: 500; }
 .mode-chip:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Segmented control (Security tab's scanner mode). This one DOES use the
+   accent fill: it's a mutually-exclusive one-of-three, so exactly one segment
+   is ever lit and there's nothing for it to compete with. */
+.segmented { display: flex; gap: 5px; border: 1px solid var(--border); border-radius: 11px; padding: 4px; }
+.segmented button {
+  flex: 1; display: inline-flex; align-items: center; justify-content: center; height: 32px;
+  padding: 0 10px; border-radius: 8px; font-size: 12.5px; font-weight: 500; border: none;
+  background: none; color: var(--tmut); white-space: nowrap; transition: all 0.13s;
+}
+.segmented button:hover { color: var(--text); }
+.segmented button.active { background: var(--accent); color: var(--inv); }
 
 .card {
   background: var(--muted); border: 1px solid var(--border); border-radius: 13px;
@@ -486,12 +658,17 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
 .pill.off { background: rgba(252, 165, 165, 0.1); color: var(--red); }
 .pill.cat { background: var(--emph); color: var(--text); }
 
-.switch { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
+.switch { position: relative; width: 38px; height: 23px; flex-shrink: 0; }
 .switch input { opacity: 0; width: 100%; height: 100%; position: absolute; cursor: pointer; z-index: 1; }
-.switch .track { position: absolute; inset: 0; background: var(--emph); border-radius: 10px; transition: background 0.15s; }
+.switch .track { position: absolute; inset: 0; background: var(--emph); border-radius: 20px; transition: background 0.18s; }
 .switch input:checked + .track { background: var(--accent); }
-.switch .thumb { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; background: #fff; border-radius: 50%; transition: left 0.15s; }
-.switch input:checked ~ .thumb { left: 18px; }
+/* Thumb is --bg, not white: on an --accent (off-white) track a white thumb
+   would be invisible. */
+.switch .thumb {
+  position: absolute; top: 2px; left: 2px; width: 19px; height: 19px; background: var(--bg);
+  border-radius: 50%; transition: left 0.2s cubic-bezier(.16,1,.3,1); box-shadow: 0 1px 2px rgba(0,0,0,.3);
+}
+.switch input:checked ~ .thumb { left: 17px; }
 
 .event-row { display: flex; gap: 11px; padding: 11px 4px; border-bottom: 1px solid var(--border); font-size: 12px; align-items: baseline; }
 .event-time { color: var(--tmut); white-space: nowrap; font-family: var(--mono); font-size: 11px; }

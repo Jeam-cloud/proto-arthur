@@ -51,6 +51,19 @@ class OllamaClient:
             for m in res.models
         ]
 
+    async def delete(self, model: str) -> None:
+        """Uninstall a model, freeing its disk space. Ollama 404s if the name
+        isn't actually installed, which we surface as ModelNotFoundError so
+        the route can turn it into a clean 404 instead of a 500."""
+        try:
+            await self._client.delete(model)
+        except (httpx.ConnectError, ConnectionError) as e:
+            raise OllamaUnavailableError() from e
+        except ollama.ResponseError as e:
+            if e.status_code == 404:
+                raise ModelNotFoundError(f"'{model}' isn't installed") from e
+            raise
+
     async def pull(self, model: str) -> AsyncIterator[dict[str, Any]]:
         """Yields {status, completed, total} progress dicts for the download UI."""
         try:

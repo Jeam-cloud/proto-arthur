@@ -118,11 +118,14 @@ async def model_recommendations(request: Request) -> dict:
 
 
 @router.get("/models/catalog")
-async def model_catalog(request: Request, q: str = "") -> dict:
-    """Cookbook's search+score table -- same budget math as /models/recommendations
-    (kept identical on purpose, so a model's score here matches its fit dot
-    in the composer), just applied to the full searchable catalog instead of
-    the top 2-3 picks per mode."""
+async def model_catalog(request: Request, q: str = "", type: str = "all") -> dict:
+    """Model hub's search+score table -- same budget math as
+    /models/recommendations (kept identical on purpose, so a model's score
+    here matches its fit dot in the composer), just applied to the full
+    searchable catalog instead of the top 2-3 picks per mode.
+
+    Also returns `hardware`: the raw detected specs the hub renders as chips,
+    so the page needs one request instead of two."""
     from core.hardware import detect as detect_hardware_full
     from core.model_recs import catalog_search
 
@@ -138,7 +141,13 @@ async def model_catalog(request: Request, q: str = "") -> dict:
     return {
         "budget_gb": round(budget, 1),
         "ollama_up": ollama_up,
-        "results": catalog_search(installed, budget, q),
+        "hardware": {
+            "gpu": gpu["name"] if gpu else None,
+            "vram_gb": gpu["vram_gb"] if gpu else None,
+            "ram_gb": hw["ram_gb"],
+            "cpu_count": hw["cpu_count"],
+        },
+        "results": catalog_search(installed, budget, q, type),
     }
 
 
@@ -155,6 +164,32 @@ async def pull_model(request: Request, body: PullRequest) -> EventSourceResponse
             yield {"event": "error", "data": _json({"code": e.code, "message": e.message})}
 
     return EventSourceResponse(gen())
+
+
+@router.delete("/models/{name:path}")
+async def delete_model(request: Request, name: str) -> dict:
+    """Uninstalls a model and frees its disk space. If it was the global
+    default or assigned to a mode, we clear those settings too instead of
+    leaving Arthur pointed at a model that no longer exists — that would
+    otherwise surface as a confusing 404 the next time someone chats."""
+    s = state(request)
+    await s.llm.delete(name)
+
+    cleared: list[str] = []
+    default_model = await s.db.get_setting("default_model", "")
+    if default_model == name:
+        await s.db.set_setting("default_model", "")
+        cleared.append("default")
+
+    mode_models = await s.db.get_setting("mode_models", {}) or {}
+    freed_modes = [mode for mode, m in mode_models.items() if m == name]
+    if freed_modes:
+        for mode in freed_modes:
+            del mode_models[mode]
+        await s.db.set_setting("mode_models", mode_models)
+        cleared.extend(freed_modes)
+
+    return {"ok": True, "cleared": cleared}
 
 
 # ---------- chat ----------

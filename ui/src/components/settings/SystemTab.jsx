@@ -92,7 +92,7 @@ export default function SystemTab() {
       <div className="card" style={{ marginTop: 11 }}>
         <div className="card-title" style={{ marginBottom: 4 }}>What that buys you</div>
         <div className="card-sub" style={{ marginBottom: 13 }}>
-          General guidance by budget tier, not tied to any one model, see the Cookbook tab for
+          General guidance by budget tier, not tied to any one model, see the Model hub for
           specific picks and their fit against your hardware.
         </div>
         {TIERS.map((t) => (

@@ -36,7 +36,7 @@ export default function SecurityTab() {
           </span>
         </div>
         {values && (
-          <div className="field-row" style={{ marginTop: 10 }}>
+          <div className="segmented" style={{ marginTop: 14 }}>
             {[
               ["standard", "Standard", "blocks suspicious messages"],
               ["relaxed", "Relaxed", "warns in the log, never blocks"],
@@ -44,7 +44,7 @@ export default function SecurityTab() {
             ].map(([id, label, sub]) => (
               <button
                 key={id}
-                className={`mode-chip ${(values.scanner_mode || "standard") === id ? "active" : ""}`}
+                className={(values.scanner_mode || "standard") === id ? "active" : ""}
                 title={sub}
                 onClick={() => update({ scanner_mode: id })}
               >
