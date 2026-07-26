@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent.loop import AgentLoop
+from agent.loop import AgentLoop, recover_text_tool_call
 from agent.registry import ToolRegistry
 from core import events
 from security.approvals import ApprovalBroker
@@ -220,3 +220,66 @@ async def test_iteration_cap_stops_runaway(db, settings):
     await loop.run("m", [], TaskMode.GENERAL, CTX, emit)
     assert len(tool.executions) == 3  # hard stop
     assert any("limit" in d["text"] for d in emit.of(events.STATUS))
+
+
+class TestRecoverTextToolCall:
+    """Unit-level coverage for the text-tool-call salvage path, independent
+    of the full agent loop. Regression source: a real run_python call whose
+    code contained an unescaped f-string quote (@app.post("/rename/...")),
+    which broke strict JSON decoding entirely and, before the anchored
+    salvage rewrite, also broke the naive regex-scan fallback -- it mistook
+    a `{"error": "..."}` dict literal INSIDE the code for a second top-level
+    argument and truncated the recovered code at that point."""
+
+    def test_well_formed_json_uses_the_fast_path(self):
+        text = '{"name": "run_python", "arguments": {"code": "print(1)"}}'
+        assert recover_text_tool_call(text) == {"name": "run_python", "arguments": {"code": "print(1)"}}
+
+    def test_no_call_present_returns_none(self):
+        assert recover_text_tool_call("just a normal reply, no tool call here") is None
+
+    def test_prose_before_the_json_blob_is_skipped(self):
+        text = 'Sure, here you go: {"name": "run_python", "arguments": {"code": "print(2)"}}'
+        assert recover_text_tool_call(text) == {"name": "run_python", "arguments": {"code": "print(2)"}}
+
+    def test_properly_escaped_quotes_round_trip_untouched(self):
+        text = '{"name":"run_python","arguments":{"code":"print(\\"hi\\")\\nprint(2)"}}'
+        assert recover_text_tool_call(text)["arguments"]["code"] == 'print("hi")\nprint(2)'
+
+    def test_unescaped_quotes_in_a_single_field_are_salvaged(self):
+        """The exact regression: an f-string quote and an embedded dict
+        literal inside run_python's code, plus the model rambling past its
+        own closing brace. Recovery must capture the WHOLE code block, not
+        truncate at the embedded {"error": ...} lookalike."""
+        text = (
+            '{"name":"run_python","parameters":{"code":"import os\n'
+            'from fastapi import FastAPI\n\n'
+            'app = FastAPI()\n\n'
+            '@app.post("/rename/{filename}")\n'
+            'async def rename_filename(filename: str = None):\n'
+            '    if filename is None:\n'
+            '        return JSONResponse({"error": "Missing filename"}, status_code=400)\n'
+            '    os.rename(filename, f"{filename[:-4]}_new.txt")"}}\n\n'
+            '# Run the FastAPI application\n'
+            'import uvicorn\n'
+            'if __name__ == "__main__": uvicorn.run(app, host="0.0.0.0", port=8000)"}}'
+        )
+        result = recover_text_tool_call(text)
+        assert result["name"] == "run_python"
+        code = result["arguments"]["code"]
+        assert '@app.post("/rename/{filename}")' in code
+        assert "uvicorn.run(app" in code
+
+    def test_unescaped_quotes_in_the_last_of_two_fields_are_salvaged(self):
+        """write_file has a clean leading field (path) followed by a messy
+        one (content). The leading field must not be over-captured, and the
+        embedded dict/tuple lookalikes in content must not truncate it."""
+        text = (
+            '{"name":"write_file","arguments":{"path":"notes/app.py","content":"'
+            'x = {"k": "v"}\nprint(f"hello {x}")\ny = ("a", "b")"}}'
+        )
+        result = recover_text_tool_call(text)
+        assert result["name"] == "write_file"
+        assert result["arguments"]["path"] == "notes/app.py"
+        assert 'x = {"k": "v"}' in result["arguments"]["content"]
+        assert 'y = ("a", "b")' in result["arguments"]["content"]

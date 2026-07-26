@@ -56,7 +56,7 @@ def recover_text_tool_call(text: str) -> dict[str, Any] | None:
             # also tolerate a space after the brace
             start = text.find('{ "', idx)
             if start == -1:
-                return None
+                break
         try:
             obj, _end = decoder.raw_decode(text[start:])
         except json.JSONDecodeError:
@@ -68,6 +68,101 @@ def recover_text_tool_call(text: str) -> dict[str, Any] | None:
             if isinstance(name, str) and isinstance(args, dict):
                 return {"name": name, "arguments": args}
         idx = start + 1
+
+    # Strict decoding never found a valid call. This is the common case for
+    # run_python/write_file/email_send: the model's free-text field (code,
+    # content, body) contains literal quotes or newlines it never escaped, so
+    # the blob isn't valid JSON at all, and the user would otherwise see raw
+    # JSON soup with a code block embedded in it (this is exactly what
+    # happened with a run_python call whose code contained an unescaped
+    # f-string quote). Try one more salvage pass before giving up.
+    start = text.find('{"')
+    if start == -1:
+        start = text.find('{ "')
+    if start != -1:
+        return _salvage_unescaped_field(text, start)
+    return None
+
+
+def _salvage_unescaped_field(text: str, start: int) -> dict[str, Any] | None:
+    """Recovers {"name": ..., "arguments"/"parameters": {...}} when the LAST
+    field in the arguments object is free text containing raw quotes/newlines
+    that break strict JSON parsing. Every tool whose schema has one large
+    text field (run_python's code, write_file's content, email_send's body)
+    declares that field last, so "take everything from the last field's
+    opening quote to the end of the blob, literally" recovers exactly the
+    payload the model meant to send.
+
+    Field boundaries are found only by anchoring immediately after
+    `params_start` or immediately after a PRECEDING field's own comma —
+    never by scanning ahead into a value for something that merely looks
+    like "key": "value". That distinction matters: free text is exactly the
+    kind of content that contains lookalikes of its own (a Python dict
+    literal, an embedded JSON fragment) and an unanchored scan mistakes those
+    for the next real argument, truncating the recovered text at the first
+    one. Anchoring rules that out structurally instead of by luck.
+
+    Recovery result still goes through Pydantic validation before anything
+    runs, so a wrong guess here surfaces as a normal "invalid arguments" tool
+    result, not a security hole."""
+    import re
+
+    m_name = re.search(r'"name"\s*:\s*"([a-zA-Z_][a-zA-Z0-9_]*)"', text[start:])
+    if not m_name:
+        return None
+    name = m_name.group(1)
+
+    m_params = re.search(r'"(?:arguments|parameters|args)"\s*:\s*\{', text[start:])
+    if not m_params:
+        return None
+    rest = text[start + m_params.end():]
+
+    # A clean leading field: value has no unescaped quote AND is immediately
+    # followed by a comma. Requiring the comma is what keeps this from ever
+    # matching partway into a free-text value -- a genuine next field is
+    # comma-separated; a lookalike inside a value usually isn't followed by
+    # one at exactly that spot.
+    clean_field = re.compile(r'\s*"([a-zA-Z_][a-zA-Z0-9_]*)"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,')
+    final_field = re.compile(r'\s*"([a-zA-Z_][a-zA-Z0-9_]*)"\s*:\s*"')
+
+    arguments: dict[str, Any] = {}
+    pos = 0
+    while True:
+        m = clean_field.match(rest, pos)
+        if not m:
+            break
+        arguments[m.group(1)] = _unescape(m.group(2))
+        pos = m.end()
+
+    m_final = final_field.match(rest, pos)
+    if not m_final:
+        return {"name": name, "arguments": arguments} if arguments else None
+
+    field = m_final.group(1)
+    value_start = m_final.end()
+    tail = rest.rstrip()
+    end = len(tail)
+    while end > value_start and tail[end - 1] == "}":
+        end -= 1
+    if end > value_start and tail[end - 1] == '"':
+        end -= 1
+    if end <= value_start:
+        return None
+    arguments[field] = _unescape(tail[value_start:end])
+
+    return {"name": name, "arguments": arguments}
+
+
+def _unescape(raw: str) -> str:
+    """Undo the escapes a well-formed emitter WOULD have used (\\n, \\t, \\",
+    \\\\), leaving any other literal character — including the raw quotes
+    that broke strict parsing in the first place — exactly as written."""
+    return (
+        raw.replace("\\n", "\n")
+        .replace("\\t", "\t")
+        .replace('\\"', '"')
+        .replace("\\\\", "\\")
+    )
 
 
 class AgentLoop:
