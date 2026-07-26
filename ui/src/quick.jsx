@@ -1,6 +1,6 @@
-// Entry for the Ctrl+Shift+A quick widget — a frameless always-on-top wide
+// Entry for the Ctrl+Shift+A quick widget, a frameless always-on-top wide
 // bar (Spotlight-style rectangle; window size set in electron/main.js).
-// One question — typed or SPOKEN — one streamed answer, an escape hatch to
+// One question, typed or SPOKEN, one streamed answer, an escape hatch to
 // the full app. Voice matches the main composer's contract: empty input +
 // finished transcript = auto-send; existing text = append, don't hijack.
 import React, { useEffect, useRef, useState } from "react";
@@ -68,7 +68,7 @@ function QuickWidget() {
     <div className="quick">
       <div className="quick-titlebar">
         <div className="logo" style={{ width: 18, height: 18, fontSize: 10 }}>A</div>
-        <span style={{ flex: 1 }}>Arthur — quick ask</span>
+        <span style={{ flex: 1 }}>Arthur, quick ask</span>
         <button className="icon-btn" title="Open full app"
           onClick={() => { window.arthur?.openMainWindow(); window.arthur?.hideQuickWidget(); }}>
           <Maximize2 size={13} />
@@ -82,7 +82,7 @@ function QuickWidget() {
         {error && <div style={{ color: "var(--red)", fontSize: 12.5 }}>{error}</div>}
         {!error && !answer && !streaming && (
           <div style={{ color: "var(--dim)", fontSize: 12.5 }}>
-            Type, or hold the mic and just talk — I'll answer as soon as you let go.
+            Type, or hold the mic and just talk. I'll answer as soon as you let go.
           </div>
         )}
         {answer && <Markdown>{answer}</Markdown>}
@@ -99,7 +99,7 @@ function QuickWidget() {
           />
           <button
             className={`icon-btn ${recorder.state === "recording" ? "recording" : ""}`}
-            title={recorder.state === "denied" ? "Mic access denied" : "Hold to talk — sends when you release"}
+            title={recorder.state === "denied" ? "Mic access denied" : "Hold to talk, sends when you release"}
             disabled={!ready}
             onMouseDown={recorder.start}
             onMouseUp={recorder.stop}

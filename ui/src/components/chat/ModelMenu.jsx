@@ -6,7 +6,7 @@
 //       fits, missing    -> "Get · X GB" downloads inline, then auto-selects
 //       too big          -> dimmed with the reason (teaches what an upgrade buys)
 //   * other installed models (still selectable — recommendations advise, never restrict)
-//   * Auto — defer to Settings→Models per-mode assignment / the default
+//   * Auto -- defer to Settings -> Cookbook per-mode assignment / the default
 //
 // Recommendations come from /models/recommendations (hardware-ranked, cached
 // here for 5 min — hardware doesn't change mid-session, installs refresh it).
@@ -104,7 +104,7 @@ export default function ModelMenu({ conversationId, mode }) {
                 <div className="grow">
                   <div className="model-name">{r.model}{isCurrent && <Check size={12} />}</div>
                   <div className="model-note">
-                    {r.fits || r.installed ? r.note : `Needs ~${Math.round(r.size_gb * 1.15)}GB free — more than this PC has`}
+                    {r.fits || r.installed ? r.note : `Needs ~${Math.round(r.size_gb * 1.15)}GB free, more than this PC has`}
                   </div>
                 </div>
                 {r.installed ? (
@@ -132,7 +132,7 @@ export default function ModelMenu({ conversationId, mode }) {
           <div className="model-row">
             <div className="grow">
               <div className="model-name">Auto{!override && <Check size={12} />}</div>
-              <div className="model-note">Follow Settings → Models ({autoLabel})</div>
+              <div className="model-note">Follow Settings, Cookbook ({autoLabel})</div>
             </div>
             <button className="btn model-use" onClick={() => choose("")}>Use</button>
           </div>

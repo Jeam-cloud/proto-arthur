@@ -1,15 +1,16 @@
 import React, { useEffect, useRef } from "react";
-import { BrainCircuit } from "lucide-react";
+import { BrainCircuit, Compass } from "lucide-react";
 import { useChat } from "../../stores/chat";
 import { useConversations } from "../../stores/conversations";
 import Composer from "./Composer";
+import ModeBadge from "./ModeBadge";
 import Markdown from "./Markdown";
 import ActivityFeed from "./ActivityFeed";
 
-// Model selection lives in the composer bar (ModelMenu inside Composer) —
+// Model selection lives in the composer bar (ModelMenu inside Composer),
 // mode-aware recommendations, Claude-bar style. The header stays clean.
 
-export default function ChatView() {
+export default function ChatView({ mode, setMode }) {
   const { activeId, list, createNew } = useConversations();
   const conv = list.find((c) => c.id === activeId);
   const slice = useChat((s) => s.slice(activeId || ""));
@@ -28,6 +29,7 @@ export default function ChatView() {
   if (!activeId) {
     return (
       <div className="empty-state">
+        <div className="empty-state-icon"><Compass size={24} strokeWidth={2} /></div>
         <h3>Your assistant, entirely on your machine</h3>
         <p>No cloud account, no subscription, no data leaving your computer by default.</p>
         <button className="btn primary" onClick={createNew}>Start a conversation</button>
@@ -41,10 +43,11 @@ export default function ChatView() {
     <>
       <div className="chat-header">
         <h2>{conv ? conv.title : "Chat"}</h2>
+        <ModeBadge mode={mode} />
       </div>
 
       {showSuggestions ? (
-        <EmptyChat conversationId={activeId} />
+        <EmptyChat conversationId={activeId} mode={mode} />
       ) : (
         <div className="message-list">
           {slice.memoryUsed.length > 0 && (
@@ -79,7 +82,7 @@ export default function ChatView() {
         </div>
       )}
 
-      <Composer conversationId={activeId} />
+      <Composer conversationId={activeId} mode={mode} setMode={setMode} />
     </>
   );
 }
@@ -96,14 +99,14 @@ function Message({ message }) {
           ? <Markdown>{message.content}</Markdown>
           : message.content}
         {message.partial && (
-          <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 6 }}>— stopped early</div>
+          <div style={{ fontSize: 11, color: "var(--tmut)", marginTop: 6 }}>stopped early</div>
         )}
       </div>
     </div>
   );
 }
 
-function EmptyChat({ conversationId }) {
+function EmptyChat({ conversationId, mode }) {
   const send = useChat((s) => s.send);
   const suggestions = [
     "What can you do?",
@@ -112,11 +115,12 @@ function EmptyChat({ conversationId }) {
   ];
   return (
     <div className="empty-state">
+      <div className="empty-state-icon"><Compass size={24} strokeWidth={2} /></div>
       <h3>What can I help with?</h3>
-      <p>I remember useful facts across conversations, and I only get tools for the mode you pick below.</p>
+      <p>I remember useful facts across conversations, and I only get the tools for the mode you pick on the left.</p>
       <div className="suggestions">
         {suggestions.map((s) => (
-          <button key={s} className="suggestion" onClick={() => send(conversationId, s, { mode: "general" })}>
+          <button key={s} className="suggestion" onClick={() => send(conversationId, s, { mode })}>
             {s}
           </button>
         ))}

@@ -36,7 +36,7 @@ export function useRecorder({ onText, onError }) {
         form.append("audio", blob, "speech.webm");
         const { text } = await api.postForm("/voice/transcribe", form);
         if (text) onText(text);
-        else onError("Didn't catch that — try speaking a bit longer.");
+        else onError("Didn't catch that, try speaking a bit longer.");
       } catch (e) {
         onError(e.message);
       } finally {

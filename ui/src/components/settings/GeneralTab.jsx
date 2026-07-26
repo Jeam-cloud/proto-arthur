@@ -43,7 +43,7 @@ export default function GeneralTab() {
           <button className="btn" onClick={pickWorkspace}>Choose…</button>
         </div>
         <div className="hint">
-          Code mode can only read and write inside this one folder — never outside it.
+          Code mode can only read and write inside this one folder, never outside it.
         </div>
       </div>
 

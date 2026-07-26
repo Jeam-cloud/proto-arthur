@@ -1,5 +1,5 @@
 // External connections. Keys are write-only by design: they go INTO the OS
-// credential vault and the API will only ever say "configured" — there is no
+// credential vault and the API will only ever say "configured", there is no
 // endpoint that returns a stored key.
 import React, { useState } from "react";
 import { api } from "../../api/client";
@@ -35,17 +35,17 @@ export default function IntegrationsTab() {
       <h2>Integrations</h2>
       <div className="section-sub">
         Each connection is scoped to the minimum it needs. Keys live in your OS's secure
-        credential vault — never in files, and never inside tool sandboxes.
+        credential vault, never in files, and never inside tool sandboxes.
       </div>
 
       <EmailCard configured={!!secrets.email_password} onSaved={refreshStatus} />
 
       <div className="card card-row">
         <div className="grow">
-          <div className="card-title">Microsoft 365 — email & calendar (OAuth)</div>
+          <div className="card-title">Microsoft 365, email & calendar (OAuth)</div>
           <div className="card-sub">
             Alternative to the app-password setup above; also enables calendar tools.
-            Note: personal Outlook accounts often require this route — Microsoft is
+            Note: personal Outlook accounts often require this route, Microsoft is
             phasing out app passwords for them.
           </div>
         </div>
@@ -55,7 +55,7 @@ export default function IntegrationsTab() {
       </div>
 
       <KeyCard
-        title="Tavily — web research"
+        title="Tavily, web research"
         hint="Free tier at tavily.com. Powers Research mode's web search."
         name="tavily"
         configured={!!secrets.tavily}
@@ -75,8 +75,8 @@ export default function IntegrationsTab() {
   );
 }
 
-// Email via app password — the 2-minute path (how Odysseus/OpenClaw do email).
-// Gmail: myaccount.google.com → Security → 2-Step Verification → App passwords.
+// Email via app password: the 2-minute path (how Odysseus/OpenClaw do email).
+// Gmail: myaccount.google.com -> Security -> 2-Step Verification -> App passwords.
 // Hosts auto-fill from the address domain (gmail/yahoo/icloud presets in the
 // backend); anything exotic can be typed manually.
 function EmailCard({ configured, onSaved }) {
@@ -91,7 +91,7 @@ function EmailCard({ configured, onSaved }) {
     try {
       await api.del("/integrations/email");
       await reloadSettings();
-      pushToast("Email disconnected — the password was removed from your system's vault.", "success");
+      pushToast("Email disconnected. The password was removed from your system's vault.", "success");
       onSaved();
     } catch (e) {
       pushToast(e.message, "error");
@@ -103,12 +103,12 @@ function EmailCard({ configured, onSaved }) {
     try {
       await api.patch("/settings", { email_address: address.trim() });
       await api.put("/secrets", { name: "email_password", value: password });
-      // Verify by actually logging in — a wrong password should fail HERE,
+      // Verify by actually logging in, a wrong password should fail HERE,
       // with a plain explanation, not later mid-conversation.
       const check = await api.post("/integrations/email/test");
       if (check.ok) {
         setPassword(""); setAddress("");
-        pushToast("Verified — email is ready. Try: “email someone@example.com that …”", "success");
+        pushToast("Verified, email is ready. Try: “email someone@example.com that …”", "success");
       } else {
         pushToast(check.error, "error");
       }
@@ -125,7 +125,7 @@ function EmailCard({ configured, onSaved }) {
     <div className="card">
       <div className="card-row">
         <div className="grow">
-          <div className="card-title">Email — any provider (app password)</div>
+          <div className="card-title">Email, any provider (app password)</div>
           <div className="card-sub">
             Fastest setup: your address + an app password. Gmail/Yahoo/iCloud: create one
             in your account's security settings (needs 2-step verification on).

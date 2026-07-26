@@ -26,7 +26,7 @@ from sse_starlette.sse import EventSourceResponse
 from core import events
 from core.api.auth import require_auth
 from core.api.schemas import (
-    ApprovalDecision, ChatRequest, MemoryCreate, MemoryUpdate, PersonaBody,
+    ApprovalDecision, ArchiveRequest, ChatRequest, MemoryCreate, MemoryUpdate, PersonaBody,
     PullRequest, RenameRequest, SecretBody, SettingsPatch,
 )
 from core.deps import AppState
@@ -117,6 +117,31 @@ async def model_recommendations(request: Request) -> dict:
     }
 
 
+@router.get("/models/catalog")
+async def model_catalog(request: Request, q: str = "") -> dict:
+    """Cookbook's search+score table -- same budget math as /models/recommendations
+    (kept identical on purpose, so a model's score here matches its fit dot
+    in the composer), just applied to the full searchable catalog instead of
+    the top 2-3 picks per mode."""
+    from core.hardware import detect as detect_hardware_full
+    from core.model_recs import catalog_search
+
+    s = state(request)
+    hw = await asyncio.to_thread(detect_hardware_full)
+    gpu = hw.get("gpu")
+    budget = gpu["vram_gb"] if gpu else max(hw["ram_gb"] - 4, 2)
+    try:
+        installed = [m["name"] for m in await s.llm.list_models()]
+        ollama_up = True
+    except ArthurError:
+        installed, ollama_up = [], False
+    return {
+        "budget_gb": round(budget, 1),
+        "ollama_up": ollama_up,
+        "results": catalog_search(installed, budget, q),
+    }
+
+
 @router.post("/models/pull")
 async def pull_model(request: Request, body: PullRequest) -> EventSourceResponse:
     s = state(request)
@@ -197,8 +222,8 @@ async def chat_stream(request: Request, body: ChatRequest) -> EventSourceRespons
 # ---------- conversations ----------
 
 @router.get("/conversations")
-async def list_conversations(request: Request) -> list[dict]:
-    return await state(request).conversations.list_all()
+async def list_conversations(request: Request, archived: bool = False) -> list[dict]:
+    return await state(request).conversations.list_all(archived=archived)
 
 
 @router.post("/conversations")
@@ -222,6 +247,17 @@ async def rename_conversation(request: Request, cid: str, body: RenameRequest) -
 async def delete_conversation(request: Request, cid: str) -> dict:
     await state(request).conversations.delete(cid)
     return {"ok": True}
+
+
+@router.post("/conversations/{cid}/archive")
+async def archive_conversation(request: Request, cid: str, body: ArchiveRequest) -> dict:
+    await state(request).conversations.set_archived(cid, body.archived)
+    return {"ok": True}
+
+
+@router.post("/conversations/{cid}/clone")
+async def clone_conversation(request: Request, cid: str) -> dict:
+    return await state(request).conversations.clone(cid)
 
 
 # ---------- approvals ----------

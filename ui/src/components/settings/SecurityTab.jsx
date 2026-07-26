@@ -28,7 +28,7 @@ export default function SecurityTab() {
             <div className="card-sub">
               Checks messages you send for injection patterns. External content (web pages,
               emails) is always scanned and marked untrusted regardless of this setting, and
-              risky actions always ask you first — those layers don't cause false blocks.
+              risky actions always ask you first; those layers don't cause false blocks.
             </div>
           </div>
           <span className={`pill ${status?.scanner_backend === "heuristic" ? "warn" : "ok"}`}>
@@ -99,7 +99,7 @@ export default function SecurityTab() {
         </button>
       </div>
 
-      {events.length === 0 && <div className="hint">No security events yet — that's a good sign.</div>}
+      {events.length === 0 && <div className="hint">No security events yet, that's a good sign.</div>}
       {events.map((e) => (
         <div key={e.id} className="event-row">
           <span className="event-time">{new Date(e.ts * 1000).toLocaleString()}</span>

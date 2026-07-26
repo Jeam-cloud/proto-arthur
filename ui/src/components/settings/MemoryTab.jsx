@@ -65,7 +65,7 @@ export default function MemoryTab() {
       {memories && memories.length === 0 && (
         <div className="empty-state" style={{ flex: "none", padding: "30px 0" }}>
           <h3>Nothing remembered yet</h3>
-          <p>As you chat, Arthur saves useful facts here — always visible, never hidden.</p>
+          <p>As you chat, Arthur saves useful facts here, always visible, never hidden.</p>
         </div>
       )}
 

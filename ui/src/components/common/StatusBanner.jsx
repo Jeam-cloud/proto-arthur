@@ -15,7 +15,7 @@ export default function StatusBanner() {
     return (
       <div className="status-banner error">
         <span>
-          Ollama isn't running — chat is paused. Start Ollama (or install it from ollama.com), then retry.
+          Ollama isn't running, chat is paused. Start Ollama (or install it from ollama.com), then retry.
         </span>
         <button onClick={refreshStatus}>Retry</button>
       </div>
@@ -26,7 +26,7 @@ export default function StatusBanner() {
     return (
       <div className="status-banner">
         <span>
-          Docker is off — research, finance and code-execution tools are disabled until it starts. Chat still works.
+          Docker is off, research, finance and code-execution tools are disabled until it starts. Chat still works.
         </span>
         <button onClick={() => setDockerDismissed(true)}>Dismiss</button>
       </div>

@@ -21,10 +21,11 @@ class ConversationStore:
         )
         return {"id": cid, "title": "New chat", "created_at": ts, "updated_at": ts}
 
-    async def list_all(self) -> list[dict]:
+    async def list_all(self, *, archived: bool = False) -> list[dict]:
         return await self._db.fetch_all(
             "SELECT c.*, (SELECT COUNT(*) FROM messages m WHERE m.conversation_id=c.id) AS message_count "
-            "FROM conversations c WHERE archived=0 ORDER BY updated_at DESC"
+            "FROM conversations c WHERE archived=? ORDER BY updated_at DESC",
+            (1 if archived else 0,),
         )
 
     async def get(self, cid: str) -> dict:
@@ -41,6 +42,40 @@ class ConversationStore:
 
     async def delete(self, cid: str) -> None:
         await self._db.write("DELETE FROM conversations WHERE id=?", (cid,))  # messages CASCADE
+
+    async def set_archived(self, cid: str, archived: bool) -> None:
+        await self.get(cid)  # 404 for unknown ids
+        await self._db.write(
+            "UPDATE conversations SET archived=?, updated_at=? WHERE id=?",
+            (1 if archived else 0, now(), cid),
+        )
+
+    async def clone(self, cid: str) -> dict:
+        """Duplicate a conversation and its messages as a new, independent one.
+        WHY a real copy instead of a pointer: conversations are meant to
+        branch from here (edit the clone, keep the original untouched), so
+        sharing message rows would let an edit in one leak into the other."""
+        src = await self.get(cid)
+        new_cid = new_id()
+        ts = now()
+        title = src["title"] if src["title"].endswith(" (copy)") else f"{src['title']} (copy)"
+        await self._db.write(
+            "INSERT INTO conversations(id, title, persona_id, created_at, updated_at) VALUES(?,?,?,?,?)",
+            (new_cid, title[:120], src["persona_id"], ts, ts),
+        )
+        rows = await self._db.fetch_all(
+            "SELECT * FROM messages WHERE conversation_id=? ORDER BY created_at", (cid,)
+        )
+        if rows:
+            await self._db.write_many([
+                (
+                    "INSERT INTO messages(id, conversation_id, role, content, tool_calls, tool_name, model, provider, created_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?)",
+                    (new_id(), new_cid, r["role"], r["content"], r["tool_calls"], r["tool_name"], r["model"], r["provider"], r["created_at"]),
+                )
+                for r in rows
+            ])
+        return {"id": new_cid, "title": title[:120], "created_at": ts, "updated_at": ts, "message_count": len(rows)}
 
     async def add_message(
         self,

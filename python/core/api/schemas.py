@@ -20,6 +20,10 @@ class RenameRequest(BaseModel):
     title: str = Field(min_length=1, max_length=120)
 
 
+class ArchiveRequest(BaseModel):
+    archived: bool = True
+
+
 class MemoryCreate(BaseModel):
     text: str = Field(min_length=3, max_length=500)
     category: str = Field(default="other", pattern="^(profile|preference|project|other)$")

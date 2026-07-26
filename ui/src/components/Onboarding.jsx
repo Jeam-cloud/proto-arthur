@@ -2,7 +2,7 @@
 //
 // Design rules: each step DETECTS rather than assumes (re-check buttons call
 // /system/status), the model step recommends from real hardware via
-// /system/hardware, the Docker step is skippable (chat works without it —
+// /system/hardware, the Docker step is skippable (chat works without it,
 // only sandboxed tools need it), and nothing here dead-ends: every failure
 // state shows what to do next.
 import React, { useEffect, useState } from "react";
@@ -41,7 +41,7 @@ function Welcome({ onNext }) {
     <>
       <h1><span className="logo">A</span> Welcome to Arthur</h1>
       <p>
-        Arthur runs entirely on this computer — no account, no subscription, and nothing
+        Arthur runs entirely on this computer, no account, no subscription, and nothing
         leaves your machine unless you switch on a feature that needs the internet.
         Let's check the two things Arthur builds on.
       </p>
@@ -67,7 +67,7 @@ function OllamaStep({ status, refresh, onNext }) {
       <h1>1 · Ollama {up && <Check color="var(--green)" size={18} />}</h1>
       <p>
         Ollama runs the AI models locally. {up
-          ? "Found it — you're set."
+          ? "Found it, you're set."
           : "Arthur can't find it. Install it from ollama.com (one click, free), then come back."}
       </p>
       <div className="modal-actions">
@@ -150,7 +150,7 @@ function ModelStep({ status, refresh, onNext }) {
       {hw ? (
         <p>
           This machine: {hw.ram_gb}GB RAM{hw.gpu ? `, ${hw.gpu.name} (${hw.gpu.vram_gb}GB)` : ", no NVIDIA GPU"}.
-          Recommended: <strong style={{ color: "var(--accent)" }}>{rec.chat_model}</strong> — {rec.note}.
+          Recommended: <strong>{rec.chat_model}</strong>, {rec.note}.
           Plus <strong>nomic-embed-text</strong> for memory.
         </p>
       ) : <p>Reading your hardware…</p>}
@@ -183,7 +183,7 @@ function DockerStep({ status, refresh, onNext }) {
     <>
       <h1>3 · Docker (optional) {up && <Check color="var(--green)" size={18} />}</h1>
       <p>
-        Docker sandboxes Arthur's risky tools — web research, code execution, finance —
+        Docker sandboxes Arthur's risky tools (web research, code execution, finance)
         so they run isolated from your real system. {up
           ? "It's running. All tools available."
           : "Without it those tools stay disabled; chat, memory and computer control still work. You can install Docker Desktop anytime."}
@@ -214,7 +214,7 @@ function Done() {
       <h1>You're set <Check color="var(--green)" size={18} /></h1>
       <p>
         Tip: press <strong>Ctrl+Shift+A</strong> anywhere to summon the quick widget.
-        Anything Arthur remembers about you lives in Settings → Memory — visible, editable, deletable.
+        Anything Arthur remembers about you lives in Settings, Memory tab: visible, editable, deletable.
       </p>
       <div className="modal-actions">
         <button className="btn primary" onClick={finish}>Open Arthur</button>

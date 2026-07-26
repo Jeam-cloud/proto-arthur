@@ -25,6 +25,20 @@ export const useConversations = create((set, get) => ({
     set((s) => ({ list: s.list.map((c) => (c.id === id ? { ...c, title } : c)) }));
   },
 
+  // Rename talks to the server FIRST (unlike setTitle, which is a local patch
+  // the streaming title-suggestion event calls) so a failed rename doesn't
+  // leave the sidebar showing a title the backend never saved.
+  async rename(id, title) {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    try {
+      await api.patch(`/conversations/${id}`, { title: trimmed });
+      get().setTitle(id, trimmed);
+    } catch (e) {
+      useToasts.getState().push(e.message, "error");
+    }
+  },
+
   async remove(id) {
     try {
       await api.del(`/conversations/${id}`);
@@ -36,5 +50,32 @@ export const useConversations = create((set, get) => ({
       const list = s.list.filter((c) => c.id !== id);
       return { list, activeId: s.activeId === id ? (list[0]?.id ?? null) : s.activeId };
     });
+  },
+
+  // Archiving just drops the conversation from the active list (the backend
+  // filters WHERE archived=0) -- it isn't deleted, so there's no data loss,
+  // but there's no "show archived" view yet, so treat this as a soft hide.
+  async archive(id, archived = true) {
+    try {
+      await api.post(`/conversations/${id}/archive`, { archived });
+    } catch (e) {
+      useToasts.getState().push(e.message, "error");
+      return;
+    }
+    set((s) => {
+      const list = s.list.filter((c) => c.id !== id);
+      return { list, activeId: s.activeId === id ? (list[0]?.id ?? null) : s.activeId };
+    });
+  },
+
+  async clone(id) {
+    try {
+      const conv = await api.post(`/conversations/${id}/clone`);
+      set((s) => ({ list: [conv, ...s.list], activeId: conv.id }));
+      return conv.id;
+    } catch (e) {
+      useToasts.getState().push(e.message, "error");
+      return null;
+    }
   },
 }));
