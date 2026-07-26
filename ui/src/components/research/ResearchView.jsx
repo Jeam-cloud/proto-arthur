@@ -28,7 +28,10 @@ export default function ResearchView({ onOpenIntegrations }) {
   // pages just do not get read in full. Saying so up front beats silently
   // producing a thinner report and letting the user wonder why.
   useEffect(() => {
-    if (status && status.docker_up === false) setDegraded(true);
+    if (status && status.docker_up === false && !degraded) setDegraded(true);
+    // `degraded` is intentionally NOT a dependency: including it would re-run
+    // this the moment the user dismisses the banner and put it straight back.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, setDegraded]);
 
   return (

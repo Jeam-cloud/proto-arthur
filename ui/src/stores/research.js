@@ -290,12 +290,23 @@ export const useResearch = create((set, get) => ({
   clearFault: () => set({ fault: null, faultDetail: "" }),
   dismissDegraded: () => set({ degraded: false }),
 
-  recentRows: () =>
-    get().recents.map((r) => ({
-      ...r,
-      meta: `${relativeDate(r.at)} · ${r.sources} sources${r.independent ? ` · ${r.independent} independent` : ""}`,
-    })),
 }));
+
+// Derived data lives OUTSIDE the store as a plain function, and callers wrap it
+// in useMemo over `recents`.
+//
+// WHY this is not a store method: zustand selectors feed React's
+// useSyncExternalStore, which requires the snapshot to be referentially stable
+// between renders. A selector like `(s) => s.recentRows()` builds a fresh array
+// every call, so React sees a "changed" snapshot on every render and loops
+// until it throws "Maximum update depth exceeded". Selectors must return
+// something already stored, never something freshly constructed.
+export function recentRows(recents) {
+  return recents.map((r) => ({
+    ...r,
+    meta: `${relativeDate(r.at)} · ${r.sources} sources${r.independent ? ` · ${r.independent} independent` : ""}`,
+  }));
+}
 
 // Module-scope handles rather than store fields: an AbortController and an
 // interval id are not state, and putting them in the store would make every

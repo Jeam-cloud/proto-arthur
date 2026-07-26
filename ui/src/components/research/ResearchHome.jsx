@@ -5,9 +5,9 @@
 // and a list of what you have already commissioned. Every control here changes
 // what the run will actually cost, which is why each one shows its own budget
 // rather than hiding it behind a word like "Exhaustive".
-import React from "react";
+import React, { useMemo } from "react";
 import { ChevronRight, Loader2 } from "lucide-react";
-import { useResearch, DEPTHS, SOURCE_KINDS } from "../../stores/research";
+import { useResearch, recentRows, DEPTHS, SOURCE_KINDS } from "../../stores/research";
 
 export default function ResearchHome() {
   const {
@@ -15,7 +15,9 @@ export default function ResearchHome() {
     advanced, toggleAdvanced, includeDomains, setIncludeDomains,
     excludeDomains, setExcludeDomains, toPlan, planning, openRecent,
   } = useResearch();
-  const recents = useResearch((s) => s.recentRows());
+  // Select the raw array (stable reference), derive the display rows in render.
+  const rawRecents = useResearch((s) => s.recents);
+  const recents = useMemo(() => recentRows(rawRecents), [rawRecents]);
 
   return (
     <div className="research-scroll">

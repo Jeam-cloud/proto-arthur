@@ -5,11 +5,11 @@
 // "blocked" are visible while they happen rather than being smoothed over in
 // the final report. It is also the only way to make a second pass legible --
 // a lane that goes thin and then goes back to searching is showing its work.
-import React from "react";
+import React, { useMemo } from "react";
 import {
   Circle, Search, FileText, CircleCheck, CircleAlert, CircleX, Square, RotateCw,
 } from "lucide-react";
-import { useResearch } from "../../stores/research";
+import { useResearch, recentRows } from "../../stores/research";
 import EvidencePanel from "./EvidencePanel";
 
 const LANE = {
@@ -28,7 +28,8 @@ export default function ResearchRun() {
   const question = useResearch((s) => s.question);
   const gapNote = useResearch((s) => s.gapNote);
   const stop = useResearch((s) => s.stop);
-  const recents = useResearch((s) => s.recentRows());
+  const rawRecents = useResearch((s) => s.recents);
+  const recents = useMemo(() => recentRows(rawRecents), [rawRecents]);
   const openRecent = useResearch((s) => s.openRecent);
 
   const settled = lanes.filter((l) => ["done", "thin", "blocked"].includes(l.state)).length;
