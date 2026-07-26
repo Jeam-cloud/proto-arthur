@@ -28,7 +28,10 @@ from security.vault import SecretsVault
 from sandbox.runner import SandboxRunner
 from tools.base import Risk, TaskMode, Tool, ToolContext, ToolResult
 
-RESEARCH_IMAGE = "arthur-research:1"
+# Tag bumped to :2 when PDF extraction (pypdf) was added to the image.
+# ensure_image only checks whether the TAG exists, so changing the Dockerfile
+# without changing the tag would silently keep serving the old image.
+RESEARCH_IMAGE = "arthur-research:2"
 
 
 def chunk_text(text: str, size: int = 1200, overlap: int = 150) -> list[str]:

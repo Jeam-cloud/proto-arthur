@@ -89,6 +89,54 @@ class OllamaClient:
                 raise ModelNotFoundError(f"Embedding model '{model}' is not installed") from e
             raise
 
+    async def chat_json(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        schema: dict[str, Any],
+        temperature: float = 0.0,
+    ) -> Any:
+        """Generate output that is GUARANTEED to match `schema`.
+
+        This is not "ask nicely for JSON and hope". Ollama compiles the schema
+        into a grammar and, at every token, zeroes the probability of any token
+        that could not legally come next. Invalid JSON is unreachable, not just
+        discouraged -- so there is no parse-retry loop and no salvage code path
+        (contrast agent/loop.py, which has to clean up after free-text tool
+        calls precisely because nothing constrained them).
+
+        WHY this matters for research: every step of an investigation hands its
+        output to Python, not to a human. A 3B model that writes lovely prose
+        but occasionally emits a trailing comma would break the whole pipeline.
+        Constrained decoding is what makes small local models usable as
+        machinery instead of just as writers.
+
+        temperature=0 by default: these calls are structure extraction, and we
+        want the same input to produce the same plan twice.
+        """
+        try:
+            res = await self._client.chat(
+                model=model,
+                messages=messages,
+                format=schema,
+                stream=False,
+                keep_alive=self._keep_alive,
+                options={"temperature": temperature},
+            )
+        except (httpx.ConnectError, ConnectionError) as e:
+            raise OllamaUnavailableError() from e
+        except ollama.ResponseError as e:
+            if e.status_code == 404:
+                raise ModelNotFoundError(f"Model '{model}' is not installed") from e
+            raise
+
+        import json
+
+        content = (res.message.content or "").strip()
+        # The grammar guarantees well-formed JSON, but an empty generation (model
+        # hit its context limit) still has to be handled.
+        return json.loads(content) if content else None
+
     async def chat_stream(
         self,
         model: str,

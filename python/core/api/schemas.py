@@ -16,6 +16,33 @@ class ChatRequest(BaseModel):
     provider: str = Field(default="local", pattern="^(local|openai|anthropic)$")
 
 
+class ResearchPlanRequest(BaseModel):
+    question: str = Field(min_length=8, max_length=1000)
+    depth: str = Field(default="standard", pattern="^(quick|standard|exhaustive)$")
+    model: str = Field(default="", max_length=100)
+
+
+class ResearchRunRequest(BaseModel):
+    question: str = Field(min_length=8, max_length=1000)
+    # Sub-questions arrive from the client because the user edited them on the
+    # plan screen. The server does NOT regenerate them: silently rewriting what
+    # someone just approved is the fastest way to make a review step feel fake.
+    sub_questions: list[str] = Field(min_length=1, max_length=8)
+    depth: str = Field(default="standard", pattern="^(quick|standard|exhaustive)$")
+    sources: list[str] = Field(default_factory=lambda: ["web", "academic"], max_length=6)
+    model: str = Field(default="", max_length=100)
+    include_domains: list[str] = Field(default_factory=list, max_length=20)
+    exclude_domains: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("sub_questions")
+    @classmethod
+    def _trim(cls, v: list[str]) -> list[str]:
+        cleaned = [s.strip()[:400] for s in v if s and s.strip()]
+        if not cleaned:
+            raise ValueError("at least one sub-question is required")
+        return cleaned
+
+
 class RenameRequest(BaseModel):
     title: str = Field(min_length=1, max_length=120)
 

@@ -11,6 +11,7 @@ import Sidebar from "./components/Sidebar";
 import ModelHub from "./components/ModelHub";
 import CommandPalette from "./components/CommandPalette";
 import ChatView from "./components/chat/ChatView";
+import ResearchView from "./components/research/ResearchView";
 import SettingsView from "./components/settings/SettingsView";
 import Onboarding from "./components/Onboarding";
 import ApprovalModal from "./components/ApprovalModal";
@@ -98,9 +99,14 @@ export default function App() {
       <div className="main-pane">
         <StatusBanner />
         <ErrorBoundary>
-          {view === "chat"
-            ? <ChatView mode={mode} setMode={setMode} />
-            : <SettingsView initialTab={settingsTab} onClose={() => setView("chat")} onOpenHub={() => setHubOpen(true)} />}
+          {view === "settings"
+            ? <SettingsView initialTab={settingsTab} onClose={() => setView("chat")} onOpenHub={() => setHubOpen(true)} />
+            : mode === "research"
+              // Research mode is a different screen, not a differently-configured
+              // chat: an investigation has stages, lanes and a document, none of
+              // which fit in a message list.
+              ? <ResearchView onOpenIntegrations={() => { setSettingsTab("integrations"); setView("settings"); }} />
+              : <ChatView mode={mode} setMode={setMode} />}
         </ErrorBoundary>
       </div>
       {hubOpen && <ModelHub onClose={() => setHubOpen(false)} />}

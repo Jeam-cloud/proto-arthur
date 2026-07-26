@@ -16,3 +16,15 @@ MEMORY_USED = "memory_used"        # {items: [{id, text}]}
 TITLE = "title"                    # {conversation_id, title}
 ERROR = "error"                    # {code, message}
 DONE = "done"                      # {message_id, conversation_id}
+
+# ---- research mode ----
+# An investigation is not a token stream, so it needs its own vocabulary. Each
+# event is a whole object the UI can render on its own: lanes redraw one row,
+# sources append one card, blocks append one paragraph. WHY whole objects and
+# not deltas: a research run lasts minutes and the user may open the window
+# mid-run -- idempotent "here is the current state of lane 3" survives that,
+# a delta stream does not.
+RESEARCH_LANE = "research_lane"      # {id, text, state, read, of, srcs, pass}
+RESEARCH_SOURCE = "research_source"  # full source card (see research/engine.py)
+RESEARCH_GAP = "research_gap"        # {ids: [lane_id], note}  second pass starting
+RESEARCH_BLOCK = "research_block"    # {id, type, text, citations, conf, ai, fresh}

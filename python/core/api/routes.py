@@ -27,7 +27,7 @@ from core import events
 from core.api.auth import require_auth
 from core.api.schemas import (
     ApprovalDecision, ArchiveRequest, ChatRequest, MemoryCreate, MemoryUpdate, PersonaBody,
-    PullRequest, RenameRequest, SecretBody, SettingsPatch,
+    PullRequest, RenameRequest, ResearchPlanRequest, ResearchRunRequest, SecretBody, SettingsPatch,
 )
 from core.deps import AppState
 from core.errors import ArthurError, NotFoundError, VoiceError
@@ -250,6 +250,86 @@ async def chat_stream(request: Request, body: ChatRequest) -> EventSourceRespons
                 yield {"event": event, "data": _json(data)}
         finally:
             task.cancel()  # client gone (Stop button / closed window) -> stop generating
+
+    return EventSourceResponse(gen())
+
+
+# ---------- research ----------
+
+async def _research_model(s: AppState, requested: str) -> str:
+    """Same resolution order as chat: explicit > mode-assigned > global default.
+    Research deserves the mode-assigned model in particular -- people point this
+    mode at their biggest reasoning model on purpose."""
+    if requested:
+        return requested
+    mode_models = await s.db.get_setting("mode_models", {}) or {}
+    return mode_models.get("research", "") or await s.db.get_setting("default_model", "")
+
+
+@router.post("/research/plan")
+async def research_plan(request: Request, body: ResearchPlanRequest) -> dict:
+    """Decompose only. Deliberately NOT part of the run stream: the user edits
+    this list before anything is searched, so it has to come back as a plain
+    response they can sit on for as long as they like."""
+    s = state(request)
+    model = await _research_model(s, body.model)
+    if not model:
+        raise ArthurError("No model selected. Pick one in the model menu.", detail={})
+    subs = await s.research.plan(body.question, body.depth, model)
+    return {"sub_questions": subs, "depth": body.depth}
+
+
+@router.post("/research/run")
+async def research_run(request: Request, body: ResearchRunRequest) -> EventSourceResponse:
+    """Same queue-bridge shape as /chat/stream (see this module's docstring):
+    the engine emits into a queue, the generator drains it to the wire, and a
+    client disconnect cancels the task -- which is exactly what the Stop button
+    does. Stopping keeps whatever the UI already received, because every event
+    was a complete object rather than a fragment."""
+    s = state(request)
+    model = await _research_model(s, body.model)
+    if not model:
+        raise ArthurError("No model selected. Pick one in the model menu.", detail={})
+
+    queue: asyncio.Queue[tuple[str, dict] | None] = asyncio.Queue()
+
+    async def emit(event: str, data: dict[str, Any]) -> None:
+        await queue.put((event, data))
+
+    async def run() -> None:
+        try:
+            await s.research.run(
+                question=body.question,
+                subs=body.sub_questions,
+                depth=body.depth,
+                source_kinds=body.sources,
+                model=model,
+                emit=emit,
+                include_domains=body.include_domains,
+                exclude_domains=body.exclude_domains,
+            )
+        except ArthurError as e:
+            await emit(events.ERROR, {"code": e.code, "message": e.message, **e.detail})
+        except Exception:
+            log.exception("research run crashed")
+            await emit(events.ERROR, {"code": "internal_error",
+                                      "message": "The investigation stopped unexpectedly. "
+                                                 "Everything gathered so far has been kept."})
+        finally:
+            await queue.put(None)
+
+    task = asyncio.create_task(run())
+
+    async def gen():
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                event, data = item
+                yield {"event": event, "data": _json(data)}
+        finally:
+            task.cancel()
 
     return EventSourceResponse(gen())
 

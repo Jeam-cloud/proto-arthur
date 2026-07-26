@@ -24,6 +24,7 @@ from core.personas import PersonaStore
 from memory.embedder import OllamaEmbedder
 from memory.service import MemoryService
 from memory.vector_store import build_vector_store
+from research.engine import ResearchEngine
 from sandbox.runner import SandboxRunner
 from security.approvals import ApprovalBroker
 from security.audit import AuditLog
@@ -64,6 +65,7 @@ class AppState:
     email_router: EmailRouter
     transcriber: Transcriber
     byok: BYOKRouter
+    research: ResearchEngine
 
 
 async def build_state(settings: Settings) -> AppState:
@@ -113,10 +115,17 @@ async def build_state(settings: Settings) -> AppState:
     byok = BYOKRouter(vault)
     chat = ChatService(settings, llm, conversations, personas, memory, gateway, agent,
                        byok_router=byok)
+    # Research mode does NOT go through the agent loop: an investigation is a
+    # fixed Python state machine, not a model deciding what to do next. It
+    # reuses the same vault/sandbox/embedder/gateway so the trust boundaries are
+    # identical to the chat-side research tool.
+    research = ResearchEngine(llm, vault, sandbox, embedder, gateway,
+                              allow_unsandboxed=allow_unsandboxed)
 
     return AppState(
         settings=settings, db=db, llm=llm, vault=vault, audit=audit, gateway=gateway,
         approvals=approvals, sandbox=sandbox, memory=memory, personas=personas,
         conversations=conversations, registry=registry, agent=agent, chat=chat,
         graph=graph, email_router=email_router, transcriber=Transcriber(), byok=byok,
+        research=research,
     )
