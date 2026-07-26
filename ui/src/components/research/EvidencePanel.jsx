@@ -71,13 +71,11 @@ export default function EvidencePanel({ variant = "report" }) {
               <option value="blog">Blogs</option>
             </select>
             <span className="evidence-filter-label">Used only</span>
-            <button
-              className={`switch${usedOnly ? " on" : ""}`}
-              onClick={toggleUsedOnly}
-              aria-pressed={usedOnly}
-            >
-              <span className="switch-thumb" />
-            </button>
+            <label className="switch" title="Hide sources the report did not cite">
+              <input type="checkbox" checked={usedOnly} onChange={toggleUsedOnly} />
+              <span className="track" />
+              <span className="thumb" />
+            </label>
           </div>
         )}
       </div>

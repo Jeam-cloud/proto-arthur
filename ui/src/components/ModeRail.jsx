@@ -32,7 +32,12 @@ export function LogoMark({ size = 18 }) {
 
 export const MODES = [
   { id: "general", label: "General", icon: MessageSquare },
-  { id: "research", label: "Research", needsDocker: true, icon: Search },
+  // Research deliberately does NOT list needsDocker. Docker only sandboxes the
+  // page-FETCHING step; without it, search snippets and paper abstracts still
+  // work, so the honest behaviour is to run degraded and say so (the banner in
+  // ResearchView) rather than lock the whole mode out. Code and Finance keep
+  // the requirement because their tools genuinely execute inside a container.
+  { id: "research", label: "Research", icon: Search },
   { id: "code", label: "Code", needsDocker: true, icon: Code2 },
   { id: "email", label: "Email", needsEmail: true, icon: Mail },
   { id: "finance", label: "Finance", needsDocker: true, icon: LineChart },

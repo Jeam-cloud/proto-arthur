@@ -6,6 +6,7 @@ import { initApi } from "./api/client";
 import { useBackend } from "./stores/backend";
 import { useConversations } from "./stores/conversations";
 import { useSettings } from "./stores/settings";
+import { useResearch } from "./stores/research";
 import ModeRail, { LogoMark } from "./components/ModeRail";
 import Sidebar from "./components/Sidebar";
 import ModelHub from "./components/ModelHub";
@@ -32,6 +33,9 @@ export default function App() {
   const [booted, setBooted] = useState(false);
   const [bootError, setBootError] = useState(null);
   const { phase, status, startPolling } = useBackend();
+  const researchStage = useResearch((s) => s.stage);
+  const researchWide =
+    view === "chat" && mode === "research" && (researchStage === "run" || researchStage === "report");
 
   useEffect(() => {
     (async () => {
@@ -95,7 +99,12 @@ export default function App() {
         hubActive={hubOpen}
         onOpenHub={() => setHubOpen(true)}
       />
-      <Sidebar view={view} mode={mode} setView={setView} onOpenPalette={() => setPaletteOpen(true)} />
+      {/* A running investigation takes the full width: the run screen already
+          carries its own run list on the left, and two stacked lists would be
+          two competing answers to "where am I". */}
+      {!researchWide && (
+        <Sidebar view={view} mode={mode} setView={setView} onOpenPalette={() => setPaletteOpen(true)} />
+      )}
       <div className="main-pane">
         <StatusBanner />
         <ErrorBoundary>

@@ -35,7 +35,6 @@ import asyncio
 import json
 import logging
 import time
-import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -563,7 +562,3 @@ def _pdf_text(data: bytes) -> str:
     except Exception as e:
         log.info("pdf extraction failed: %s", e)
         return ""
-
-
-def new_run_id() -> str:
-    return uuid.uuid4().hex[:12]

@@ -19,6 +19,7 @@ from core.deps import AppState
 from core.personas import PersonaStore
 from memory.service import MemoryService
 from memory.vector_store import InMemoryVectorStore
+from research.engine import ResearchEngine
 from security.approvals import ApprovalBroker
 from security.audit import AuditLog
 from security.gateway import SecurityGateway
@@ -98,11 +99,14 @@ async def app_state(settings, db, fake_llm, embedder, vault) -> AppState:
     chat = ChatService(settings, fake_llm, conversations, personas, memory, gateway, agent)
 
     email_router = EmailRouter(SmtpImapBackend(db, vault), GraphBackend(_NoGraph()))
+    sandbox = _NoSandbox()
+    research = ResearchEngine(fake_llm, vault, sandbox, embedder, gateway)
     return AppState(
         settings=settings, db=db, llm=fake_llm, vault=vault, audit=audit, gateway=gateway,
-        approvals=approvals, sandbox=_NoSandbox(), memory=memory, personas=personas,
+        approvals=approvals, sandbox=sandbox, memory=memory, personas=personas,
         conversations=conversations, registry=registry, agent=agent, chat=chat,
         graph=_NoGraph(), email_router=email_router, transcriber=None, byok=None,
+        research=research,
     )
 
 

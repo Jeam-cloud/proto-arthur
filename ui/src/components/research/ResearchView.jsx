@@ -28,7 +28,7 @@ export default function ResearchView({ onOpenIntegrations }) {
   // pages just do not get read in full. Saying so up front beats silently
   // producing a thinner report and letting the user wonder why.
   useEffect(() => {
-    if (status && status.docker === false) setDegraded(true);
+    if (status && status.docker_up === false) setDegraded(true);
   }, [status, setDegraded]);
 
   return (
