@@ -33,6 +33,15 @@ class ResearchRunRequest(BaseModel):
     model: str = Field(default="", max_length=100)
     include_domains: list[str] = Field(default_factory=list, max_length=20)
     exclude_domains: list[str] = Field(default_factory=list, max_length=20)
+    # Whole-paper length target in words; 0 means "no target, let the model
+    # decide", which is the default and the previous behaviour. The upper
+    # bound is not arbitrary: past roughly 6000 words a small local model is
+    # padding, not writing, and the run time stops being worth it.
+    target_words: int = Field(default=0, ge=0, le=6000)
+    # A page cap the client converts to words (see engine.words_for_pages).
+    # Sent as well as target_words so the server can honour whichever the user
+    # actually set without the client having to decide which wins.
+    max_pages: int = Field(default=0, ge=0, le=40)
 
     @field_validator("sub_questions")
     @classmethod
@@ -61,6 +70,8 @@ class ResearchSynthesizeRequest(BaseModel):
     # because the post-stop path may no longer have them, in which case the
     # engine recovers an outline from the sources' lane grouping instead.
     sub_questions: list[str] = Field(default_factory=list, max_length=8)
+    target_words: int = Field(default=0, ge=0, le=6000)
+    max_pages: int = Field(default=0, ge=0, le=40)
 
 
 class ResearchFindSourcesRequest(BaseModel):

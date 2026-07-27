@@ -62,11 +62,27 @@ export default function EvidencePanel({ variant = "report" }) {
     .filter((e) => !usedOnly || e.used);
 
   // Clicking a citation pill in the document scrolls its card into view.
+  //
+  // WHY the visibility check: hoverCite is the SAME field a card's own
+  // onMouseEnter sets (below). Scrolling this panel with the mouse wheel
+  // moves different cards under a stationary cursor, each firing
+  // onMouseEnter -> setHoverCite -> (without the check) an unconditional
+  // scrollTop write -- which fights the user's own scroll and reads as a
+  // glitch/jump while scrolling. Only force a scroll when the target card
+  // is NOT already on screen, which is true for the citation-pill-click case
+  // this effect exists for, and false for the "scrolled past it myself" case
+  // that was breaking.
   useEffect(() => {
     if (!hoverCite || variant !== "report") return;
     const el = cardRefs.current[hoverCite];
     const box = scrollRef.current;
-    if (el && box) box.scrollTop = Math.max(0, el.offsetTop - 12);
+    if (!el || !box) return;
+    const elTop = el.offsetTop;
+    const elBottom = elTop + el.offsetHeight;
+    const viewTop = box.scrollTop;
+    const viewBottom = viewTop + box.clientHeight;
+    if (elTop >= viewTop && elBottom <= viewBottom) return; // already visible
+    box.scrollTop = Math.max(0, elTop - 12);
   }, [hoverCite, variant]);
 
   // A contradiction is a fact about a PAIR, not about either card alone, so it

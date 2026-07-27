@@ -22,10 +22,31 @@ import { useToasts } from "./toasts";
 
 const STYLE_KEY = "arthur.research.style";
 
+// Each depth now carries a plain-English `desc` alongside the budget, and the
+// source COUNT has moved out of the budget line into the composer's summary
+// footer. The old label read "~8 sources · about 2 min", which asked the
+// reader to decode two units and a tilde before learning anything; the choice
+// people are actually making is "how thorough", so the card says that and the
+// footer states the consequence in a sentence.
 export const DEPTHS = {
-  quick: { label: "Quick", budget: "~4 sources · about 40 sec" },
-  standard: { label: "Standard", budget: "~8 sources · about 2 min" },
-  exhaustive: { label: "Exhaustive", budget: "~20 sources · about 6 min" },
+  quick: {
+    label: "Quick",
+    desc: "A short answer with a few sources",
+    budget: "About 40 seconds",
+    srcs: 4,
+  },
+  standard: {
+    label: "Standard",
+    desc: "A full paper, balanced coverage",
+    budget: "About 2 minutes",
+    srcs: 8,
+  },
+  exhaustive: {
+    label: "Exhaustive",
+    desc: "Wide reading, every claim checked twice",
+    budget: "About 6 minutes",
+    srcs: 20,
+  },
 };
 
 export const SOURCE_KINDS = [
@@ -33,7 +54,36 @@ export const SOURCE_KINDS = [
   { id: "academic", label: "Academic papers" },
   { id: "news", label: "News" },
   { id: "docs", label: "Docs" },
+  // "Other" is not a fifth search index -- there is no provider behind it.
+  // Selecting it opens a free-text box whose contents are appended to every
+  // sub-question as a qualifier ("...clinical trials only", "...UK law").
+  // WHY steer the QUERIES rather than invent a source type: the providers in
+  // research/providers.py are a fixed set, so a made-up kind would be silently
+  // dropped server-side and the user would never learn their input did
+  // nothing. Folding it into the query is a thing that visibly works.
+  { id: "other", label: "Other…", freeform: true },
 ];
+
+// Length presets. Words, not pages, because words are what the writer can
+// actually aim at -- pages are converted from words downstream at a fixed
+// 275 words/page (see engine.WORDS_PER_PAGE).
+//
+// The label carries the number rather than hiding it behind "Brief": someone
+// choosing a length is choosing a size, and "Short" alone does not say what
+// size. There is no "let the model decide" option any more -- an unbounded
+// local model writes whatever it writes, which was the least predictable
+// outcome sitting in the default slot.
+export const LENGTHS = [
+  { id: "brief", label: "Short — about 900 words", words: 900 },
+  { id: "standard", label: "Medium — about 1,800 words", words: 1800 },
+  { id: "extended", label: "Long — about 3,400 words", words: 3400 },
+  { id: "custom", label: "Custom…", words: -1 },
+];
+
+// Hard ceiling on the custom word box. Past this a local model pads rather
+// than writes, and the run time stops buying anything.
+export const MAX_WORDS = 6000;
+export const MAX_PAGES = 40;
 
 const RECENTS_KEY = "arthur.research.recents";
 
@@ -57,6 +107,15 @@ function saveRecents(list) {
   }
 }
 
+// Keeps a numeric text input numeric and inside the range the backend will
+// accept. Empty string is preserved rather than coerced to 0 so the field can
+// genuinely be blank ("no cap") instead of showing a 0 the user did not type.
+function clampNum(v, max) {
+  const digits = String(v).replace(/\D/g, "");
+  if (!digits) return "";
+  return String(Math.min(Number(digits), max));
+}
+
 function relativeDate(iso) {
   const then = new Date(iso);
   const days = Math.floor((Date.now() - then.getTime()) / 86_400_000);
@@ -70,6 +129,11 @@ const BLANK = {
   question: "",
   depth: "standard",
   sources: ["web", "academic"],
+  otherSource: "",     // free text behind the "Other…" chip
+  model: "",           // "" = follow Settings -> Models for research mode
+  length: "standard",  // one of LENGTHS[].id
+  customWords: "",     // only meaningful when length === "custom"
+  maxPages: "",        // "" = no page cap
   advanced: false,
   includeDomains: "",
   excludeDomains: "",
@@ -101,6 +165,11 @@ const BLANK = {
   finding: false,      // a "find more sources" search is running
   newSourceIds: [],    // arrived since the paper was written -> offer a rewrite
   modelWarning: "",    // set by /research/plan when the model looks too small
+  // Identifies the recents entry for the CURRENT investigation, set the
+  // moment a run starts (see run()/persistRun()) so progress can be saved
+  // incrementally instead of only at the very end. null before anything has
+  // been commissioned and after newInvestigation() resets the screen.
+  runId: null,
 };
 
 export const useResearch = create((set, get) => ({
@@ -132,6 +201,46 @@ export const useResearch = create((set, get) => ({
   toggleAdvanced: () => set((s) => ({ advanced: !s.advanced })),
   setIncludeDomains: (v) => set({ includeDomains: v }),
   setExcludeDomains: (v) => set({ excludeDomains: v }),
+  setOtherSource: (v) => set({ otherSource: v.slice(0, 200) }),
+  setModel: (model) => set({ model }),
+  setLength: (length) => set({ length }),
+  // Digits only, clamped on the way IN rather than on submit. Letting someone
+  // type 99999 and rejecting it at the end wastes their time; the box simply
+  // will not hold a number the backend would refuse (see ResearchRunRequest).
+  setCustomWords: (v) => set({ customWords: clampNum(v, MAX_WORDS) }),
+  setMaxPages: (v) => set({ maxPages: clampNum(v, MAX_PAGES) }),
+
+  // The single word target the run will use, derived from whichever controls
+  // are set. Kept here, not in the component, so the composer footer and the
+  // request body can never show different numbers.
+  targetWords() {
+    const s = get();
+    const preset = LENGTHS.find((l) => l.id === s.length);
+    const words = s.length === "custom" ? Number(s.customWords || 0) : (preset ? preset.words : 0);
+    const pages = Number(s.maxPages || 0);
+    const fromPages = pages ? Math.max(275, (pages - 1) * 275) : 0;
+    if (words > 0 && fromPages) return Math.min(words, fromPages);
+    return words > 0 ? words : fromPages;
+  },
+
+  // The composer footer, as one sentence in plain English.
+  //
+  // WHY a sentence and not a row of numbers: the old footer said
+  // "~8 sources · about 2 min", which is three units and a tilde to decode.
+  // This states what will happen and, more importantly, ends on the fact that
+  // matters most in a local-first app and that no other screen ever says out
+  // loud -- none of this leaves the machine.
+  summary() {
+    const s = get();
+    const srcs = (DEPTHS[s.depth] || DEPTHS.standard).srcs;
+    const words = get().targetWords();
+    const length = words
+      ? `write about ${words.toLocaleString()} words`
+      : "write a paper";
+    const pages = Number(s.maxPages || 0);
+    const cap = pages ? `, capped at ${pages} page${pages === 1 ? "" : "s"}` : "";
+    return `Arthur will read about ${srcs} sources and ${length}${cap}. Nothing leaves this computer.`;
+  },
 
   // ---------- plan ----------
   async toPlan() {
@@ -139,7 +248,7 @@ export const useResearch = create((set, get) => ({
     if (!question.trim()) return;
     set({ planning: true, fault: null });
     try {
-      const res = await planInvestigation({ question: question.trim(), depth });
+      const res = await planInvestigation({ question: question.trim(), depth, model: get().model });
       set({
         stage: "plan",
         planning: false,
@@ -175,8 +284,16 @@ export const useResearch = create((set, get) => ({
     const controller = new AbortController();
     abort = controller;
 
+    // Assigned here, not on completion: this is what lets the investigation
+    // be saved to Recent investigations the moment it starts (see
+    // persistRun() below) rather than only once a report is finished. Before
+    // this, a crash, a force-quit, or navigating away mid-run lost the whole
+    // thing -- there was nothing in recents to come back to.
+    const runId = `r${Date.now().toString(36)}`;
+
     set({
       stage: "run",
+      runId,
       lanes: subs.map((text, i) => ({
         id: `sq${i}`, text, state: "queued", read: 0, of: 0, srcs: 0, pass: 1,
       })),
@@ -190,18 +307,30 @@ export const useResearch = create((set, get) => ({
       statusText: "",
       stopped: false,
     });
+    get().persistRun("running");
     timer = setInterval(() => set((st) => ({ elapsed: st.elapsed + 1 })), 1000);
 
     const splitDomains = (v) =>
       v.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean).slice(0, 20);
 
     try {
+      // "other" is a UI-only chip: it carries no provider, so it is stripped
+      // from the kinds list and its text is folded into each sub-question
+      // instead. Sending it as a kind would have the server silently ignore
+      // it -- see SOURCE_KINDS.
+      const kinds = s.sources.filter((k) => k !== "other");
+      const qualifier = s.sources.includes("other") ? s.otherSource.trim() : "";
+      const queries = qualifier ? subs.map((q) => `${q} (${qualifier})`) : subs;
+
       const stream = runInvestigation(
         {
           question: s.question.trim(),
-          sub_questions: subs,
+          sub_questions: queries,
           depth: s.depth,
-          sources: s.sources,
+          sources: kinds.length ? kinds : ["web"],
+          model: s.model,
+          target_words: get().targetWords(),
+          max_pages: Number(s.maxPages || 0),
           include_domains: splitDomains(s.includeDomains),
           exclude_domains: splitDomains(s.excludeDomains),
         },
@@ -215,6 +344,11 @@ export const useResearch = create((set, get) => ({
         set({ fault: "failed", faultDetail: e.message || "The search provider stopped responding." });
       }
     } finally {
+      // The stream is over however it ended -- normally, aborted, or thrown.
+      // Clearing `writing` here rather than only on the `done` event means a
+      // dropped connection cannot leave the toolbar saying "Arthur is
+      // writing…" forever over a paper nothing is coming for.
+      set({ writing: false });
       stopTimer();
     }
   },
@@ -225,6 +359,11 @@ export const useResearch = create((set, get) => ({
         set((s) => ({
           lanes: s.lanes.map((l) => (l.id === data.id ? { ...l, ...data } : l)),
         }));
+        // Checkpoint recents when a lane SETTLES (done/thin/blocked), not on
+        // every state change -- frequent enough that an interrupted run is
+        // never far from its last save, rare enough not to hammer
+        // localStorage on every "searching" -> "reading" tick.
+        if (["done", "thin", "blocked"].includes(data.state)) get().persistRun("running");
         break;
 
       case "research_source":
@@ -264,47 +403,63 @@ export const useResearch = create((set, get) => ({
         break;
 
       case "research_paper":
-        set({
-          paper: { title: data.title, abstract: data.abstract, question: data.question },
-          sections: (data.sections || []).slice().sort((a, b) => a.order - b.order),
+        // Two different emits arrive on this event and they must be handled
+        // differently. The engine now sends a PROVISIONAL paper (title only,
+        // `sections: []`) before writing starts, so a run that gets cut short
+        // still has a titled document instead of "Untitled paper"; the real
+        // one arrives at the end carrying every section. Blindly assigning
+        // `data.sections` would let the provisional emit wipe the sections
+        // that streamed in ahead of it, so an empty list means "keep what we
+        // have" rather than "the paper has no sections".
+        set((s) => ({
+          paper: {
+            title: data.title,
+            // Same rule for the abstract: the provisional emit has none, and
+            // clearing a real one would be a visible regression on screen.
+            abstract: data.abstract || (s.paper && s.paper.abstract) || "",
+            question: data.question,
+          },
+          sections: (data.sections || []).length
+            ? data.sections.slice().sort((a, b) => a.order - b.order)
+            : s.sections,
           stage: "report",
-        });
+        }));
         break;
 
       case "error":
+        set({ writing: false });
         if (data.code === "tavily_missing") set({ fault: "tavily" });
         else if (data.code === "zero_results") set({ fault: "zero" });
         else set({ fault: "failed", faultDetail: data.message || "" });
         break;
 
-      case "done":
-        set((s) => {
-          // A find-more-sources stream also ends in `done`, but it wrote no
-          // paper and must not create a recents entry.
-          if (!s.sections.length) return { stage: s.stage };
-          const entry = {
-            id: `r${Date.now().toString(36)}`,
-            title: (s.paper && s.paper.title) || s.question.slice(0, 90),
-            at: new Date().toISOString(),
-            sources: data.sources || s.evidence.length,
-            independent: data.independent || 0,
-            status: s.lanes.some((l) => l.state === "blocked") ? "partial" : "done",
-            snapshot: {
-              question: s.question, paper: s.paper, sections: s.sections,
-              evidence: s.evidence, subs: s.subs.map((q) => q.text),
-            },
-          };
-          const recents = [entry, ...s.recents.filter((r) => r.title !== entry.title)];
-          saveRecents(recents);
-          return { stage: "report", recents };
-        });
+      case "done": {
+        // A find-more-sources stream also ends in `done`, but it wrote no
+        // paper and must not create/update a recents entry.
+        const s = get();
+        if (!s.sections.length) break;
+        set({ stage: "report", writing: false, statusText: "" });
+        get().persistRun(get().lanes.some((l) => l.state === "blocked") ? "partial" : "done");
         break;
+      }
 
       case "status":
         // Surfaced verbatim on the run screen (see ResearchRun.jsx) so "all
         // lanes done, still no report" reads as "comparing sources / writing"
         // instead of looking stuck.
-        set({ statusText: data.text || "" });
+        //
+        // `phase` does the same job for the REPORT screen, which had no such
+        // signal at all: the moment the first section streamed in, the stage
+        // flipped to "report" and the toolbar showed a source count, which
+        // reads as a finished paper. A run that was still writing for another
+        // two minutes therefore looked like one that had produced a single
+        // paragraph and stopped -- the "so many sources, nothing generated"
+        // symptom. `writing` keeps the toolbar honest until the paper lands.
+        set({
+          statusText: data.text || "",
+          ...(data.phase === "writing" ? { writing: true } : {}),
+          ...(data.phase === "done" ? { writing: false } : {}),
+        });
         break;
 
       default:
@@ -330,6 +485,11 @@ export const useResearch = create((set, get) => ({
       useToasts.getState().push("Stopped before the paper was written. Nothing gathered was lost.", "info");
       return { stopped: true, statusText: "" };
     });
+    // Save whatever exists NOW. Without this, stopping mid-run and then
+    // navigating home (or the app closing) lost every source that had been
+    // gathered, because only the final `done` event used to write to
+    // recents -- exactly the "I have to start a completely new one" bug.
+    if (get().evidence.length) get().persistRun("partial");
   },
 
   // Writes (or rewrites) the paper from the sources currently held. Used both
@@ -353,6 +513,9 @@ export const useResearch = create((set, get) => ({
           question: s.question.trim(),
           sources: s.evidence,
           sub_questions: s.subs.map((q) => q.text).filter(Boolean),
+          model: s.model,
+          target_words: get().targetWords(),
+          max_pages: Number(s.maxPages || 0),
         },
         { signal: controller.signal },
       );
@@ -408,17 +571,67 @@ export const useResearch = create((set, get) => ({
   },
   setCustomStyle: (customStyle) => set({ customStyle }),
 
+  // ---------- copy ----------
+  // Puts the whole paper on the clipboard in BOTH rich and plain form, so it
+  // pastes as a formatted document into Word/Docs and as clean text into a
+  // plain editor. Citations are rendered into the prose exactly as they are on
+  // export -- pasting a paper full of raw [3] markers would defeat the point.
+  async copyPaper() {
+    const s = get();
+    if (!s.sections.length) {
+      useToasts.getState().push("Nothing to copy yet.", "info");
+      return;
+    }
+    const state = { paper: s.paper, sections: s.sections, evidence: s.evidence, style: s.style };
+    const { paperToHtml, paperToText } = await import("../lib/paperDoc");
+    const html = paperToHtml(state);
+    const text = paperToText(state);
+    try {
+      // The rich path needs ClipboardItem, which older Electron/Chromium
+      // builds lack. Falling back to writeText still gets the user their
+      // paper -- losing the formatting is a far smaller failure than losing
+      // the copy.
+      if (window.ClipboardItem && navigator.clipboard?.write) {
+        await navigator.clipboard.write([new window.ClipboardItem({
+          "text/html": new Blob([html], { type: "text/html" }),
+          "text/plain": new Blob([text], { type: "text/plain" }),
+        })]);
+        useToasts.getState().push("Paper copied, formatting included.", "success");
+      } else {
+        await navigator.clipboard.writeText(text);
+        useToasts.getState().push("Paper copied as plain text.", "success");
+      }
+    } catch (e) {
+      useToasts.getState().push(e.message || "Copy failed.", "error");
+    }
+  },
+
   // ---------- export ----------
   async exportAs(fmt) {
     const s = get();
-    if (!s.paper || !s.sections.length) return;
+    // `s.paper` can be null even though sections exist -- e.g. writing was
+    // interrupted before the title/abstract step ran. The doc still shows a
+    // "Untitled paper" fallback on screen (see ResearchPaper.jsx), so Export
+    // must use that SAME fallback rather than silently doing nothing, which
+    // is what made Export look broken: the button just quietly returned here
+    // with no toast and no network call.
+    if (!s.sections.length) {
+      useToasts.getState().push("Nothing to export yet.", "info");
+      return;
+    }
+    const paper = s.paper || { title: s.question.slice(0, 90) || "Untitled paper", abstract: "", question: s.question };
     try {
       const { blob, filename } = await exportPaper({
-        paper: { ...s.paper, sections: s.sections },
+        paper: { ...paper, sections: s.sections },
         sources: s.evidence,
         fmt,
         style: s.style,
         custom_style: s.customStyle,
+        // Only read server-side when the style is "custom" -- that is the one
+        // citation path that asks a model to format references. Sending the
+        // investigation's chosen model keeps that consistent with the rest of
+        // the run instead of silently falling back to the global default.
+        model: s.model,
       });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
@@ -427,7 +640,46 @@ export const useResearch = create((set, get) => ({
       URL.revokeObjectURL(a.href);
       useToasts.getState().push(`Exported as ${fmt.toUpperCase()}.`, "success");
     } catch (e) {
+      // The backend renderer is the good one (real .docx tables, tested
+      // bibliography), so it is always tried first. But a person looking at a
+      // finished paper they cannot get out of the app is stuck, and "Export
+      // failed" is not an answer. When the failure was the CONNECTION rather
+      // than the document, render it here in the browser instead.
+      if (e.code === "export_unreachable") {
+        await get().exportLocally(fmt, e.message);
+        return;
+      }
       useToasts.getState().push(e.message || "Export failed.", "error");
+    }
+  },
+
+  // Browser-only renderer. Needs no backend, no Python, no libraries -- see
+  // lib/paperDoc.js for why each format is produced the way it is.
+  async exportLocally(fmt, reason) {
+    const s = get();
+    const paper = s.paper || { title: s.question.slice(0, 90) || "Untitled paper", abstract: "", question: s.question };
+    const state = { paper, sections: s.sections, evidence: s.evidence, style: s.style };
+    const { paperToDocBlob, printPaper } = await import("../lib/paperDoc");
+    try {
+      if (fmt === "pdf") {
+        printPaper(state);
+        useToasts.getState().push(
+          `${reason} Opened the print dialog instead — choose "Save as PDF".`, "info", 9000,
+        );
+        return;
+      }
+      const blob = paperToDocBlob(state);
+      const safe = (paper.title || "paper").replace(/[^\w \-]/g, "").trim().replace(/\s+/g, "-") || "paper";
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `${safe}.doc`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      useToasts.getState().push(
+        `${reason} Saved a Word-readable .doc from the browser instead.`, "info", 9000,
+      );
+    } catch (err) {
+      useToasts.getState().push(err.message || "Export failed both ways.", "error");
     }
   },
 
@@ -435,7 +687,52 @@ export const useResearch = create((set, get) => ({
     if (abort) abort.abort();
     abort = null;
     stopTimer();
-    set({ ...BLANK, recents: get().recents, degraded: get().degraded });
+    const s = get();
+    // Model and length carry over. They are preferences about how this person
+    // works, not properties of one investigation -- someone who picked a
+    // bigger model and a 2000-word target wants that next time too, the same
+    // reason citation style persists. Everything else resets.
+    set({
+      ...BLANK,
+      recents: s.recents,
+      degraded: s.degraded,
+      model: s.model,
+      length: s.length,
+      customWords: s.customWords,
+      maxPages: s.maxPages,
+    });
+  },
+
+  // Upserts the CURRENT investigation into recents by `runId`, called at
+  // every meaningful checkpoint (run start, a lane settling, stop, done) --
+  // see run()/stop()/applyEvent() above. Keyed by id rather than title (the
+  // old approach) so the SAME investigation is updated in place instead of
+  // spawning a fresh entry every time it progresses.
+  persistRun(status) {
+    const s = get();
+    if (!s.runId) return;
+    const prior = s.recents.find((r) => r.id === s.runId);
+    const entry = {
+      id: s.runId,
+      title: (s.paper && s.paper.title) || s.question.slice(0, 90) || "Untitled investigation",
+      at: (prior && prior.at) || new Date().toISOString(),
+      sources: s.evidence.length,
+      independent: new Set(s.evidence.map((e) => e.publisher || e.domain).filter(Boolean)).size,
+      status,
+      snapshot: {
+        question: s.question, paper: s.paper, sections: s.sections,
+        evidence: s.evidence, subs: s.subs.map((q) => q.text),
+      },
+    };
+    const recents = [entry, ...s.recents.filter((r) => r.id !== entry.id)];
+    saveRecents(recents);
+    set({ recents });
+  },
+
+  deleteRecent: (id) => {
+    const recents = get().recents.filter((r) => r.id !== id);
+    saveRecents(recents);
+    set({ recents });
   },
 
   openRecent: (id) => {
@@ -444,8 +741,16 @@ export const useResearch = create((set, get) => ({
     stopTimer();
     const r = get().recents.find((x) => x.id === id);
     if (!r || !r.snapshot) return;
+    // An interrupted investigation (stopped or crashed before a paper was
+    // written) has evidence but no paper/sections. Sending it to "report"
+    // would show a permanent "Writing the paper…" spinner (see
+    // ResearchPaper's `!paper && !sections.length` guard) since nothing is
+    // ever going to arrive. Route it to "run" instead, where the gathered
+    // evidence and the "Write the report" button are actually usable.
+    const hasPaper = !!(r.snapshot.paper || (r.snapshot.sections || []).length);
     set({
-      stage: "report",
+      stage: hasPaper ? "report" : "run",
+      runId: r.id,
       question: r.snapshot.question,
       paper: r.snapshot.paper || null,
       sections: r.snapshot.sections || [],
@@ -454,7 +759,7 @@ export const useResearch = create((set, get) => ({
       lanes: [],
       fault: null,
       cursorBlock: null,
-      stopped: false,
+      stopped: !hasPaper,
       writing: false,
       statusText: "",
       newSourceIds: [],

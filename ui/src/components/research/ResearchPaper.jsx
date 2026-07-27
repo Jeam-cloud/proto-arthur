@@ -18,7 +18,7 @@
 // the citations, so there is nothing to regenerate -- see lib/citeFormat.js.
 import React, { useEffect, useRef, useState } from "react";
 import {
-  Download, FileText, Loader2, PanelRight, Plus, Search, Trash2,
+  ClipboardCheck, Copy, Download, FileText, Loader2, PanelRight, Plus, Search, Trash2,
 } from "lucide-react";
 import { useResearch } from "../../stores/research";
 import { STYLES, HEADINGS, inTextLabel, isNumericStyle, referenceLine, orderReferences }
@@ -55,7 +55,7 @@ export default function ResearchPaper() {
   const {
     setStyle, setCustomStyle, toggleEvidencePanel, exportAs, findMore,
     editParagraph, editHeading, editTitle, editAbstract, deleteParagraph,
-    setHoverCite, toggleEv, clearFocusSource, writeReportNow,
+    setHoverCite, toggleEv, clearFocusSource, writeReportNow, copyPaper,
   } = useResearch();
 
   const [editing, setEditing] = useState(null);   // "title" | "abstract" | paraId | headingId
@@ -63,6 +63,10 @@ export default function ResearchPaper() {
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
   const [exportOpen, setExportOpen] = useState(false);
+  // A two-second tick on the button itself. The toast already confirms the
+  // copy, but the confirmation people actually look for is on the control they
+  // just pressed -- without it the click feels like it did nothing.
+  const [copied, setCopied] = useState(false);
   const docRef = useRef(null);
   const paraRefs = useRef({});
 
@@ -133,12 +137,32 @@ export default function ResearchPaper() {
             />
           )}
 
+          {/* While writing, the source count is not just uninteresting, it is
+              MISLEADING: it counts citations in the sections written so far and
+              reads as a finished tally. "1 of 42 sources cited" on a paper
+              still being written is why a working run looked like a failed one. */}
           <span className="research-doc-status">
-            {writing ? "Arthur is writing…" : `${cited.length} of ${evidence.length} sources cited`}
+            {writing
+              ? <><Loader2 size={12} className="spin" /> Arthur is writing — {sections.length} section{sections.length === 1 ? "" : "s"} so far</>
+              : `${cited.length} of ${evidence.length} sources cited`}
           </span>
 
           <button className="btn tiny" disabled={finding} onClick={() => setFindOpen(true)}>
             {finding ? <><Loader2 size={13} className="spin" /> Searching</> : <><Plus size={13} strokeWidth={1.9} /> Find more sources</>}
+          </button>
+
+          <button
+            className="btn tiny"
+            title="Copy the whole paper, with citations rendered in the chosen style"
+            onClick={async () => {
+              await copyPaper();
+              setCopied(true);
+              setTimeout(() => setCopied(false), 2000);
+            }}
+          >
+            {copied
+              ? <><ClipboardCheck size={13} strokeWidth={1.8} /> Copied</>
+              : <><Copy size={13} strokeWidth={1.8} /> Copy</>}
           </button>
 
           <div className="paper-export">

@@ -21,15 +21,32 @@ import { useToasts } from "../../stores/toasts";
 
 let recsCache = { at: 0, data: null };
 
-export default function ModelMenu({ conversationId, mode }) {
+// `value` / `onChange` make this reusable OUTSIDE a conversation.
+//
+// Research mode needs the same picker -- same recommendations, same
+// install-inline behaviour -- but its selection belongs to an investigation,
+// not to a chat, so there is no conversationId to key the chat store by. When
+// both props are given the component becomes controlled and ignores the chat
+// store entirely; when they are absent it behaves exactly as before. This is
+// the standard controlled/uncontrolled pattern, and it beats the alternative
+// of a second near-identical picker that would drift out of sync with this
+// one the first time either changed.
+export default function ModelMenu({ conversationId, mode, value, onChange, placement = "up" }) {
+  const controlled = typeof onChange === "function";
   const [open, setOpen] = useState(false);
   const [recs, setRecs] = useState(recsCache.data);
   const [pulling, setPulling] = useState(null); // {model, pct}
   const panelRef = useRef(null);
   const { status, refreshStatus } = useBackend();
   const settingsValues = useSettings((s) => s.values);
-  const override = useChat((s) => s.modelOverride[conversationId] || "");
-  const setOverride = useChat((s) => s.setModelOverride);
+  // Hooks must run unconditionally, so the chat store is always subscribed;
+  // its value is simply not used in controlled mode.
+  const chatOverride = useChat((s) => s.modelOverride[conversationId] || "");
+  const setChatOverride = useChat((s) => s.setModelOverride);
+  const override = controlled ? (value || "") : chatOverride;
+  const setOverride = controlled
+    ? (_id, model) => onChange(model)
+    : setChatOverride;
   const pushToast = useToasts((s) => s.push);
 
   useEffect(() => {
@@ -86,7 +103,7 @@ export default function ModelMenu({ conversationId, mode }) {
       </button>
 
       {open && (
-        <div className="model-panel">
+        <div className={`model-panel${placement === "down" ? " down" : ""}`}>
           <div className="model-panel-head">
             <Cpu size={12} /> Best for {mode}
             {recs && <span className="model-budget">{recs.budget_gb}GB usable</span>}

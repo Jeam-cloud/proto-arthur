@@ -33,8 +33,16 @@ export default function ResearchRun() {
   const writing = useResearch((s) => s.writing);
   const stop = useResearch((s) => s.stop);
   const writeReportNow = useResearch((s) => s.writeReportNow);
+  const runId = useResearch((s) => s.runId);
   const rawRecents = useResearch((s) => s.recents);
-  const recents = useMemo(() => recentRows(rawRecents), [rawRecents]);
+  // The current run now gets checkpointed into `recents` as it progresses
+  // (see persistRun() in stores/research.js), so without filtering it out
+  // here it would show up TWICE: once as the hardcoded "active" row below,
+  // and again inside this list with the same "running" status.
+  const recents = useMemo(
+    () => recentRows(rawRecents.filter((r) => r.id !== runId)),
+    [rawRecents, runId],
+  );
   const openRecent = useResearch((s) => s.openRecent);
 
   const settled = lanes.filter((l) => ["done", "thin", "blocked"].includes(l.state)).length;

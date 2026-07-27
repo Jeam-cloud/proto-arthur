@@ -54,7 +54,10 @@ class FakeLLM:
         self.calls: list[dict] = []
 
     async def chat_json(self, model, messages, schema, temperature=0.0):
-        self.calls.append({"model": model, "schema": schema})
+        # `messages` is recorded too: the length-budget tests assert on what
+        # the prompt actually said, which is the only way to tell a target that
+        # reached the model from one that was quietly dropped on the way.
+        self.calls.append({"model": model, "schema": schema, "messages": messages})
         return self._replies.pop(0) if self._replies else None
 
 
@@ -341,14 +344,74 @@ class TestPaperAssembly:
         await eng._write_paper("q", [source(1, "a.com")], ["one theme"], "m", emit)
 
         names = [e for e, _ in emit.events]
+        # The REAL title is the last event. (Index 0 is the provisional one --
+        # see the next test.)
         assert names[-1] == "research_paper"
-        assert emit.of("research_paper")[0]["title"] == "T"
+        assert emit.of("research_paper")[-1]["title"] == "T"
+        assert emit.of("research_paper")[-1]["abstract"] == "A"
+
+    async def test_a_provisional_title_is_emitted_before_any_section(self):
+        # A write that gets cut short -- stopped, timed out, disconnected --
+        # never reaches the title step, which used to leave the reader looking
+        # at "Untitled paper". A placeholder up front means the document always
+        # has a name, and it carries NO sections so it cannot clobber the ones
+        # streaming in behind it (see the research_paper handler in
+        # stores/research.js).
+        eng = make_engine([])
+        emit = CollectingEmit()
+        await eng._write_paper("do vaccines work", [source(1, "a.com")], ["one"], "m", emit)
+
+        names = [e for e, _ in emit.events]
+        assert names[0] == "research_paper"
+        first = emit.of("research_paper")[0]
+        assert first["title"] == "Do vaccines work"
+        assert first["sections"] == []
 
     async def test_a_dead_model_still_produces_a_titled_paper(self):
         eng = make_engine([])  # every call returns None
         emit = CollectingEmit()
         await eng._write_paper("why is the sky blue", [source(1, "a.com")], ["one"], "m", emit)
-        assert emit.of("research_paper")[0]["title"]
+        assert emit.of("research_paper")[-1]["title"]
+
+
+class TestLengthBudget:
+    """The word target the composer sends is a real constraint, not decoration."""
+
+    def test_no_target_means_no_instruction(self):
+        from research.engine import _word_budget
+        assert _word_budget(0, 3) == {"intro": 0, "theme": 0, "discussion": 0, "conclusion": 0}
+
+    def test_themes_get_the_bulk_and_the_conclusion_the_least(self):
+        from research.engine import _word_budget
+        b = _word_budget(2000, 1)
+        assert b["theme"] > b["discussion"] > b["intro"] > b["conclusion"]
+
+    def test_the_split_stays_near_the_total(self):
+        from research.engine import _word_budget
+        n = 4
+        b = _word_budget(2000, n)
+        total = b["intro"] + b["conclusion"] + b["discussion"] + b["theme"] * n
+        assert 1900 <= total <= 2100
+
+    def test_page_cap_reserves_a_page_for_the_bibliography(self):
+        from research.engine import WORDS_PER_PAGE, words_for_pages
+        assert words_for_pages(5) == 4 * WORDS_PER_PAGE
+        # A one-page paper still gets a page of body rather than zero words.
+        assert words_for_pages(1) == WORDS_PER_PAGE
+
+    async def test_the_target_reaches_the_prompt(self):
+        eng = make_engine([section([{"text": "x", "citations": [1]}])])
+        by_n = {1: source(1, "a.com")}
+        await eng._write_section("m", "H", "brief", list(by_n.values()), by_n, words=400)
+        sent = eng._llm.calls[-1]["messages"][-1]["content"]
+        assert "340-460 words" in sent
+
+    async def test_no_target_adds_nothing_to_the_prompt(self):
+        eng = make_engine([section([{"text": "x", "citations": [1]}])])
+        by_n = {1: source(1, "a.com")}
+        await eng._write_section("m", "H", "brief", list(by_n.values()), by_n)
+        sent = eng._llm.calls[-1]["messages"][-1]["content"]
+        assert "words in this section" not in sent
 
 
 class TestConflicts:

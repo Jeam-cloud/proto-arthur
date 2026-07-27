@@ -270,6 +270,21 @@ async def _research_model(s: AppState, requested: str) -> str:
     return mode_models.get("research", "") or await s.db.get_setting("default_model", "")
 
 
+def _target_words(body: Any) -> int:
+    """One length target from two controls the user may set either of.
+
+    They are not combined: the SMALLER wins when both are set. If someone asks
+    for 3000 words but caps the paper at 4 pages, the cap is the real
+    constraint and writing 3000 words would break the promise the cap made.
+    """
+    words = getattr(body, "target_words", 0) or 0
+    pages = getattr(body, "max_pages", 0) or 0
+    from_pages = research_engine.words_for_pages(pages) if pages else 0
+    if words and from_pages:
+        return min(words, from_pages)
+    return words or from_pages
+
+
 @router.post("/research/plan")
 async def research_plan(request: Request, body: ResearchPlanRequest) -> dict:
     """Decompose only. Deliberately NOT part of the run stream: the user edits
@@ -322,6 +337,7 @@ async def research_run(request: Request, body: ResearchRunRequest) -> EventSourc
                 emit=emit,
                 include_domains=body.include_domains,
                 exclude_domains=body.exclude_domains,
+                target_words=_target_words(body),
             )
         except ArthurError as e:
             await emit(events.ERROR, {"code": e.code, "message": e.message, **e.detail})
@@ -372,7 +388,7 @@ async def research_synthesize(request: Request, body: ResearchSynthesizeRequest)
         try:
             await s.research.synthesize_only(
                 question=body.question, sources=body.sources, model=model, emit=emit,
-                subs=body.sub_questions,
+                subs=body.sub_questions, target_words=_target_words(body),
             )
         except ArthurError as e:
             await emit(events.ERROR, {"code": e.code, "message": e.message, **e.detail})

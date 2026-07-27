@@ -130,7 +130,12 @@ SECTION_SCHEMA = {
                 "required": ["text", "citations"],
             },
             "minItems": 1,
-            "maxItems": 6,
+            # Raised from 6 when word targets arrived. A 1200-word thematic
+            # section is about eleven paragraphs, so a cap of 6 would have made
+            # the target physically unreachable -- the schema would have
+            # silently overruled the instruction and the user would have seen a
+            # length control that did nothing.
+            "maxItems": 14,
         },
         # A table, only when the section genuinely compares the same handful of
         # attributes across several things. Optional in the schema on purpose:
@@ -240,6 +245,7 @@ class ResearchEngine:
         emit: Emit,
         include_domains: list[str] | None = None,
         exclude_domains: list[str] | None = None,
+        target_words: int = 0,
     ) -> None:
         cfg = DEPTHS.get(depth, DEPTHS["standard"])
         tavily_key = self._vault.get("tavily") or ""
@@ -386,11 +392,12 @@ class ResearchEngine:
                                       "message": "Every sub-question returned empty."})
             return
 
-        await self._finish(question, collected, model, emit, started, subs)
+        await self._finish(question, collected, model, emit, started, subs,
+                           target_words=target_words)
 
     async def synthesize_only(
         self, question: str, sources: list[dict], model: str, emit: Emit,
-        subs: list[str] | None = None,
+        subs: list[str] | None = None, target_words: int = 0,
     ) -> None:
         """Steps 4+5 (contradictions, then the report) run WITHOUT searching
         again, over sources the caller already has.
@@ -411,7 +418,8 @@ class ResearchEngine:
             await emit(events.ERROR, {"code": "zero_results",
                                       "message": "There is nothing to write a report from yet."})
             return
-        await self._finish(question, sources, model, emit, started, subs or [])
+        await self._finish(question, sources, model, emit, started, subs or [],
+                           target_words=target_words)
 
     async def find_more(
         self, query: str, existing: list[dict], source_kinds: list[str], emit: Emit,
@@ -479,7 +487,7 @@ class ResearchEngine:
 
     async def _finish(
         self, question: str, collected: list[dict], model: str, emit: Emit, started: float,
-        subs: list[str] | None = None,
+        subs: list[str] | None = None, target_words: int = 0,
     ) -> None:
         # ---------------- step 4: contradictions ----------------
         await emit(events.STATUS, {"text": "Comparing sources against each other"})
@@ -492,17 +500,25 @@ class ResearchEngine:
             await emit(events.RESEARCH_SOURCE, collected[b - 1])
 
         # ---------------- step 5: write the paper ----------------
-        await emit(events.STATUS, {"text": "Writing the paper"})
+        # `phase` is what lets the UI tell "still writing" apart from
+        # "finished". Without it the report screen showed a source count the
+        # moment the FIRST section arrived, which reads as a completed paper,
+        # so a run that was quietly still working for another two minutes
+        # looked like a run that had produced one paragraph and given up. The
+        # text is for the human; the phase is for the client.
+        await emit(events.STATUS, {"text": "Writing the paper", "phase": "writing"})
         # Without an approved plan (the "write from what we already have" path
         # after a stop), recover the section structure from which lane each
         # source came back on -- the sub-questions are gone but their grouping
         # survives on the sources themselves.
         outline = subs or _outline_from_sources(collected, question)
-        await self._write_paper(question, collected, outline, model, emit)
+        await self._write_paper(question, collected, outline, model, emit,
+                                target_words=target_words)
         for src in collected:
             if src["used"]:
                 await emit(events.RESEARCH_SOURCE, src)
 
+        await emit(events.STATUS, {"text": "", "phase": "done"})
         await emit(events.DONE, {
             "sources": len(collected),
             "independent": len({s.get("publisher") or s.get("domain") for s in collected}),
@@ -651,6 +667,7 @@ class ResearchEngine:
 
     async def _write_paper(
         self, question: str, sources: list[dict], subs: list[str], model: str, emit: Emit,
+        target_words: int = 0,
     ) -> None:
         """Build a literature review, one section at a time.
 
@@ -669,6 +686,30 @@ class ResearchEngine:
         by_n = {s["n"]: s for s in sources}
         sections: list[dict] = []
 
+        # A provisional title, emitted BEFORE any section is written.
+        #
+        # WHY up front, when the real title is written last from the finished
+        # body: `paper` stays null on the client until this event arrives (see
+        # ResearchPaper.jsx), so a write that was cut short -- stopped, timed
+        # out, disconnected -- left the user staring at a document headed
+        # "Untitled paper". The title step is the LAST thing this function
+        # does, which is exactly the thing a truncated run never reaches. A
+        # placeholder derived from the question costs one emit and guarantees
+        # the paper always has a name; the real one overwrites it below.
+        await emit(events.RESEARCH_PAPER, {
+            "title": _title_case(question[:90]),
+            "abstract": "",
+            "question": question,
+            "sections": [],  # empty => the client keeps whatever it has streamed
+        })
+
+        # How long each section should be. Split across Introduction + one per
+        # sub-question + Discussion + Conclusion, with the short sections given
+        # less than the thematic ones because that is how papers are actually
+        # shaped -- an even split produces a conclusion as long as a findings
+        # section, which reads wrong.
+        budget = _word_budget(target_words, len(subs))
+
         async def add_section(heading: str, paragraphs: list[dict], kind: str) -> None:
             sec = {
                 "id": f"s{len(sections) + 1}",
@@ -680,11 +721,45 @@ class ResearchEngine:
             sections.append(sec)
             await emit(events.RESEARCH_SECTION, sec)
 
+        # `_write_section` already swallows failures from the MODEL CALL itself
+        # (see its own try/except around chat_json) and falls back to a bare
+        # cited extract when the model returns nothing usable. This wrapper
+        # covers the other failure mode: something raising from THIS function
+        # for a reason that has nothing to do with the model (a bad value
+        # slipping through, an embedder hiccup, anything unforeseen). Without
+        # it, one bad section aborted the whole rest of the paper -- the loop
+        # below never reached Discussion, Conclusion, or the title/abstract
+        # step, which is exactly what produced a paper with only an
+        # Introduction and a title that fell back to "Untitled paper" client
+        # side (paper stays null until RESEARCH_PAPER is emitted -- see
+        # ResearchPaper.jsx). Every section is now guaranteed to produce
+        # SOMETHING, so the paper this function emits is always complete.
+        async def write_or_fallback(
+            *, heading: str, brief: str, sources: list[dict], words: int = 0,
+        ) -> tuple[list[dict], str]:
+            try:
+                return await self._write_section(
+                    model=model, heading=heading, brief=brief, sources=sources, by_n=by_n,
+                    words=words,
+                )
+            except Exception as e:
+                log.warning("section '%s' raised unexpectedly, using a bare fallback: %s", heading, e)
+                if not sources:
+                    return [], ""
+                best = sources[0]
+                by_n[best["n"]]["used"] = True
+                return [{
+                    "id": "p1",
+                    "text": (best.get("passage") or "")[:600].strip()
+                    or "No material could be summarised for this section.",
+                    "citations": [best["n"]],
+                    "conf": "thin",
+                }], ""
+
         # --- Introduction: framing only, drawn from the question and the plan.
         # Fixed headings ignore whatever the model proposes -- "Introduction"
         # is not a creative decision.
-        intro, _ = await self._write_section(
-            model=model,
+        intro, _ = await write_or_fallback(
             heading="Introduction",
             brief=(
                 f"Write the introduction to a literature review answering: {question}\n\n"
@@ -694,7 +769,7 @@ class ResearchEngine:
                 "what the review will cover. Do not state findings yet."
             ),
             sources=sources[:4],
-            by_n=by_n,
+            words=budget["intro"],
         )
         await add_section("Introduction", intro, "intro")
 
@@ -702,8 +777,7 @@ class ResearchEngine:
         # sources. This is the context discipline that makes small models work.
         for idx, sub in enumerate(subs):
             lane_sources = [s for s in sources if s.get("sub") == idx] or sources[:4]
-            written, proposed = await self._write_section(
-                model=model,
+            written, proposed = await write_or_fallback(
                 heading=sub,
                 brief=(
                     f"Write one section of a literature review. The overall question is: {question}\n\n"
@@ -713,7 +787,7 @@ class ResearchEngine:
                     "(not a question, not the sub-question verbatim)."
                 ),
                 sources=lane_sources,
-                by_n=by_n,
+                words=budget["theme"],
             )
             # Thematic sections DO take the model's heading when it gave one:
             # "Licensing and commercial use" reads better than the raw
@@ -723,8 +797,7 @@ class ResearchEngine:
         # --- Discussion: the only section allowed to reason ACROSS sections,
         # and the natural home for contradictions the pipeline already found.
         conflicts = [s for s in sources if s.get("contradicts")]
-        discussion, _ = await self._write_section(
-            model=model,
+        discussion, _ = await write_or_fallback(
             heading="Discussion",
             brief=(
                 f"Write the discussion section of a literature review on: {question}\n\n"
@@ -734,25 +807,27 @@ class ResearchEngine:
                    "rather than resolving them." if conflicts else "")
             ),
             sources=(conflicts or sources)[:8],
-            by_n=by_n,
+            words=budget["discussion"],
         )
         await add_section("Discussion", discussion, "discussion")
 
         # --- Conclusion: no new citations, by construction.
-        conclusion, _ = await self._write_section(
-            model=model,
+        conclusion, _ = await write_or_fallback(
             heading="Conclusion",
             brief=(
                 f"Write a short conclusion to a literature review on: {question}\n\n"
-                "Two or three sentences. State the overall picture and what would need to be "
-                "established next. Introduce no new claims."
+                "State the overall picture and what would need to be established next. "
+                "Introduce no new claims."
             ),
             sources=sources[:4],
-            by_n=by_n,
+            words=budget["conclusion"],
         )
         await add_section("Conclusion", conclusion, "conclusion")
 
-        # --- Title + abstract, written from the finished body.
+        # --- Title + abstract, written from the finished body. Already has its
+        # own internal try/except (falls back to a title cased from the
+        # question), so this call alone was never the failure -- it just used
+        # to never be REACHED when an earlier section blew up the loop.
         body = "\n\n".join(
             f"{sec['heading']}\n" + "\n".join(p["text"] for p in sec["paragraphs"])
             for sec in sections
@@ -767,6 +842,7 @@ class ResearchEngine:
 
     async def _write_section(
         self, model: str, heading: str, brief: str, sources: list[dict], by_n: dict[int, dict],
+        words: int = 0,
     ) -> tuple[list[dict], str]:
         """One section. Returns (paragraphs, heading the model proposed).
 
@@ -789,6 +865,22 @@ class ResearchEngine:
             f"[{s['n']}] {s['title']} ({s.get('domain') or s.get('venue')})\n{s.get('passage', '')[:900]}"
             for s in sources[:8]
         )
+        # A length instruction in WORDS, and only when the user asked for one.
+        #
+        # WHY a range rather than an exact number: no language model can count
+        # its own output, so "write exactly 400 words" is an instruction it
+        # cannot follow and will silently ignore -- and an ignored instruction
+        # costs context for nothing. A range it can aim at ("roughly 350-450")
+        # measurably shifts length, which is all that is actually being asked
+        # for. The real enforcement, if any, happens at export.
+        length_rule = ""
+        if words:
+            length_rule = (
+                f" Aim for roughly {int(words * 0.85)}-{int(words * 1.15)} words in this section: "
+                f"about {max(1, round(words / 110))} full paragraphs. Do not pad to reach the "
+                "length -- if the passages do not support more, write less."
+            )
+
         msgs = [
             {"role": "system", "content":
                 "You write sections of academic literature reviews. Rules: continuous prose in "
@@ -802,7 +894,7 @@ class ResearchEngine:
                 "compare facts that are actually in the passages -- never fill a cell by "
                 "inference. `row_sources` gives the source number backing each row, in row "
                 "order. If the material is not genuinely tabular, omit `table` entirely."},
-            {"role": "user", "content": f"{brief}\n\nSources:\n{numbered}"},
+            {"role": "user", "content": f"{brief}{length_rule}\n\nSources:\n{numbered}"},
         ]
         simple = model_is_small(model)
         try:
@@ -970,6 +1062,46 @@ def _outline_from_sources(sources: list[dict], question: str) -> list[str]:
     if not lanes:
         return [question]
     return [f"Findings from line of inquiry {i + 1}" for i in range(len(lanes))]
+
+
+# Rough words-per-page for a double-spaced 12pt Times page with 1in margins.
+# This is the standard figure every university style guide quotes, and it is
+# what the exporter actually produces, so a page cap converted with it lands
+# close in the real file rather than being a number the app made up.
+WORDS_PER_PAGE = 275
+
+
+def words_for_pages(pages: int) -> int:
+    """Page cap -> word target. Reserves one page for the reference list,
+    because a bibliography is part of what fills the page count the user
+    asked for and pretending otherwise would overshoot every time."""
+    return max(WORDS_PER_PAGE, (max(1, pages) - 1) * WORDS_PER_PAGE)
+
+
+def _word_budget(total: int, n_themes: int) -> dict[str, int]:
+    """Split a whole-paper word target across the sections.
+
+    The weights are not an even split on purpose. A literature review is
+    mostly its thematic sections; the introduction and conclusion are framing
+    and are meant to be short. An even split produces a conclusion the length
+    of a findings section, which is the most obvious sign of a paper written
+    to a word count rather than to a point.
+
+    A total of 0 means "no target" and disables the instruction entirely --
+    the model is then left alone, which is the previous behaviour and stays
+    the default.
+    """
+    if total <= 0:
+        return {"intro": 0, "theme": 0, "discussion": 0, "conclusion": 0}
+    themes = max(1, n_themes)
+    # intro 12%, conclusion 8%, discussion 20%, the rest shared by the themes.
+    theme_share = max(0.0, 1.0 - 0.12 - 0.08 - 0.20)
+    return {
+        "intro": max(80, round(total * 0.12)),
+        "conclusion": max(60, round(total * 0.08)),
+        "discussion": max(100, round(total * 0.20)),
+        "theme": max(100, round(total * theme_share / themes)),
+    }
 
 
 def _title_case(s: str) -> str:

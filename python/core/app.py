@@ -51,6 +51,13 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         allow_origins=["null", "http://localhost:5173", "http://127.0.0.1:5173"],
         allow_methods=["*"],
         allow_headers=["Authorization", "Content-Type"],
+        # WHY expose_headers: by default a cross-origin response hides EVERY
+        # header from JS except a short safelist, and Content-Disposition is
+        # not on it. The export route puts the chosen filename there (see
+        # /research/export), so without this line res.headers.get(
+        # "content-disposition") is null in the renderer and every download
+        # silently falls back to "paper.docx".
+        expose_headers=["Content-Disposition"],
     )
 
     @app.exception_handler(ArthurError)
