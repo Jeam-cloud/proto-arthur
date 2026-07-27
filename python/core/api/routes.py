@@ -20,15 +20,18 @@ import asyncio
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request, UploadFile
+from fastapi import APIRouter, Depends, Request, Response, UploadFile
 from sse_starlette.sse import EventSourceResponse
 
 from core import events
 from core.api.auth import require_auth
 from core.api.schemas import (
     ApprovalDecision, ArchiveRequest, ChatRequest, MemoryCreate, MemoryUpdate, PersonaBody,
-    PullRequest, RenameRequest, ResearchPlanRequest, ResearchRunRequest, SecretBody, SettingsPatch,
+    PullRequest, RenameRequest, ResearchExportRequest, ResearchFindSourcesRequest,
+    ResearchPlanRequest, ResearchRunRequest, ResearchSynthesizeRequest, SecretBody, SettingsPatch,
 )
+from research import citations as research_citations
+from research import export as research_export
 from core.deps import AppState
 from core.errors import ArthurError, NotFoundError, VoiceError
 from core.hardware import detect as detect_hardware
@@ -332,6 +335,148 @@ async def research_run(request: Request, body: ResearchRunRequest) -> EventSourc
             task.cancel()
 
     return EventSourceResponse(gen())
+
+
+@router.post("/research/synthesize")
+async def research_synthesize(request: Request, body: ResearchSynthesizeRequest) -> EventSourceResponse:
+    """Write the report from sources the browser already has -- no searching.
+
+    Exists for exactly the situation that motivated it: search finished (or
+    was stopped) but the report never got written, and forcing a full re-run
+    to get a report out of sources already sitting in the evidence panel
+    would throw away real work. Same queue-bridge/cancel-on-disconnect shape
+    as /research/run."""
+    s = state(request)
+    model = await _research_model(s, body.model)
+    if not model:
+        raise ArthurError("No model selected. Pick one in the model menu.", detail={})
+
+    queue: asyncio.Queue[tuple[str, dict] | None] = asyncio.Queue()
+
+    async def emit(event: str, data: dict[str, Any]) -> None:
+        await queue.put((event, data))
+
+    async def run() -> None:
+        try:
+            await s.research.synthesize_only(
+                question=body.question, sources=body.sources, model=model, emit=emit,
+                subs=body.sub_questions,
+            )
+        except ArthurError as e:
+            await emit(events.ERROR, {"code": e.code, "message": e.message, **e.detail})
+        except Exception:
+            log.exception("research synthesize crashed")
+            await emit(events.ERROR, {"code": "internal_error",
+                                      "message": "Writing the report failed. Your sources are still here."})
+        finally:
+            await queue.put(None)
+
+    task = asyncio.create_task(run())
+
+    async def gen():
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                event, data = item
+                yield {"event": event, "data": _json(data)}
+        finally:
+            task.cancel()
+
+    return EventSourceResponse(gen())
+
+
+@router.post("/research/find-sources")
+async def research_find_sources(request: Request, body: ResearchFindSourcesRequest) -> EventSourceResponse:
+    """Search for something the user typed and stream back only what is NEW.
+
+    No model involved: this is search + read + extract. It deliberately does
+    not rewrite the paper (see ResearchEngine.find_more)."""
+    s = state(request)
+    queue: asyncio.Queue[tuple[str, dict] | None] = asyncio.Queue()
+
+    async def emit(event: str, data: dict[str, Any]) -> None:
+        await queue.put((event, data))
+
+    async def run() -> None:
+        try:
+            await s.research.find_more(
+                query=body.query, existing=body.sources, source_kinds=body.kinds, emit=emit,
+                include_domains=body.include_domains, exclude_domains=body.exclude_domains,
+            )
+        except ArthurError as e:
+            await emit(events.ERROR, {"code": e.code, "message": e.message, **e.detail})
+        except Exception:
+            log.exception("find-sources crashed")
+            await emit(events.ERROR, {"code": "internal_error",
+                                      "message": "That search failed. Your existing sources are untouched."})
+        finally:
+            await queue.put(None)
+
+    task = asyncio.create_task(run())
+
+    async def gen():
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                event, data = item
+                yield {"event": event, "data": _json(data)}
+        finally:
+            task.cancel()
+
+    return EventSourceResponse(gen())
+
+
+@router.post("/research/export")
+async def research_export(request: Request, body: ResearchExportRequest) -> Response:
+    """Render the finished paper to .docx or .pdf and return the bytes.
+
+    Returns a file rather than writing to disk so the browser can hand it to
+    the OS save dialog -- a research paper belongs wherever the person keeps
+    documents, not in Arthur's data directory."""
+    s = state(request)
+
+    prebuilt = None
+    if body.style == "custom" and body.custom_style.strip():
+        # The only citation path that touches a model. Scoped to reference
+        # metadata only -- see research/citations.py.
+        model = await _research_model(s, body.model)
+        if model:
+            cited = {
+                c for sec in body.paper.get("sections", [])
+                for p in sec.get("paragraphs", []) for c in (p.get("citations") or [])
+            }
+            used = [src for src in body.sources if int(src.get("n") or 0) in cited]
+            prebuilt = await research_citations.custom_reference_list(
+                s.llm, model, used, body.custom_style.strip()
+            )
+
+    try:
+        if body.fmt == "pdf":
+            data = await asyncio.to_thread(
+                research_export.to_pdf, body.paper, body.sources, body.style, prebuilt
+            )
+            media = "application/pdf"
+        else:
+            data = await asyncio.to_thread(
+                research_export.to_docx, body.paper, body.sources, body.style, prebuilt
+            )
+            media = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    except ImportError as e:
+        # python-docx / reportlab missing: say which, instead of a 500.
+        raise ArthurError(
+            f"Export needs a library that isn't installed: {e}. "
+            "Run pip install -r requirements.txt in the python folder.", detail={},
+        ) from e
+
+    filename = research_export.filename_for(body.paper, body.fmt)
+    return Response(
+        content=data, media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # ---------- conversations ----------

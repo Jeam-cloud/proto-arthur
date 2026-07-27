@@ -45,7 +45,7 @@ export default function EvidencePanel({ variant = "report" }) {
   const usedOnly = useResearch((s) => s.usedOnly);
   const expandedEv = useResearch((s) => s.expandedEv);
   const hoverCite = useResearch((s) => s.hoverCite);
-  const { setEvFilter, toggleUsedOnly, toggleEv, setHoverCite } = useResearch();
+  const { setEvFilter, toggleUsedOnly, toggleEv, setHoverCite, focusOnSource } = useResearch();
   const scrollRef = useRef(null);
   const cardRefs = useRef({});
 
@@ -129,10 +129,16 @@ export default function EvidencePanel({ variant = "report" }) {
             <React.Fragment key={e.id}>
               <div
                 ref={(el) => { if (el) cardRefs.current[e.id] = el; }}
-                className={`evidence-card${hot ? " hot" : ""}`}
+                className={`evidence-card${hot ? " hot" : ""}${e.used ? " citable" : ""}`}
                 onMouseEnter={() => setHoverCite(e.id)}
                 onMouseLeave={() => setHoverCite(null)}
-                onClick={() => toggleEv(e.id)}
+                // Hovering lights up every paragraph that cites this source;
+                // clicking additionally SCROLLS the paper to the first one.
+                // That is the sidebar -> paper direction; the pills in the
+                // paper handle paper -> sidebar. Both work, so a source and
+                // the sentence it supports are always one click apart.
+                onClick={() => { toggleEv(e.id); if (e.used) focusOnSource(e.id); }}
+                title={e.used ? "Jump to where the paper cites this" : "Not cited in the paper"}
               >
                 <span className="evidence-num">{e.n}</span>
                 <div className="evidence-body">

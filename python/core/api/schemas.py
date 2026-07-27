@@ -43,6 +43,46 @@ class ResearchRunRequest(BaseModel):
         return cleaned
 
 
+class ResearchSynthesizeRequest(BaseModel):
+    """Writes the report from sources the CLIENT already has, without
+    searching again -- see ResearchEngine.synthesize_only for why this needs
+    to be its own request rather than reusing /research/run.
+
+    `sources` are round-tripped: they're exactly the dicts the run stream
+    already sent the browser as `research_source` events, sent back verbatim.
+    Deliberately untyped (`list[dict]`) rather than re-declaring every evidence
+    field here -- the shape is owned by research/engine.py in one place, and
+    duplicating it into a second schema is how the two quietly drift apart.
+    """
+    question: str = Field(min_length=8, max_length=1000)
+    sources: list[dict] = Field(min_length=1, max_length=200)
+    model: str = Field(default="", max_length=100)
+    # The approved sub-questions become the paper's section headings. Optional
+    # because the post-stop path may no longer have them, in which case the
+    # engine recovers an outline from the sources' lane grouping instead.
+    sub_questions: list[str] = Field(default_factory=list, max_length=8)
+
+
+class ResearchFindSourcesRequest(BaseModel):
+    """The 'Find more sources' box: the user types what they want more of."""
+    query: str = Field(min_length=3, max_length=400)
+    sources: list[dict] = Field(default_factory=list, max_length=200)
+    kinds: list[str] = Field(default_factory=lambda: ["web", "academic"], max_length=6)
+    include_domains: list[str] = Field(default_factory=list, max_length=20)
+    exclude_domains: list[str] = Field(default_factory=list, max_length=20)
+
+
+class ResearchExportRequest(BaseModel):
+    """Renders an already-written paper. Nothing is generated here, so no
+    model is involved unless the citation style is `custom`."""
+    paper: dict
+    sources: list[dict] = Field(default_factory=list, max_length=200)
+    fmt: str = Field(default="docx", pattern="^(docx|pdf)$")
+    style: str = Field(default="apa", max_length=20)
+    custom_style: str = Field(default="", max_length=600)
+    model: str = Field(default="", max_length=100)
+
+
 class RenameRequest(BaseModel):
     title: str = Field(min_length=1, max_length=120)
 

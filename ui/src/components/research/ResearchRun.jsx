@@ -8,6 +8,7 @@
 import React, { useMemo } from "react";
 import {
   Circle, Search, FileText, CircleCheck, CircleAlert, CircleX, Square, RotateCw,
+  FileEdit, Loader2,
 } from "lucide-react";
 import { useResearch, recentRows } from "../../stores/research";
 import EvidencePanel from "./EvidencePanel";
@@ -27,7 +28,11 @@ export default function ResearchRun() {
   const elapsed = useResearch((s) => s.elapsed);
   const question = useResearch((s) => s.question);
   const gapNote = useResearch((s) => s.gapNote);
+  const statusText = useResearch((s) => s.statusText);
+  const stopped = useResearch((s) => s.stopped);
+  const writing = useResearch((s) => s.writing);
   const stop = useResearch((s) => s.stop);
+  const writeReportNow = useResearch((s) => s.writeReportNow);
   const rawRecents = useResearch((s) => s.recents);
   const recents = useMemo(() => recentRows(rawRecents), [rawRecents]);
   const openRecent = useResearch((s) => s.openRecent);
@@ -67,12 +72,26 @@ export default function ResearchRun() {
                 {mmss} elapsed · {evidence.length} sources found · {pct}%
               </div>
             </div>
-            <button className="btn small" onClick={stop}>
-              <Square size={13} fill="currentColor" strokeWidth={0} /> Stop
-            </button>
+            {stopped ? (
+              <button className="btn small primary" disabled={writing || !evidence.length} onClick={writeReportNow}>
+                {writing
+                  ? <><Loader2 size={13} className="spin" /> Writing</>
+                  : <><FileEdit size={13} strokeWidth={1.9} /> Write the report</>}
+              </button>
+            ) : (
+              <button className="btn small" onClick={stop}>
+                <Square size={13} fill="currentColor" strokeWidth={0} /> Stop
+              </button>
+            )}
           </div>
           <div className="research-bar"><div className="research-bar-fill" style={{ width: `${pct}%` }} /></div>
-          <div className="research-progress-note">Stopping keeps everything gathered so far.</div>
+          <div className="research-progress-note">
+            {stopped
+              ? "Stopped before the report was written. Your sources are all still here."
+              : statusText
+                ? `${statusText}…`
+                : "Stopping keeps everything gathered so far."}
+          </div>
         </div>
 
         <div className="research-lanes">

@@ -106,25 +106,42 @@ CONTRADICTION_SCHEMA = {
     "required": ["conflicts"],
 }
 
-REPORT_SCHEMA = {
+# One section at a time, NOT one call for the whole paper. Two reasons, both
+# load-bearing on a 7B model:
+#   * Context. A section only needs the sources from its own sub-question's
+#     lane, so each call sees ~4 passages instead of ~14. Small models degrade
+#     sharply as context fills; this keeps every call in the range where they
+#     are actually good.
+#   * Progressive rendering. Sections stream into the paper as they finish,
+#     so a four-minute write shows visible progress instead of a blank page.
+SECTION_SCHEMA = {
     "type": "object",
     "properties": {
-        "blocks": {
+        "heading": {"type": "string"},
+        "paragraphs": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
-                    "type": {"type": "string", "enum": ["h", "p", "q"]},
                     "text": {"type": "string"},
                     "citations": {"type": "array", "items": {"type": "integer"}},
                 },
-                "required": ["type", "text", "citations"],
+                "required": ["text", "citations"],
             },
-            "minItems": 2,
-            "maxItems": 14,
-        }
+            "minItems": 1,
+            "maxItems": 6,
+        },
     },
-    "required": ["blocks"],
+    "required": ["heading", "paragraphs"],
+}
+
+TITLE_ABSTRACT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "abstract": {"type": "string"},
+    },
+    "required": ["title", "abstract"],
 }
 
 
@@ -226,7 +243,8 @@ class ResearchEngine:
                     "domain": dom,
                     "date": hit.date,
                     "type": hit.type,
-                    "authors": hit.authors,
+                    "authors": hit.authors,        # display string, evidence card
+                    "authors_list": hit.authors_list,  # structured, citation formatter
                     "year": hit.year,
                     "venue": hit.venue,
                     "cites": hit.cites,
@@ -320,6 +338,101 @@ class ResearchEngine:
                                       "message": "Every sub-question returned empty."})
             return
 
+        await self._finish(question, collected, model, emit, started, subs)
+
+    async def synthesize_only(
+        self, question: str, sources: list[dict], model: str, emit: Emit,
+        subs: list[str] | None = None,
+    ) -> None:
+        """Steps 4+5 (contradictions, then the report) run WITHOUT searching
+        again, over sources the caller already has.
+
+        WHY this exists as its own entry point: search is the expensive,
+        re-runnable part of an investigation; contradiction-checking and
+        writing are comparatively quick and, unlike search, produce something
+        the person is actually waiting on. If a run gets interrupted (Stop
+        pressed, a slow model call) after search finished but before the
+        report was written, re-running the WHOLE investigation to get a
+        report out of sources already sitting in the evidence panel would be
+        wasteful and confusing -- the UI's "Write the report now" action
+        (stores/research.js) calls this directly with the evidence it already
+        has, instead.
+        """
+        started = time.monotonic()
+        if not sources:
+            await emit(events.ERROR, {"code": "zero_results",
+                                      "message": "There is nothing to write a report from yet."})
+            return
+        await self._finish(question, sources, model, emit, started, subs or [])
+
+    async def find_more(
+        self, query: str, existing: list[dict], source_kinds: list[str], emit: Emit,
+        include_domains: list[str] | None = None,
+        exclude_domains: list[str] | None = None,
+    ) -> None:
+        """Search for what the user asked for, add whatever is genuinely new.
+
+        Two rules make this safe to press repeatedly:
+
+        1. CITATION NUMBERS CONTINUE, they never restart. New sources are
+           numbered from max(existing n) + 1, so `[7]` in a paragraph written
+           an hour ago still points at the same source it always did. Renumbering
+           would silently rewrite every citation in the paper.
+        2. IT DOES NOT TOUCH THE PAPER. Sources arrive in the panel and the UI
+           offers a rewrite; it does not rewrite on its own. By this point the
+           person may have edited the text themselves, and quietly regenerating
+           over their edits to incorporate a source they merely went looking
+           for would be the wrong trade every time.
+        """
+        tavily_key = self._vault.get("tavily") or ""
+        await emit(events.STATUS, {"text": f"Searching for: {query}"})
+
+        hits = await providers.gather(
+            query, source_kinds or ["web", "academic"], tavily_key,
+            per_provider=5, include_domains=include_domains, exclude_domains=exclude_domains,
+        )
+        seen = {(s.get("doi") or s.get("url") or "").lower() for s in existing}
+        hits = [h for h in hits if (h.doi or h.url).lower() not in seen][:6]
+        if not hits:
+            await emit(events.STATUS, {"text": "No new sources found for that search."})
+            await emit(events.DONE, {"added": 0})
+            return
+
+        await emit(events.STATUS, {"text": f"Reading {len(hits)} new sources"})
+        read_hits = await self._read(hits)
+
+        next_n = max((int(s.get("n") or 0) for s in existing), default=0) + 1
+        domains = {(s.get("domain") or "") for s in existing}
+        added = 0
+        for hit in read_hits:
+            body = hit.text or hit.snippet
+            if not body.strip():
+                continue
+            passage = await self._best_passage(query, body, 6)
+            safe = await self._scan(passage, hit.url)
+            dom = hit.domain or root_domain(hit.url)
+            src = {
+                "id": f"e{next_n}", "n": next_n, "kind": hit.kind, "provider": hit.provider,
+                "title": hit.title, "url": hit.url, "domain": dom, "date": hit.date,
+                "type": hit.type, "authors": hit.authors, "authors_list": hit.authors_list,
+                "year": hit.year, "venue": hit.venue, "cites": hit.cites, "doi": hit.doi,
+                "pdf_url": hit.pdf_url, "is_pdf": hit.is_pdf, "pages": hit.pages,
+                "sub": None,  # not from a planned lane -- it was asked for directly
+                "used": False, "passage": safe, "contradicts": "", "contra_note": "",
+                "dup_of": "" if dom not in domains else "",
+                "added_manually": True,
+            }
+            domains.add(dom)
+            await emit(events.RESEARCH_SOURCE, src)
+            next_n += 1
+            added += 1
+
+        await emit(events.DONE, {"added": added})
+
+    async def _finish(
+        self, question: str, collected: list[dict], model: str, emit: Emit, started: float,
+        subs: list[str] | None = None,
+    ) -> None:
         # ---------------- step 4: contradictions ----------------
         await emit(events.STATUS, {"text": "Comparing sources against each other"})
         for a, b, note in await self._find_conflicts(collected, model):
@@ -330,14 +443,17 @@ class ResearchEngine:
             await emit(events.RESEARCH_SOURCE, collected[a - 1])
             await emit(events.RESEARCH_SOURCE, collected[b - 1])
 
-        # ---------------- step 5: synthesise ----------------
-        await emit(events.STATUS, {"text": "Writing the report"})
-        blocks = await self._synthesise(question, collected, model)
+        # ---------------- step 5: write the paper ----------------
+        await emit(events.STATUS, {"text": "Writing the paper"})
+        # Without an approved plan (the "write from what we already have" path
+        # after a stop), recover the section structure from which lane each
+        # source came back on -- the sub-questions are gone but their grouping
+        # survives on the sources themselves.
+        outline = subs or _outline_from_sources(collected, question)
+        await self._write_paper(question, collected, outline, model, emit)
         for src in collected:
             if src["used"]:
                 await emit(events.RESEARCH_SOURCE, src)
-        for block in blocks:
-            await emit(events.RESEARCH_BLOCK, block)
 
         await emit(events.DONE, {
             "sources": len(collected),
@@ -483,74 +599,241 @@ class ResearchEngine:
                 out.append((a, b, (c.get("note") or "").strip()[:220]))
         return out
 
-    async def _synthesise(self, question: str, sources: list[dict], model: str) -> list[dict]:
-        """Write the report, then compute confidence OURSELVES.
+    # ---------------- the paper ----------------
 
-        The model is never asked how confident it is. Self-reported confidence
-        from a small model is close to noise, and a report full of hedging it
-        invented would be worse than no marking at all. Instead confidence is a
-        deterministic function of the citations the model actually attached:
+    async def _write_paper(
+        self, question: str, sources: list[dict], subs: list[str], model: str, emit: Emit,
+    ) -> None:
+        """Build a literature review, one section at a time.
+
+        THE STRUCTURE COMES FROM THE PLAN THE USER ALREADY APPROVED. Each
+        sub-question they reviewed on the plan screen becomes one thematic
+        section of the paper, in the order they left them. That is not a
+        shortcut -- it is the payoff for making them review the plan: the
+        outline was agreed before a single search ran, so the finished paper
+        cannot wander off into a shape they never asked for.
+
+        Section order: Introduction, one per sub-question, Discussion,
+        Conclusion. The abstract is written LAST, from the finished sections,
+        for the same reason people write it last: you cannot summarise a paper
+        you have not written yet.
+        """
+        by_n = {s["n"]: s for s in sources}
+        sections: list[dict] = []
+
+        async def add_section(heading: str, paragraphs: list[dict], kind: str) -> None:
+            sec = {
+                "id": f"s{len(sections) + 1}",
+                "kind": kind,           # intro | theme | discussion | conclusion
+                "heading": heading,
+                "paragraphs": paragraphs,
+                "order": len(sections),
+            }
+            sections.append(sec)
+            await emit(events.RESEARCH_SECTION, sec)
+
+        # --- Introduction: framing only, drawn from the question and the plan.
+        # Fixed headings ignore whatever the model proposes -- "Introduction"
+        # is not a creative decision.
+        intro, _ = await self._write_section(
+            model=model,
+            heading="Introduction",
+            brief=(
+                f"Write the introduction to a literature review answering: {question}\n\n"
+                f"The review will examine, in order:\n"
+                + "\n".join(f"- {s}" for s in subs)
+                + "\n\nState what the question is, why it is contested or worth reviewing, and "
+                "what the review will cover. Do not state findings yet."
+            ),
+            sources=sources[:4],
+            by_n=by_n,
+        )
+        await add_section("Introduction", intro, "intro")
+
+        # --- One section per sub-question, each seeing ONLY its own lane's
+        # sources. This is the context discipline that makes small models work.
+        for idx, sub in enumerate(subs):
+            lane_sources = [s for s in sources if s.get("sub") == idx] or sources[:4]
+            written, proposed = await self._write_section(
+                model=model,
+                heading=sub,
+                brief=(
+                    f"Write one section of a literature review. The overall question is: {question}\n\n"
+                    f"This section covers: {sub}\n\n"
+                    "Report what the sources actually establish, note where they agree, and say "
+                    "plainly where they disagree. Give the section a short noun-phrase heading "
+                    "(not a question, not the sub-question verbatim)."
+                ),
+                sources=lane_sources,
+                by_n=by_n,
+            )
+            # Thematic sections DO take the model's heading when it gave one:
+            # "Licensing and commercial use" reads better than the raw
+            # sub-question it came from. Falls back to the sub-question itself.
+            await add_section(proposed or _title_case(sub), written, "theme")
+
+        # --- Discussion: the only section allowed to reason ACROSS sections,
+        # and the natural home for contradictions the pipeline already found.
+        conflicts = [s for s in sources if s.get("contradicts")]
+        discussion, _ = await self._write_section(
+            model=model,
+            heading="Discussion",
+            brief=(
+                f"Write the discussion section of a literature review on: {question}\n\n"
+                "Draw the themes together. Say what the evidence supports overall, what remains "
+                "unsettled, and where the sources are thin. "
+                + ("Sources disagree on some points -- name those disagreements explicitly "
+                   "rather than resolving them." if conflicts else "")
+            ),
+            sources=(conflicts or sources)[:8],
+            by_n=by_n,
+        )
+        await add_section("Discussion", discussion, "discussion")
+
+        # --- Conclusion: no new citations, by construction.
+        conclusion, _ = await self._write_section(
+            model=model,
+            heading="Conclusion",
+            brief=(
+                f"Write a short conclusion to a literature review on: {question}\n\n"
+                "Two or three sentences. State the overall picture and what would need to be "
+                "established next. Introduce no new claims."
+            ),
+            sources=sources[:4],
+            by_n=by_n,
+        )
+        await add_section("Conclusion", conclusion, "conclusion")
+
+        # --- Title + abstract, written from the finished body.
+        body = "\n\n".join(
+            f"{sec['heading']}\n" + "\n".join(p["text"] for p in sec["paragraphs"])
+            for sec in sections
+        )
+        title, abstract = await self._write_title_abstract(question, body, model)
+        await emit(events.RESEARCH_PAPER, {
+            "title": title,
+            "abstract": abstract,
+            "question": question,
+            "sections": sections,
+        })
+
+    async def _write_section(
+        self, model: str, heading: str, brief: str, sources: list[dict], by_n: dict[int, dict],
+    ) -> tuple[list[dict], str]:
+        """One section. Returns (paragraphs, heading the model proposed).
+
+        The heading comes back separately rather than riding along inside the
+        first paragraph: paragraphs are sent verbatim to the UI, and a private
+        key smuggled into one of them would leak into the wire format.
+
+        Paragraphs carry validated citations and a confidence level computed
+        the same deterministic way as before:
 
             2+ citations from DIFFERENT publishers -> supported (unmarked)
-            exactly 1, or 2 from the same publisher -> thin
-            none at all                             -> unverified
+            exactly 1, or several from one publisher -> thin
+            none at all                              -> unverified
 
-        That rule is legible, reproducible, and cannot flatter itself.
+        The model is still never asked how confident it is. Self-reported
+        confidence from a small model is close to noise; this rule is
+        arithmetic over citations that actually resolve.
         """
         numbered = "\n\n".join(
-            f"[{s['n']}] {s['title']} ({s['domain'] or s['venue']})\n{s['passage'][:900]}"
-            for s in sources[:14]
+            f"[{s['n']}] {s['title']} ({s.get('domain') or s.get('venue')})\n{s.get('passage', '')[:900]}"
+            for s in sources[:8]
         )
         msgs = [
             {"role": "system", "content":
-                "You write short research reports from source passages. Rules: start with one "
-                "heading block ('h'). Place a marker like [3] in the sentence itself, immediately "
-                "after the claim that source supports, and ALSO list every number you used in "
-                "`citations`. If sources disagree, write a 'q' block that states both positions "
-                "and cites both. Never state anything the passages do not support. Plain "
-                "sentences, no markdown syntax, no bullet characters."},
-            {"role": "user", "content": f"Question: {question}\n\nSources:\n{numbered}"},
+                "You write sections of academic literature reviews. Rules: continuous prose in "
+                "full paragraphs -- no bullet points, no markdown, no headings inside the text. "
+                "Place a marker like [3] in the sentence itself, directly after the claim that "
+                "source supports, and ALSO list every number used in `citations`. Never state "
+                "anything the passages do not support. Do not describe the search process or "
+                "refer to 'the sources' as objects; write about the subject matter."},
+            {"role": "user", "content": f"{brief}\n\nSources:\n{numbered}"},
         ]
         try:
-            data = await self._llm.chat_json(model, msgs, REPORT_SCHEMA, temperature=0.2)
+            data = await self._llm.chat_json(model, msgs, SECTION_SCHEMA, temperature=0.2)
         except Exception as e:
-            log.warning("synthesis failed: %s", e)
+            log.warning("section '%s' failed: %s", heading, e)
             data = None
 
-        raw = (data or {}).get("blocks") or []
+        raw = (data or {}).get("paragraphs") or []
         if not raw:
-            raw = [{"type": "h", "text": question[:120], "citations": []}] + [
-                {"type": "p", "text": s["passage"][:400], "citations": [s["n"]]}
-                for s in sources[:4]
-            ]
+            # A failed section must not leave a hole in the paper. Fall back to
+            # the strongest passage, clearly attributed -- thin, but honest and
+            # still citable.
+            raw = [{"text": s.get("passage", "")[:400], "citations": [s["n"]]} for s in sources[:1]]
 
-        by_n = {s["n"]: s for s in sources}
-        blocks: list[dict] = []
         import re
 
-        for i, b in enumerate(raw):
-            # Union of what the model DECLARED and what it actually wrote inline.
-            # Small models routinely do one and forget the other; taking both
-            # means a [4] in the prose always turns into a clickable pill, and a
-            # declared source always counts toward the confidence rule.
-            inline = {int(m) for m in re.findall(r"\[(\d+)\]", b.get("text") or "")}
-            cites = sorted({c for c in [*(b.get("citations") or []), *inline] if c in by_n})
+        out: list[dict] = []
+        for i, p in enumerate(raw):
+            text = (p.get("text") or "").strip()
+            if not text:
+                continue
+            # Union of DECLARED and INLINE citations. Small models routinely do
+            # one and forget the other; taking both means a [4] in the prose
+            # always resolves to a real source, and a declared source always
+            # counts toward the confidence rule.
+            inline = {int(m) for m in re.findall(r"\[(\d+)\]", text)}
+            cites = sorted({c for c in [*(p.get("citations") or []), *inline] if c in by_n})
             for c in cites:
                 by_n[c]["used"] = True
-            domains = {by_n[c]["domain"] or by_n[c]["venue"] for c in cites}
-            conf = "ok" if len(domains) >= 2 else ("thin" if cites else "unverified")
-            if b.get("type") == "h":
-                conf = "ok"  # a title makes no factual claim
-            blocks.append({
-                "id": f"b{i + 1}",
-                "type": b.get("type") if b.get("type") in ("h", "p", "q") else "p",
-                "text": (b.get("text") or "").strip(),
+            publishers = {by_n[c].get("domain") or by_n[c].get("venue") for c in cites}
+            conf = "ok" if len(publishers) >= 2 else ("thin" if cites else "unverified")
+            out.append({
+                "id": f"p{i + 1}",
+                "text": text,
                 "citations": cites,
                 "conf": conf,
                 "ai": True,
-                "fresh": True,
             })
-        return blocks
+
+        # The model's own heading for the section, if it produced a usable one.
+        proposed = (data or {}).get("heading") if isinstance(data, dict) else None
+        proposed = (proposed or "").strip()
+        return out, (proposed if 3 < len(proposed) < 90 else "")
+
+    async def _write_title_abstract(self, question: str, body: str, model: str) -> tuple[str, str]:
+        msgs = [
+            {"role": "system", "content":
+                "You write the title and abstract for a finished literature review. The abstract "
+                "is one paragraph, 120-200 words, covering scope, what the literature establishes, "
+                "and what remains unsettled. No citations in the abstract. The title is a noun "
+                "phrase, not a question, under 20 words."},
+            {"role": "user", "content": f"Question reviewed: {question}\n\nThe paper:\n{body[:6000]}"},
+        ]
+        try:
+            data = await self._llm.chat_json(model, msgs, TITLE_ABSTRACT_SCHEMA, temperature=0.3)
+        except Exception as e:
+            log.warning("title/abstract failed: %s", e)
+            data = None
+        title = ((data or {}).get("title") or "").strip() or _title_case(question)
+        abstract = ((data or {}).get("abstract") or "").strip()
+        return title[:200], abstract
+
+
+def _outline_from_sources(sources: list[dict], question: str) -> list[str]:
+    """Recover a section outline when the approved sub-questions are not to
+    hand (the post-stop "write from what we have" path).
+
+    Every source records which lane found it, so the lanes -- and therefore
+    the shape of the investigation -- can be reconstructed even though their
+    wording is lost. Falls back to a single section when there is no grouping
+    to recover, which is still a valid literature review, just a short one.
+    """
+    lanes = sorted({s.get("sub") for s in sources if s.get("sub") is not None})
+    if not lanes:
+        return [question]
+    return [f"Findings from line of inquiry {i + 1}" for i in range(len(lanes))]
+
+
+def _title_case(s: str) -> str:
+    """Fallback heading from a sub-question. Deliberately gentle: capitalise
+    the first letter and drop a trailing question mark, rather than title-casing
+    every word (which mangles acronyms and proper nouns)."""
+    s = (s or "").strip().rstrip("?")
+    return s[:1].upper() + s[1:] if s else "Untitled section"
 
 
 def _pdf_text(data: bytes) -> tuple[str, int]:

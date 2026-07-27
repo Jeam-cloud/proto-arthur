@@ -27,4 +27,9 @@ DONE = "done"                      # {message_id, conversation_id}
 RESEARCH_LANE = "research_lane"      # {id, text, state, read, of, srcs, pass}
 RESEARCH_SOURCE = "research_source"  # full source card (see research/engine.py)
 RESEARCH_GAP = "research_gap"        # {ids: [lane_id], note}  second pass starting
-RESEARCH_BLOCK = "research_block"    # {id, type, text, citations, conf, ai, fresh}
+# The paper is written section by section, so sections stream in as they are
+# finished (RESEARCH_SECTION) and the completed paper arrives last with its
+# title and abstract (RESEARCH_PAPER). Sections carry `order`, so the UI can
+# place them correctly without relying on arrival order.
+RESEARCH_SECTION = "research_section"  # {id, kind, heading, order, paragraphs[]}
+RESEARCH_PAPER = "research_paper"      # {title, abstract, question, sections[]}

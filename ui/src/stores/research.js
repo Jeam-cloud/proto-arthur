@@ -14,8 +14,13 @@
 // handler here is an idempotent upsert. Applying the same event twice is
 // harmless, which is what makes reconnecting mid-run safe.
 import { create } from "zustand";
-import { planInvestigation, runInvestigation } from "../api/research";
+import {
+  planInvestigation, runInvestigation, synthesizeInvestigation,
+  findMoreSources, exportPaper,
+} from "../api/research";
 import { useToasts } from "./toasts";
+
+const STYLE_KEY = "arthur.research.style";
 
 export const DEPTHS = {
   quick: { label: "Quick", budget: "~4 sources · about 40 sec" },
@@ -72,22 +77,46 @@ const BLANK = {
   lanes: [],
   gapNote: "",
   evidence: [],
-  blocks: [],
+  // The paper. `sections` fills in progressively as each one is written;
+  // title/abstract arrive last because the abstract is written from the
+  // finished body (see research/engine.py._write_paper).
+  paper: null,        // {title, abstract, question}
+  sections: [],
   elapsed: 0,
   planning: false,
   fault: null, // tavily | offline | zero | failed
   faultDetail: "",
+  // What the backend is doing between "search finished" and "report appears"
+  // (contradiction check, then writing) -- see events.STATUS in
+  // research/engine.py. Without this the run screen sat at 100% with no
+  // feedback for however long synthesis took, which read as a hang even when
+  // it wasn't one.
+  statusText: "",
+  // True when Stop was pressed (or the stream died) AFTER search finished but
+  // BEFORE a report was written: the lanes are all done, sources are sitting
+  // in the evidence panel, but there's no report yet and re-running the whole
+  // search would throw that work away. See writeReportNow().
+  stopped: false,
+  writing: false,
+  finding: false,      // a "find more sources" search is running
+  newSourceIds: [],    // arrived since the paper was written -> offer a rewrite
 };
 
 export const useResearch = create((set, get) => ({
   ...BLANK,
   recents: loadRecents(),
   degraded: false, // Docker off: snippets only, not a failure
+  // Citation style persists across investigations: someone writing in APA is
+  // writing in APA next week too, and re-picking it every time is friction
+  // for no reason.
+  style: localStorage.getItem(STYLE_KEY) || "apa",
+  customStyle: "",
   // view-only bits
   evFilter: "all",
   usedOnly: false,
   expandedEv: null,
-  hoverCite: null,
+  hoverCite: null,     // source id highlighted from EITHER direction
+  focusSource: null,   // source id the paper should scroll to (sidebar -> paper)
   cursorBlock: null,
   showEvidence: true,
   explain: null,
@@ -148,10 +177,14 @@ export const useResearch = create((set, get) => ({
         id: `sq${i}`, text, state: "queued", read: 0, of: 0, srcs: 0, pass: 1,
       })),
       evidence: [],
-      blocks: [],
+      paper: null,
+      sections: [],
+      newSourceIds: [],
       gapNote: "",
       elapsed: 0,
       fault: null,
+      statusText: "",
+      stopped: false,
     });
     timer = setInterval(() => set((st) => ({ elapsed: st.elapsed + 1 })), 1000);
 
@@ -193,7 +226,16 @@ export const useResearch = create((set, get) => ({
       case "research_source":
         set((s) => {
           const i = s.evidence.findIndex((e) => e.id === data.id);
-          if (i === -1) return { evidence: [...s.evidence, data] };
+          if (i === -1) {
+            // A source arriving after the paper exists came from "find more
+            // sources" -- flag it so the UI can offer a rewrite rather than
+            // silently leaving it uncited.
+            const isNew = !!s.paper && data.added_manually;
+            return {
+              evidence: [...s.evidence, data],
+              newSourceIds: isNew ? [...s.newSourceIds, data.id] : s.newSourceIds,
+            };
+          }
           const next = s.evidence.slice();
           next[i] = { ...next[i], ...data };
           return { evidence: next };
@@ -204,8 +246,25 @@ export const useResearch = create((set, get) => ({
         set({ gapNote: data.note || "" });
         break;
 
-      case "research_block":
-        set((s) => ({ blocks: [...s.blocks, data], stage: "report" }));
+      case "research_section":
+        // Sections stream in as each is written. Upsert by id and keep them
+        // ordered by `order`, never by arrival -- the paper must read
+        // correctly even if a later section finishes first.
+        set((s) => {
+          const rest = s.sections.filter((x) => x.id !== data.id);
+          return {
+            sections: [...rest, data].sort((a, b) => a.order - b.order),
+            stage: "report",
+          };
+        });
+        break;
+
+      case "research_paper":
+        set({
+          paper: { title: data.title, abstract: data.abstract, question: data.question },
+          sections: (data.sections || []).slice().sort((a, b) => a.order - b.order),
+          stage: "report",
+        });
         break;
 
       case "error":
@@ -216,16 +275,20 @@ export const useResearch = create((set, get) => ({
 
       case "done":
         set((s) => {
-          // A run with no blocks produced nothing worth reopening.
-          if (!s.blocks.length) return { stage: s.stage };
+          // A find-more-sources stream also ends in `done`, but it wrote no
+          // paper and must not create a recents entry.
+          if (!s.sections.length) return { stage: s.stage };
           const entry = {
             id: `r${Date.now().toString(36)}`,
-            title: s.question.slice(0, 90),
+            title: (s.paper && s.paper.title) || s.question.slice(0, 90),
             at: new Date().toISOString(),
             sources: data.sources || s.evidence.length,
             independent: data.independent || 0,
             status: s.lanes.some((l) => l.state === "blocked") ? "partial" : "done",
-            snapshot: { question: s.question, blocks: s.blocks, evidence: s.evidence },
+            snapshot: {
+              question: s.question, paper: s.paper, sections: s.sections,
+              evidence: s.evidence, subs: s.subs.map((q) => q.text),
+            },
           };
           const recents = [entry, ...s.recents.filter((r) => r.title !== entry.title)];
           saveRecents(recents);
@@ -233,8 +296,15 @@ export const useResearch = create((set, get) => ({
         });
         break;
 
+      case "status":
+        // Surfaced verbatim on the run screen (see ResearchRun.jsx) so "all
+        // lanes done, still no report" reads as "comparing sources / writing"
+        // instead of looking stuck.
+        set({ statusText: data.text || "" });
+        break;
+
       default:
-        break; // status / unknown events are informational only
+        break; // unknown events are informational only
     }
   },
 
@@ -242,10 +312,119 @@ export const useResearch = create((set, get) => ({
     if (abort) abort.abort();
     abort = null;
     stopTimer();
-    useToasts.getState().push("Stopped. Everything gathered so far has been kept.", "info");
-    // Partial results are still a report if anything was written; otherwise the
-    // lanes stay on screen so the user can see how far it got.
-    set((s) => (s.blocks.length ? { stage: "report" } : {}));
+    set((s) => {
+      if (s.sections.length) {
+        // Some of the paper already exists -- a partial paper is still a real
+        // one, and the sections that finished are complete in themselves.
+        useToasts.getState().push("Stopped. Everything gathered so far has been kept.", "info");
+        return { stage: "report" };
+      }
+      // Search finished (or was cut short) but nothing was written yet. Stay
+      // on the run screen -- the lanes and evidence are still useful -- and
+      // offer to write the report from what's already there instead of
+      // leaving the screen looking frozen with a dead Stop button.
+      useToasts.getState().push("Stopped before the paper was written. Nothing gathered was lost.", "info");
+      return { stopped: true, statusText: "" };
+    });
+  },
+
+  // Writes (or rewrites) the paper from the sources currently held. Used both
+  // by the post-stop "Write the paper" button and by the "rewrite to include
+  // new sources" action after a find-more search.
+  async writeReportNow() {
+    const s = get();
+    if (s.writing || !s.evidence.length) return;
+    stopTimer();
+    const controller = new AbortController();
+    abort = controller;
+    set({
+      writing: true, stopped: false, statusText: "Writing the paper", elapsed: 0,
+      sections: [], paper: null, newSourceIds: [],
+    });
+    timer = setInterval(() => set((st) => ({ elapsed: st.elapsed + 1 })), 1000);
+
+    try {
+      const stream = synthesizeInvestigation(
+        {
+          question: s.question.trim(),
+          sources: s.evidence,
+          sub_questions: s.subs.map((q) => q.text).filter(Boolean),
+        },
+        { signal: controller.signal },
+      );
+      for await (const { event, data } of stream) {
+        get().applyEvent(event, data);
+      }
+    } catch (e) {
+      if (e.name !== "AbortError") {
+        useToasts.getState().push(e.message || "Writing the paper failed.", "error");
+        set({ stopped: true });
+      }
+    } finally {
+      set({ writing: false });
+      stopTimer();
+    }
+  },
+
+  // ---------- find more sources ----------
+  async findMore(query) {
+    const s = get();
+    if (s.finding || !query.trim()) return;
+    const controller = new AbortController();
+    findAbort = controller;
+    set({ finding: true, statusText: "" });
+    const before = s.evidence.length;
+    try {
+      const stream = findMoreSources(
+        { query: query.trim(), sources: s.evidence, kinds: s.sources },
+        { signal: controller.signal },
+      );
+      for await (const { event, data } of stream) {
+        get().applyEvent(event, data);
+      }
+      const added = get().evidence.length - before;
+      useToasts.getState().push(
+        added ? `${added} new source${added === 1 ? "" : "s"} added.` : "No new sources found.",
+        added ? "success" : "info",
+      );
+    } catch (e) {
+      if (e.name !== "AbortError") useToasts.getState().push(e.message || "Search failed.", "error");
+    } finally {
+      set({ finding: false, statusText: "" });
+    }
+  },
+
+  // ---------- citation style ----------
+  setStyle(style) {
+    // Switching style re-renders citations instantly and offline -- nothing
+    // regenerates, because the model never wrote the citations in the first
+    // place (see lib/citeFormat.js).
+    localStorage.setItem(STYLE_KEY, style);
+    set({ style });
+  },
+  setCustomStyle: (customStyle) => set({ customStyle }),
+
+  // ---------- export ----------
+  async exportAs(fmt) {
+    const s = get();
+    if (!s.paper || !s.sections.length) return;
+    try {
+      const { blob, filename } = await exportPaper({
+        paper: { ...s.paper, sections: s.sections },
+        sources: s.evidence,
+        fmt,
+        style: s.style,
+        custom_style: s.customStyle,
+      });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      useToasts.getState().push(`Exported as ${fmt.toUpperCase()}.`, "success");
+    } catch (e) {
+      useToasts.getState().push(e.message || "Export failed.", "error");
+    }
   },
 
   newInvestigation: () => {
@@ -256,16 +435,25 @@ export const useResearch = create((set, get) => ({
   },
 
   openRecent: (id) => {
+    if (abort) abort.abort();
+    abort = null;
+    stopTimer();
     const r = get().recents.find((x) => x.id === id);
     if (!r || !r.snapshot) return;
     set({
       stage: "report",
       question: r.snapshot.question,
-      blocks: r.snapshot.blocks,
-      evidence: r.snapshot.evidence,
+      paper: r.snapshot.paper || null,
+      sections: r.snapshot.sections || [],
+      evidence: r.snapshot.evidence || [],
+      subs: (r.snapshot.subs || []).map((text, i) => ({ id: `sq${i}`, text })),
       lanes: [],
       fault: null,
       cursorBlock: null,
+      stopped: false,
+      writing: false,
+      statusText: "",
+      newSourceIds: [],
     });
   },
 
@@ -278,13 +466,36 @@ export const useResearch = create((set, get) => ({
   setCursor: (cursorBlock) => set({ cursorBlock }),
   setExplain: (explain) => set({ explain }),
 
-  // Accept drops the "Arthur wrote this" attribution; revert removes the block.
-  // Both are local edits to a local document -- nothing is sent anywhere.
-  acceptBlock: (id) =>
-    set((s) => ({ blocks: s.blocks.map((b) => (b.id === id ? { ...b, ai: false, fresh: false } : b)) })),
-  revertBlock: (id) => set((s) => ({ blocks: s.blocks.filter((b) => b.id !== id) })),
-  editBlock: (id, text) =>
-    set((s) => ({ blocks: s.blocks.map((b) => (b.id === id ? { ...b, text, ai: false } : b)) })),
+  // Sidebar -> paper. Sets both the highlight and a scroll target; the paper
+  // clears focusSource once it has scrolled, so the same source can be
+  // clicked again later and still scroll.
+  focusOnSource: (id) => set({ hoverCite: id, focusSource: id }),
+  clearFocusSource: () => set({ focusSource: null }),
+
+  // Paragraph edits are local edits to a local document -- nothing is sent
+  // anywhere, and editing drops the "Arthur wrote this" attribution because
+  // once you have rewritten a sentence it is yours.
+  editParagraph: (sectionId, paraId, text) =>
+    set((s) => ({
+      sections: s.sections.map((sec) =>
+        sec.id !== sectionId ? sec : {
+          ...sec,
+          paragraphs: sec.paragraphs.map((p) => (p.id === paraId ? { ...p, text, ai: false } : p)),
+        }),
+    })),
+  deleteParagraph: (sectionId, paraId) =>
+    set((s) => ({
+      sections: s.sections.map((sec) =>
+        sec.id !== sectionId ? sec : {
+          ...sec, paragraphs: sec.paragraphs.filter((p) => p.id !== paraId),
+        }),
+    })),
+  editHeading: (sectionId, heading) =>
+    set((s) => ({
+      sections: s.sections.map((sec) => (sec.id === sectionId ? { ...sec, heading } : sec)),
+    })),
+  editTitle: (title) => set((s) => ({ paper: { ...s.paper, title } })),
+  editAbstract: (abstract) => set((s) => ({ paper: { ...s.paper, abstract } })),
 
   setDegraded: (degraded) => set({ degraded }),
   clearFault: () => set({ fault: null, faultDetail: "" }),
@@ -312,9 +523,17 @@ export function recentRows(recents) {
 // interval id are not state, and putting them in the store would make every
 // subscriber re-render when a run starts.
 let abort = null;
+// Find-more runs on its own controller: it can be fired while a paper is
+// already on screen, and cancelling it must not cancel anything else.
+let findAbort = null;
 let timer = null;
 
 function stopTimer() {
   if (timer) clearInterval(timer);
   timer = null;
+}
+
+export function cancelFindMore() {
+  if (findAbort) findAbort.abort();
+  findAbort = null;
 }

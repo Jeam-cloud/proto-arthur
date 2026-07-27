@@ -12,7 +12,7 @@ import { useBackend } from "../../stores/backend";
 import ResearchHome from "./ResearchHome";
 import ResearchPlan from "./ResearchPlan";
 import ResearchRun from "./ResearchRun";
-import ResearchReport from "./ResearchReport";
+import ResearchPaper from "./ResearchPaper";
 
 export default function ResearchView({ onOpenIntegrations }) {
   const stage = useResearch((s) => s.stage);
@@ -113,7 +113,7 @@ export default function ResearchView({ onOpenIntegrations }) {
       {!fault && stage === "home" && <ResearchHome />}
       {!fault && stage === "plan" && <ResearchPlan />}
       {!fault && stage === "run" && <ResearchRun />}
-      {!fault && stage === "report" && <ResearchReport />}
+      {!fault && stage === "report" && <ResearchPaper />}
     </div>
   );
 }

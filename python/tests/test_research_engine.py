@@ -83,66 +83,101 @@ class TestPlan:
         assert await eng.plan("  why is the sky blue  ", "standard", "m") == ["why is the sky blue"]
 
 
-class TestSynthesisConfidence:
-    """The confidence rule is ours, not the model's. Two independent
-    publishers -> supported, one -> thin, none -> unverified."""
+def section(paragraphs: list[dict], heading: str = "A Section") -> dict:
+    return {"heading": heading, "paragraphs": paragraphs}
+
+
+class TestSectionConfidence:
+    """The confidence rule is ours, not the model's: two independent
+    publishers -> supported, one -> thin, none -> unverified. It is computed
+    per PARAGRAPH now that the output is a paper rather than a block list, but
+    the arithmetic is unchanged and still never asks the model how sure it is."""
 
     async def test_two_independent_publishers_is_supported(self):
-        eng = make_engine([{"blocks": [
-            {"type": "p", "text": "Both agree.", "citations": [1, 2]},
-        ]}])
-        blocks = await eng._synthesise("q", [source(1, "a.com"), source(2, "b.com")], "m")
-        assert blocks[0]["conf"] == "ok"
+        eng = make_engine([section([{"text": "Both agree.", "citations": [1, 2]}])])
+        by_n = {1: source(1, "a.com"), 2: source(2, "b.com")}
+        out, _ = await eng._write_section("m", "H", "brief", list(by_n.values()), by_n)
+        assert out[0]["conf"] == "ok"
 
     async def test_two_sources_from_one_publisher_is_still_thin(self):
-        eng = make_engine([{"blocks": [
-            {"type": "p", "text": "Same outlet twice.", "citations": [1, 2]},
-        ]}])
-        blocks = await eng._synthesise("q", [source(1, "a.com"), source(2, "a.com")], "m")
-        assert blocks[0]["conf"] == "thin"
+        eng = make_engine([section([{"text": "Same outlet twice.", "citations": [1, 2]}])])
+        by_n = {1: source(1, "a.com"), 2: source(2, "a.com")}
+        out, _ = await eng._write_section("m", "H", "brief", list(by_n.values()), by_n)
+        assert out[0]["conf"] == "thin"
 
     async def test_no_citations_is_unverified(self):
-        eng = make_engine([{"blocks": [
-            {"type": "p", "text": "Asserted from nowhere.", "citations": []},
-        ]}])
-        blocks = await eng._synthesise("q", [source(1, "a.com")], "m")
-        assert blocks[0]["conf"] == "unverified"
-
-    async def test_headings_are_never_marked(self):
-        eng = make_engine([{"blocks": [{"type": "h", "text": "Title", "citations": []}]}])
-        blocks = await eng._synthesise("q", [source(1, "a.com")], "m")
-        assert blocks[0]["conf"] == "ok"
+        eng = make_engine([section([{"text": "Asserted from nowhere.", "citations": []}])])
+        by_n = {1: source(1, "a.com")}
+        out, _ = await eng._write_section("m", "H", "brief", list(by_n.values()), by_n)
+        assert out[0]["conf"] == "unverified"
 
     async def test_inline_markers_count_even_when_undeclared(self):
         # Small models routinely write "[2]" in the prose and forget to list it.
         # Both halves are unioned so the pill renders AND the confidence is right.
-        eng = make_engine([{"blocks": [
-            {"type": "p", "text": "Claim [1] and claim [2].", "citations": []},
-        ]}])
-        blocks = await eng._synthesise("q", [source(1, "a.com"), source(2, "b.com")], "m")
-        assert blocks[0]["citations"] == [1, 2]
-        assert blocks[0]["conf"] == "ok"
+        eng = make_engine([section([{"text": "Claim [1] and claim [2].", "citations": []}])])
+        by_n = {1: source(1, "a.com"), 2: source(2, "b.com")}
+        out, _ = await eng._write_section("m", "H", "brief", list(by_n.values()), by_n)
+        assert out[0]["citations"] == [1, 2]
+        assert out[0]["conf"] == "ok"
 
     async def test_citations_to_sources_that_do_not_exist_are_dropped(self):
-        eng = make_engine([{"blocks": [
-            {"type": "p", "text": "Hallucinated ref [9].", "citations": [9]},
-        ]}])
-        blocks = await eng._synthesise("q", [source(1, "a.com")], "m")
-        assert blocks[0]["citations"] == []
-        assert blocks[0]["conf"] == "unverified"
+        eng = make_engine([section([{"text": "Hallucinated ref [9].", "citations": [9]}])])
+        by_n = {1: source(1, "a.com")}
+        out, _ = await eng._write_section("m", "H", "brief", list(by_n.values()), by_n)
+        assert out[0]["citations"] == []
+        assert out[0]["conf"] == "unverified"
 
     async def test_cited_sources_are_marked_used(self):
-        sources = [source(1, "a.com"), source(2, "b.com")]
-        eng = make_engine([{"blocks": [{"type": "p", "text": "x [1]", "citations": [1]}]}])
-        await eng._synthesise("q", sources, "m")
-        assert sources[0]["used"] is True
-        assert sources[1]["used"] is False
+        by_n = {1: source(1, "a.com"), 2: source(2, "b.com")}
+        eng = make_engine([section([{"text": "x [1]", "citations": [1]}])])
+        await eng._write_section("m", "H", "brief", list(by_n.values()), by_n)
+        assert by_n[1]["used"] is True
+        assert by_n[2]["used"] is False
 
-    async def test_failed_synthesis_still_produces_a_readable_report(self):
+    async def test_a_failed_section_still_yields_a_cited_paragraph(self):
+        # A dead model call must not leave a hole in the paper: fall back to
+        # the strongest passage, attributed, rather than an empty section.
         eng = make_engine([None])
-        blocks = await eng._synthesise("why", [source(1, "a.com")], "m")
-        assert blocks[0]["type"] == "h"
-        assert len(blocks) > 1
+        by_n = {1: source(1, "a.com")}
+        out, _ = await eng._write_section("m", "H", "brief", list(by_n.values()), by_n)
+        assert out and out[0]["citations"] == [1]
+
+
+class TestPaperAssembly:
+    async def test_sections_follow_the_approved_plan_in_order(self):
+        # The plan the user reviewed IS the outline: intro, one section per
+        # sub-question, discussion, conclusion.
+        replies = [section([{"text": "intro", "citations": []}])]           # introduction
+        replies += [section([{"text": f"body {i}", "citations": [1]}]) for i in range(2)]
+        replies += [section([{"text": "disc", "citations": []}])]           # discussion
+        replies += [section([{"text": "concl", "citations": []}])]          # conclusion
+        replies += [{"title": "A Title", "abstract": "An abstract."}]
+        eng = make_engine(replies)
+        emit = CollectingEmit()
+        srcs = [source(1, "a.com")]
+        srcs[0]["sub"] = 0
+
+        await eng._write_paper("q", srcs, ["first theme", "second theme"], "m", emit)
+
+        kinds = [s["kind"] for s in emit.of("research_section")]
+        assert kinds == ["intro", "theme", "theme", "discussion", "conclusion"]
+
+    async def test_title_and_abstract_arrive_last(self):
+        replies = [section([{"text": "x", "citations": []}]) for _ in range(4)]
+        replies += [{"title": "T", "abstract": "A"}]
+        eng = make_engine(replies)
+        emit = CollectingEmit()
+        await eng._write_paper("q", [source(1, "a.com")], ["one theme"], "m", emit)
+
+        names = [e for e, _ in emit.events]
+        assert names[-1] == "research_paper"
+        assert emit.of("research_paper")[0]["title"] == "T"
+
+    async def test_a_dead_model_still_produces_a_titled_paper(self):
+        eng = make_engine([])  # every call returns None
+        emit = CollectingEmit()
+        await eng._write_paper("why is the sky blue", [source(1, "a.com")], ["one"], "m", emit)
+        assert emit.of("research_paper")[0]["title"]
 
 
 class TestConflicts:
@@ -168,6 +203,71 @@ class TestRequery:
     async def test_uses_the_rewritten_query(self):
         eng = make_engine([{"query": "narrower wording"}])
         assert await eng._requery("topic", "original", "m") == "narrower wording"
+
+
+class CollectingEmit:
+    def __init__(self):
+        self.events: list[tuple[str, dict]] = []
+
+    async def __call__(self, event: str, data: dict) -> None:
+        self.events.append((event, data))
+
+    def of(self, name: str) -> list[dict]:
+        return [d for e, d in self.events if e == name]
+
+
+class TestSynthesizeOnly:
+    """This is the "Write the paper now" path (stores/research.js), used when a
+    run gets stopped after search finished but before the paper was written. It
+    must reuse the exact same conflict+writing logic as a full run() -- no
+    separate, potentially-diverging code path for the same job."""
+
+    async def test_writes_a_paper_from_sources_with_no_search(self):
+        eng = make_engine([
+            {"conflicts": []},
+            *[section([{"text": "x [1]", "citations": [1]}]) for _ in range(4)],
+            {"title": "T", "abstract": "A"},
+        ])
+        emit = CollectingEmit()
+        await eng.synthesize_only("q", [source(1, "a.com")], "m", emit, subs=["one theme"])
+        assert emit.of("research_section")
+        assert emit.of("research_paper")
+        assert emit.of("done")
+
+    async def test_empty_sources_errors_instead_of_calling_the_model(self):
+        eng = make_engine([])
+        emit = CollectingEmit()
+        await eng.synthesize_only("q", [], "m", emit)
+        assert emit.of("error")[0]["code"] == "zero_results"
+        assert not emit.of("research_section")
+
+    async def test_outline_is_recovered_when_the_sub_questions_are_gone(self):
+        # After a stop the approved wording is lost, but every source records
+        # which lane found it, so the SHAPE of the investigation survives.
+        eng = make_engine([
+            {"conflicts": []},
+            *[section([{"text": "x", "citations": []}]) for _ in range(5)],
+            {"title": "T", "abstract": "A"},
+        ])
+        emit = CollectingEmit()
+        a, b = source(1, "a.com"), source(2, "b.com")
+        a["sub"], b["sub"] = 0, 1
+        await eng.synthesize_only("q", [a, b], "m", emit)  # no subs passed
+        kinds = [s["kind"] for s in emit.of("research_section")]
+        assert kinds.count("theme") == 2
+
+    async def test_contradictions_still_get_detected(self):
+        eng = make_engine([
+            {"conflicts": [{"a": 1, "b": 2, "note": "disagree"}]},
+            *[section([{"text": "x [1][2]", "citations": [1, 2]}]) for _ in range(4)],
+            {"title": "T", "abstract": "A"},
+        ])
+        emit = CollectingEmit()
+        srcs = [source(1, "a.com"), source(2, "b.com")]
+        await eng.synthesize_only("q", srcs, "m", emit, subs=["one"])
+        updated = {d["id"]: d for d in emit.of("research_source")}
+        assert updated["e1"]["contradicts"] == "e2"
+        assert updated["e2"]["contradicts"] == "e1"
 
 
 class TestSearchHitDefaults:

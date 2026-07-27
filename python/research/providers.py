@@ -58,6 +58,12 @@ class SearchHit:
     type: str = "docs"         # news | docs | blog | forum | paper
     # paper-only metadata (empty for web hits)
     authors: str = ""
+    # Structured authors, one {"given", "family"} per person. The joined
+    # `authors` string above is for display only -- APA wants "Okonjo, A.",
+    # MLA wants "Okonjo, Adaeze", IEEE wants "A. Okonjo", and none of those
+    # can be recovered from a pre-joined string without guessing. Keeping the
+    # parts is the only way the citation formatter can be correct.
+    authors_list: list[dict] = field(default_factory=list)
     year: str = ""
     venue: str = ""
     cites: int = 0
@@ -72,6 +78,42 @@ class SearchHit:
     is_pdf: bool = False
     pages: int = 0
     extra: dict = field(default_factory=dict)
+
+
+def split_name(display: str) -> dict:
+    """"Adaeze Okonjo" -> {"given": "Adaeze", "family": "Okonjo"}.
+
+    OpenAlex and arXiv only give a single display string, so the split has to
+    be inferred: last whitespace-separated token is the family name, the rest
+    is given names. This is RIGHT for the overwhelming majority of records and
+    WRONG for compound surnames ("van der Berg", "de la Cruz") and for the
+    name orders that do not put the family name last.
+
+    Crossref is not run through this at all -- it hands us given/family as
+    separate fields, so we use those verbatim. Where the data is good we keep
+    it; this function only exists for the providers whose data is not.
+    """
+    parts = (display or "").strip().split()
+    if not parts:
+        return {"given": "", "family": ""}
+    if len(parts) == 1:
+        return {"given": "", "family": parts[0]}
+    return {"given": " ".join(parts[:-1]), "family": parts[-1]}
+
+
+def join_names(people: list[dict], limit: int = 3) -> str:
+    """Display-only join, e.g. "Okonjo, A., Vasquez, R. et al." -- what the
+    evidence card shows. The citation formatter never reads this."""
+    shown = []
+    for p in people[:limit]:
+        given = (p.get("given") or "").strip()
+        family = (p.get("family") or "").strip()
+        initials = " ".join(f"{g[0]}." for g in given.split() if g)
+        shown.append(f"{family}, {initials}".strip().rstrip(",") if initials else family)
+    out = ", ".join(x for x in shown if x)
+    if len(people) > limit:
+        out += " et al."
+    return out
 
 
 def root_domain(url: str) -> str:
@@ -176,12 +218,11 @@ async def search_openalex(query: str, max_results: int = 4) -> list[SearchHit]:
         oa = w.get("best_oa_location") or {}
         pdf = oa.get("pdf_url") or ""
         landing = oa.get("landing_page_url") or w.get("id") or ""
-        authors = ", ".join(
-            (a.get("author") or {}).get("display_name", "")
-            for a in (w.get("authorships") or [])[:3]
-        ).strip(", ")
-        if len(w.get("authorships") or []) > 3:
-            authors += " et al."
+        people = [
+            split_name((a.get("author") or {}).get("display_name", ""))
+            for a in (w.get("authorships") or [])
+        ]
+        people = [p for p in people if p["family"]]
         hits.append(SearchHit(
             url=pdf or landing,
             title=w.get("display_name") or "Untitled work",
@@ -190,7 +231,8 @@ async def search_openalex(query: str, max_results: int = 4) -> list[SearchHit]:
             snippet=_undo_inverted_index(w.get("abstract_inverted_index"))[:800],
             domain="openalex.org",
             type="paper",
-            authors=authors,
+            authors=join_names(people),
+            authors_list=people,
             year=str(w.get("publication_year") or ""),
             venue=((w.get("primary_location") or {}).get("source") or {}).get("display_name", "") or "Preprint",
             cites=int(w.get("cited_by_count") or 0),
@@ -251,9 +293,8 @@ async def search_arxiv(query: str, max_results: int = 4) -> list[SearchHit]:
             elif link.get("rel") == "alternate":
                 abs_url = link.get("href", "")
         names = [a.findtext("a:name", "", ns) for a in entry.findall("a:author", ns)]
-        authors = ", ".join(n for n in names[:3] if n)
-        if len(names) > 3:
-            authors += " et al."
+        people = [split_name(n) for n in names if n]
+        people = [p for p in people if p["family"]]
         hits.append(SearchHit(
             url=pdf_url or abs_url,
             title=title or "arXiv preprint",
@@ -262,7 +303,8 @@ async def search_arxiv(query: str, max_results: int = 4) -> list[SearchHit]:
             snippet=summary[:800],
             domain="arxiv.org",
             type="paper",
-            authors=authors,
+            authors=join_names(people),
+            authors_list=people,
             year=published[:4],
             venue="arXiv",
             doi=(entry.findtext("{http://arxiv.org/schemas/atom}doi", "", {}) or ""),
@@ -287,13 +329,13 @@ async def search_crossref(query: str, max_results: int = 3) -> list[SearchHit]:
     hits = []
     for it in (data.get("message", {}) or {}).get("items", [])[:max_results]:
         titles = it.get("title") or []
-        names = [
-            f"{a.get('family', '')}".strip()
-            for a in (it.get("author") or [])[:3]
+        # Crossref is the ONE provider that gives given/family separately, so
+        # it skips split_name() entirely -- no guessing where the surname ends.
+        people = [
+            {"given": (a.get("given") or "").strip(), "family": (a.get("family") or "").strip()}
+            for a in (it.get("author") or [])
         ]
-        authors = ", ".join(n for n in names if n)
-        if len(it.get("author") or []) > 3:
-            authors += " et al."
+        people = [p for p in people if p["family"]]
         parts = ((it.get("issued") or {}).get("date-parts") or [[]])[0]
         pdf = ""
         for link in it.get("link") or []:
@@ -310,7 +352,8 @@ async def search_crossref(query: str, max_results: int = 3) -> list[SearchHit]:
             snippet=_strip_tags(it.get("abstract", ""))[:800],
             domain="crossref.org",
             type="paper",
-            authors=authors,
+            authors=join_names(people),
+            authors_list=people,
             year=str(parts[0]) if parts else "",
             venue=(it.get("container-title") or [""])[0] or "Journal",
             cites=int(it.get("is-referenced-by-count") or 0),

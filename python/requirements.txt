@@ -26,6 +26,14 @@ msal-extensions>=1.1        # encrypted token cache (DPAPI on Windows) — token
 tavily-python>=0.5
 yfinance>=0.2.40            # unofficial Yahoo API — wrapped in cache + circuit breaker, expect breakage
 
+# Research paper export
+python-docx>=1.1            # .docx generation for Research mode papers
+reportlab>=4.1              # .pdf generation. Chosen over weasyprint because it's pure Python —
+                            # weasyprint needs GTK/Pango system libraries, which is a miserable
+                            # install story on Windows, and this app is Windows-first.
+pypdf>=4.2                  # PDF text extraction on the unsandboxed research fallback path
+                            # (the Docker image installs its own copy — see research.Dockerfile)
+
 # Voice
 faster-whisper>=1.0         # local STT; downloads model on first use (int8, CPU-friendly)
 

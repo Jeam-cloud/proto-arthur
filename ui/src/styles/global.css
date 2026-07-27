@@ -1132,31 +1132,124 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
   border-bottom: 1px solid var(--border); flex-shrink: 0;
 }
 .research-doc-status { font-size: 11.5px; color: var(--tmut); flex: 1; }
-.research-doc { flex: 1; overflow-y: auto; padding: 26px 30px 40px; }
-.research-doc-col { max-width: 660px; }
-.research-block { display: flex; gap: 12px; padding: 4px 0; position: relative; }
-.research-conf-rail { width: 2px; border-radius: 1px; background: transparent; flex-shrink: 0; }
-.research-conf-rail.thin { background: var(--tmut); }
-.research-conf-rail.unverified { background: var(--yellow); }
-.research-block-body {
-  flex: 1; min-width: 0; border-radius: 9px; padding: 9px 12px;
-  background: transparent; transition: background 0.5s;
+/* ---- the paper ----
+   Serif body copy at a wider measure than the rest of the app. This is the one
+   surface in Arthur that is meant to be READ at length rather than scanned, and
+   it should feel like a document rather than a panel -- so it gets book
+   typography (Georgia, 16.5px, 1.8 line-height, ~68 characters per line) while
+   every control around it stays in the UI sans. */
+.paper-scroll { flex: 1; overflow-y: auto; padding: 34px 40px 80px; }
+.paper {
+  max-width: 700px; margin: 0 auto;
+  font-family: Georgia, "Iowan Old Style", "Times New Roman", serif;
+  font-size: 16.5px; line-height: 1.8; color: var(--text);
 }
-.research-block-body.fresh { background: rgba(110, 231, 183, 0.07); }
-.research-block-body.held { background: var(--muted); box-shadow: inset 0 0 0 1px var(--border); }
-.research-block-text.p { font-size: 14.5px; line-height: 1.75; }
-.research-block-text.h { font-size: 19px; font-weight: 600; letter-spacing: -0.02em; }
-.research-block-text.q {
-  border-left: 2px solid var(--emph); padding-left: 14px; color: var(--tmut);
-  font-size: 13.5px; line-height: 1.7;
+.paper-title {
+  font-size: 27px; font-weight: 600; line-height: 1.3; letter-spacing: -0.02em;
+  text-align: center; margin-bottom: 26px;
 }
-.research-block-edit {
-  width: 100%; min-height: 76px; background: var(--bg2); border: 1px solid var(--border);
-  border-radius: 9px; padding: 10px 12px; font-size: 14.5px; line-height: 1.7;
-  color: var(--text); font-family: var(--sans); outline: none; resize: vertical;
+.paper-title input {
+  width: 100%; background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 6px 10px; font: inherit; color: var(--text); text-align: center; outline: none;
 }
-.research-block-foot { display: flex; align-items: center; gap: 9px; margin-top: 8px; flex-wrap: wrap; }
-.research-block-foot:empty { display: none; }
+.paper-abstract { margin-bottom: 30px; padding-bottom: 26px; border-bottom: 1px solid var(--border); }
+.paper-abstract h2 {
+  font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--tmut); text-align: center; margin-bottom: 12px; font-family: var(--sans);
+}
+.paper-abstract p { font-size: 15.5px; line-height: 1.75; color: var(--tmut); }
+.paper-abstract textarea, .paper-para-body textarea {
+  width: 100%; min-height: 130px; background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 9px; padding: 12px 14px; font: inherit; color: var(--text);
+  outline: none; resize: vertical;
+}
+.paper-section { margin-bottom: 30px; }
+.paper-section h2 {
+  font-size: 19px; font-weight: 600; letter-spacing: -0.015em; margin-bottom: 12px;
+  scroll-margin-top: 20px;
+}
+.paper-heading-edit {
+  width: 100%; background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 5px 10px; font-size: 19px; font-weight: 600; font-family: inherit;
+  color: var(--text); outline: none;
+}
+.paper-para { display: flex; gap: 12px; margin-bottom: 14px; scroll-margin-top: 60px; }
+.paper-para-body { flex: 1; min-width: 0; border-radius: 8px; transition: background 0.25s; }
+/* A paragraph lights up when the source it cites is hovered in the sidebar.
+   This is the sidebar -> paper half of the citation link. */
+.paper-para.lit .paper-para-body {
+  background: rgba(252, 211, 77, 0.09);
+  box-shadow: 0 0 0 6px rgba(252, 211, 77, 0.09);
+}
+.paper-para p { margin: 0; }
+.paper-conf-rail { width: 2px; border-radius: 1px; background: transparent; flex-shrink: 0; }
+.paper-conf-rail.thin { background: var(--tmut); }
+.paper-conf-rail.unverified { background: var(--yellow); }
+.paper-para-foot {
+  display: flex; align-items: center; gap: 10px; margin-top: 5px; flex-wrap: wrap;
+  font-family: var(--sans); opacity: 0; transition: opacity 0.15s;
+}
+.paper-para:hover .paper-para-foot { opacity: 1; }
+.paper-para-foot:empty { display: none; }
+.paper-para-del {
+  background: none; border: none; color: var(--tmut); cursor: pointer; padding: 0;
+  display: inline-flex; align-items: center;
+}
+.paper-para-del:hover { color: var(--red); }
+.paper-writing {
+  display: flex; align-items: center; gap: 9px; color: var(--tmut); font-size: 13px;
+  font-family: var(--sans); font-style: italic; margin: 18px 0;
+}
+.paper-pending {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 11px;
+  color: var(--tmut); font-size: 14px;
+}
+
+/* References: hanging indent is not decoration, it is what every author-date
+   style requires, and its absence is the fastest tell of a fake bibliography. */
+.paper-references { margin-top: 40px; padding-top: 26px; border-top: 1px solid var(--border); }
+.paper-references h2 { font-size: 19px; font-weight: 600; margin-bottom: 14px; }
+.paper-ref {
+  font-size: 15px; line-height: 1.7; margin-bottom: 11px;
+  padding-left: 2.2em; text-indent: -2.2em; word-break: break-word; cursor: default;
+}
+.paper-ref:hover { color: var(--text); }
+
+/* Toolbar controls stay in the UI sans, deliberately not the paper serif. */
+.paper-style-picker {
+  background: var(--muted); border: 1px solid var(--border); color: var(--text);
+  border-radius: 8px; padding: 6px 9px; font-size: 12px; outline: none; cursor: pointer;
+}
+.paper-custom-style {
+  flex: 1; min-width: 140px; background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 10px; font-size: 12px; color: var(--text); outline: none;
+}
+.paper-export { position: relative; }
+.paper-export-menu {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; min-width: 168px;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 5px; box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
+}
+.paper-export-menu button {
+  display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 10px;
+  border: none; background: none; color: var(--text); font-size: 13px; text-align: left;
+  border-radius: 7px; cursor: pointer;
+}
+.paper-export-menu button:hover { background: var(--emph); }
+.paper-new-sources {
+  display: flex; align-items: center; gap: 12px; padding: 10px 24px; flex-shrink: 0;
+  background: rgba(110, 231, 183, 0.07); border-bottom: 1px solid var(--border);
+  font-size: 12.5px; color: var(--text);
+}
+.paper-new-sources span { flex: 1; }
+.paper-find-input {
+  width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 9px;
+  padding: 11px 13px; font-size: 14px; color: var(--text); outline: none; margin-bottom: 4px;
+}
+.paper-find-input:focus { border-color: var(--tmut); }
+/* Cited sources are clickable (they jump into the paper); uncited ones are not. */
+.evidence-card.citable { cursor: pointer; }
+
 .research-attrib {
   font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--tmut);
 }
@@ -1168,13 +1261,24 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
 .research-conf-btn:hover { color: var(--text); }
 
 /* Citation pills: a control, not decoration. Hover lights the matching card in
-   the evidence panel; click scrolls to it and expands the extracted passage. */
-.cite-pill {
+   the sidebar; click scrolls to it and expands the extracted passage.
+   Two shapes, because the styles genuinely differ:
+     .numeric     -> IEEE [3]: a tight mono chip, the way numeric styles read.
+     .authordate  -> APA/MLA/Chicago (Okonjo et al., 2026): inline text that
+                     belongs to the sentence, so it stays in the paper's serif
+                     and only gets a faint underline to show it is live. */
+.cite-pill { cursor: pointer; transition: background 0.12s, color 0.12s; }
+.cite-pill.numeric {
   display: inline-flex; align-items: center; justify-content: center; min-width: 17px; height: 17px;
   padding: 0 4px; margin: 0 1px; border-radius: 5px; background: var(--emph); color: var(--tmut);
-  font-size: 10.5px; font-weight: 600; vertical-align: 1px; cursor: pointer;
-  font-family: var(--mono); transition: background 0.12s, color 0.12s;
+  font-size: 10.5px; font-weight: 600; vertical-align: 1px; font-family: var(--mono);
 }
-.cite-pill.hot, .cite-pill:hover { background: var(--text); color: var(--inv); }
+.cite-pill.authordate {
+  color: var(--tmut); border-bottom: 1px dotted var(--tmut); padding-bottom: 1px;
+}
+.cite-pill.numeric.hot, .cite-pill.numeric:hover { background: var(--text); color: var(--inv); }
+.cite-pill.authordate.hot, .cite-pill.authordate:hover {
+  color: var(--text); border-bottom-color: var(--text); background: rgba(252, 211, 77, 0.14);
+}
 .modal.narrow { max-width: 420px; }
 .modal.narrow p { color: var(--tmut); font-size: 13.5px; line-height: 1.65; margin: 10px 0 4px; }
