@@ -53,7 +53,16 @@ class SearchHit:
     kind: str = "web"          # web | paper
     provider: str = "tavily"   # tavily | openalex | arxiv | crossref
     snippet: str = ""
-    domain: str = ""
+    domain: str = ""      # real host of the URL, for display
+    # WHO PUBLISHED THIS -- deliberately separate from `provider` (who FOUND
+    # it) and from `domain`. Getting these confused is a real bug we shipped
+    # once: every OpenAlex result carried domain="openalex.org", so forty
+    # papers from forty different journals looked like forty reprints of one
+    # publisher, collapsed to a single evidence card, and dragged every
+    # confidence score down to "thin" because the publisher set had size 1.
+    # A search index is not a publisher. For a paper this is the journal; for
+    # a web page it is the site.
+    publisher: str = ""
     date: str = ""
     type: str = "docs"         # news | docs | blog | forum | paper
     # paper-only metadata (empty for web hits)
@@ -114,6 +123,15 @@ def join_names(people: list[dict], limit: int = 3) -> str:
     if len(people) > limit:
         out += " et al."
     return out
+
+
+def _venue_or_host(venue: str, url: str) -> str:
+    """The independence key for a paper: its journal, or failing that the host
+    that serves it. Never the API that found it."""
+    v = (venue or "").strip()
+    if v and v.lower() not in {"preprint", "journal", "unknown"}:
+        return v
+    return root_domain(url) or "unattributed"
 
 
 def root_domain(url: str) -> str:
@@ -192,6 +210,7 @@ async def search_web(
             provider="tavily",
             snippet=(r.get("content") or "")[:600],
             domain=root_domain(url),
+            publisher=root_domain(url),  # for a web page, the site IS the publisher
             date=(r.get("published_date") or "")[:10],
             type=_classify(url, r.get("content", "")),
         ))
@@ -229,7 +248,11 @@ async def search_openalex(query: str, max_results: int = 4) -> list[SearchHit]:
             kind="paper",
             provider="openalex",
             snippet=_undo_inverted_index(w.get("abstract_inverted_index"))[:800],
-            domain="openalex.org",
+            domain=root_domain(pdf or landing) or "openalex.org",
+            publisher=_venue_or_host(
+                ((w.get("primary_location") or {}).get("source") or {}).get("display_name", ""),
+                pdf or landing,
+            ),
             type="paper",
             authors=join_names(people),
             authors_list=people,
@@ -302,6 +325,11 @@ async def search_arxiv(query: str, max_results: int = 4) -> list[SearchHit]:
             provider="arxiv",
             snippet=summary[:800],
             domain="arxiv.org",
+            # Every arXiv preprint really is published by arXiv, so unlike the
+            # index providers this one is honest -- but it does mean two arXiv
+            # preprints count as one publisher for confidence, which is the
+            # correct conservative reading of two unreviewed papers.
+            publisher="arXiv",
             type="paper",
             authors=join_names(people),
             authors_list=people,
@@ -350,7 +378,10 @@ async def search_crossref(query: str, max_results: int = 3) -> list[SearchHit]:
             # Crossref abstracts are JATS XML fragments; strip the tags crudely
             # rather than pulling in a parser for a preview string.
             snippet=_strip_tags(it.get("abstract", ""))[:800],
-            domain="crossref.org",
+            domain=root_domain(pdf or it.get("URL", "")) or "crossref.org",
+            publisher=_venue_or_host(
+                (it.get("container-title") or [""])[0], pdf or it.get("URL", "")
+            ),
             type="paper",
             authors=join_names(people),
             authors_list=people,
@@ -359,6 +390,159 @@ async def search_crossref(query: str, max_results: int = 3) -> list[SearchHit]:
             cites=int(it.get("is-referenced-by-count") or 0),
             doi=it.get("DOI", ""),
             pdf_url=pdf,
+        ))
+    return hits
+
+
+# ---------- Semantic Scholar ----------
+
+async def search_semanticscholar(query: str, max_results: int = 4) -> list[SearchHit]:
+    """Best general-purpose academic index of the free ones: real abstracts,
+    citation counts, and direct open-access PDF links across every field.
+
+    Keyless requests are rate limited rather than rejected, so a 429 here is
+    normal under load and simply yields no hits for this lane -- never an
+    error the user sees."""
+    fields = "title,abstract,year,venue,citationCount,externalIds,openAccessPdf,authors,url"
+    async with httpx.AsyncClient(timeout=TIMEOUT, headers={"User-Agent": UA}) as client:
+        data = await _get_json(client, "https://api.semanticscholar.org/graph/v1/paper/search", {
+            "query": query, "limit": max_results, "fields": fields,
+        })
+    if not data:
+        return []
+
+    hits = []
+    for p in (data.get("data") or [])[:max_results]:
+        if not (p.get("abstract") or "").strip():
+            continue  # no abstract means nothing to extract a passage from
+        people = [split_name(a.get("name", "")) for a in (p.get("authors") or [])]
+        people = [x for x in people if x["family"]]
+        oa = (p.get("openAccessPdf") or {}).get("url") or ""
+        doi = (p.get("externalIds") or {}).get("DOI", "") or ""
+        landing = p.get("url") or (f"https://doi.org/{doi}" if doi else "")
+        venue = (p.get("venue") or "").strip()
+        hits.append(SearchHit(
+            url=oa or landing,
+            title=p.get("title") or "Untitled work",
+            kind="paper", provider="semanticscholar",
+            snippet=(p.get("abstract") or "")[:800],
+            domain=root_domain(oa or landing) or "semanticscholar.org",
+            publisher=_venue_or_host(venue, oa or landing),
+            type="paper",
+            authors=join_names(people), authors_list=people,
+            year=str(p.get("year") or ""),
+            venue=venue or "Preprint",
+            cites=int(p.get("citationCount") or 0),
+            doi=doi, pdf_url=oa,
+        ))
+    return hits
+
+
+# ---------- Europe PMC ----------
+
+async def search_europepmc(query: str, max_results: int = 4) -> list[SearchHit]:
+    """Deepest free biomedical corpus, and unusually generous: a large share
+    of records carry OPEN FULL TEXT, not just an abstract. For medical
+    questions this returns better evidence than any general index."""
+    async with httpx.AsyncClient(timeout=TIMEOUT, headers={"User-Agent": UA}) as client:
+        data = await _get_json(client, "https://www.ebi.ac.uk/europepmc/webservices/rest/search", {
+            "query": query, "format": "json", "pageSize": max_results,
+            "resultType": "core",
+        })
+    if not data:
+        return []
+
+    hits = []
+    for r in ((data.get("resultList") or {}).get("result") or [])[:max_results]:
+        abstract = (r.get("abstractText") or "").strip()
+        if not abstract:
+            continue
+        # authorList is structured; authorString is a pre-joined fallback.
+        people = [
+            {"given": (a.get("firstName") or "").strip(), "family": (a.get("lastName") or "").strip()}
+            for a in ((r.get("authorList") or {}).get("author") or [])
+        ]
+        people = [x for x in people if x["family"]]
+        if not people and r.get("authorString"):
+            people = [split_name(n.strip()) for n in r["authorString"].split(",")[:6] if n.strip()]
+            people = [x for x in people if x["family"]]
+
+        doi = (r.get("doi") or "").strip()
+        pmcid = (r.get("pmcid") or "").strip()
+        landing = (f"https://europepmc.org/article/{r.get('source', 'MED')}/{r.get('id', '')}"
+                   if r.get("id") else (f"https://doi.org/{doi}" if doi else ""))
+        venue = (r.get("journalTitle") or "").strip()
+        hits.append(SearchHit(
+            url=landing,
+            title=(r.get("title") or "Untitled work").strip().rstrip("."),
+            kind="paper", provider="europepmc",
+            snippet=_strip_tags(abstract)[:800],
+            domain=root_domain(landing) or "europepmc.org",
+            publisher=_venue_or_host(venue, landing),
+            type="paper",
+            authors=join_names(people), authors_list=people,
+            year=str(r.get("pubYear") or ""),
+            venue=venue or "Preprint",
+            cites=int(r.get("citedByCount") or 0),
+            doi=doi,
+            # Open-access full text sits behind a stable PMC URL when present.
+            pdf_url=(f"https://europepmc.org/articles/{pmcid}?pdf=render" if pmcid else ""),
+        ))
+    return hits
+
+
+# ---------- PubMed ----------
+
+async def search_pubmed(query: str, max_results: int = 4) -> list[SearchHit]:
+    """The authoritative biomedical index. Two calls by design: esearch returns
+    IDs, esummary turns them into records -- that is simply how E-utilities
+    works, and the alternative (efetch XML) is heavier for no gain here.
+
+    PubMed summaries carry no abstract, so the snippet is built from the
+    title and journal. Europe PMC usually covers the same paper WITH an
+    abstract, and the URL-level dedupe in gather() keeps whichever arrives
+    first, so this mostly adds reach into records Europe PMC lacks."""
+    async with httpx.AsyncClient(timeout=TIMEOUT, headers={"User-Agent": UA}) as client:
+        found = await _get_json(client, "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi", {
+            "db": "pubmed", "term": query, "retmax": max_results,
+            "retmode": "json", "sort": "relevance",
+        })
+        ids = ((found or {}).get("esearchresult") or {}).get("idlist") or []
+        if not ids:
+            return []
+        summary = await _get_json(client, "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi", {
+            "db": "pubmed", "id": ",".join(ids), "retmode": "json",
+        })
+    if not summary:
+        return []
+
+    result = summary.get("result") or {}
+    hits = []
+    for pmid in ids:
+        r = result.get(pmid)
+        if not isinstance(r, dict):
+            continue
+        people = [split_name((a.get("name") or "")) for a in (r.get("authors") or [])]
+        people = [x for x in people if x["family"]]
+        venue = (r.get("fulljournalname") or r.get("source") or "").strip()
+        url = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+        doi = ""
+        for aid in (r.get("articleids") or []):
+            if aid.get("idtype") == "doi":
+                doi = aid.get("value", "")
+                break
+        hits.append(SearchHit(
+            url=url,
+            title=(r.get("title") or "Untitled work").strip().rstrip("."),
+            kind="paper", provider="pubmed",
+            snippet=f"{r.get('title', '')} {venue}. {r.get('pubdate', '')}".strip(),
+            domain="pubmed.ncbi.nlm.nih.gov",
+            publisher=_venue_or_host(venue, url),
+            type="paper",
+            authors=join_names(people), authors_list=people,
+            year=str(r.get("pubdate", ""))[:4],
+            venue=venue or "Journal",
+            doi=doi,
         ))
     return hits
 
@@ -395,10 +579,18 @@ async def gather(
     if wants_web:
         jobs.append(search_web(tavily_key, query, per_provider + 1, include_domains, exclude_domains))
     if "academic" in kinds:
+        # Six indexes, all fanned out at once. They overlap heavily -- the same
+        # paper often comes back from four of them -- which is fine and in fact
+        # the point: the DOI/URL dedupe below keeps the FIRST copy, and because
+        # they are ordered best-metadata-first, the surviving record tends to
+        # be the one with an abstract and an open-access PDF attached.
         jobs.extend([
             search_openalex(query, per_provider),
+            search_semanticscholar(query, per_provider),
+            search_europepmc(query, per_provider),
             search_arxiv(query, per_provider),
             search_crossref(query, max(2, per_provider - 1)),
+            search_pubmed(query, max(2, per_provider - 1)),
         ])
 
     if not jobs:

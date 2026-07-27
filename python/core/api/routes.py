@@ -31,6 +31,7 @@ from core.api.schemas import (
     ResearchPlanRequest, ResearchRunRequest, ResearchSynthesizeRequest, SecretBody, SettingsPatch,
 )
 from research import citations as research_citations
+from research import engine as research_engine
 from research import export as research_export
 from core.deps import AppState
 from core.errors import ArthurError, NotFoundError, VoiceError
@@ -279,7 +280,18 @@ async def research_plan(request: Request, body: ResearchPlanRequest) -> dict:
     if not model:
         raise ArthurError("No model selected. Pick one in the model menu.", detail={})
     subs = await s.research.plan(body.question, body.depth, model)
-    return {"sub_questions": subs, "depth": body.depth}
+    # Warn BEFORE the run, not after. A four-minute investigation that ends in
+    # a thin paper because the model was too small is the worst possible time
+    # to find that out, and the plan screen is the last moment the user can
+    # still change the model for free.
+    warning = ""
+    if research_engine.model_is_small(model):
+        warning = (
+            f"{model} is a small model. Arthur will use a simplified writing mode so it can "
+            "cope, but the paper will be shorter and less connected than a 8B+ model produces. "
+            "Switching model in the composer, or using Quick depth, both help."
+        )
+    return {"sub_questions": subs, "depth": body.depth, "model": model, "warning": warning}
 
 
 @router.post("/research/run")

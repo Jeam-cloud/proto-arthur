@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -156,6 +157,26 @@ SECTION_SCHEMA = {
     "required": ["heading", "paragraphs"],
 }
 
+# The same job, asked in the simplest shape that can still carry citations.
+# A 3B model handed SECTION_SCHEMA reliably returns the right STRUCTURE with
+# empty strings inside it -- it satisfies the grammar and says nothing. Fewer
+# nested objects and no optional table leaves it with less to track, and the
+# citations come back as inline [n] markers in one flat string, which small
+# models are much better at than populating a parallel array.
+SIMPLE_SECTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "heading": {"type": "string"},
+        "body": {"type": "string"},
+    },
+    "required": ["heading", "body"],
+}
+
+# Rough parameter count below which the simplified path is used. Not a hard
+# science -- it is the point where, in practice, nested-schema compliance
+# starts failing more often than it succeeds.
+SMALL_MODEL_B = 8.0
+
 TITLE_ABSTRACT_SCHEMA = {
     "type": "object",
     "properties": {
@@ -251,7 +272,12 @@ class ResearchEngine:
                 seen_urls.add(key)
 
                 dom = hit.domain or root_domain(hit.url)
-                first_from_domain = first_n_by_domain.get(dom)
+                pub = hit.publisher or dom
+                # Reprint collapsing applies to WEB pages only. Five outlets
+                # running one wire story is one voice; two papers in the same
+                # journal are two independent pieces of research and must never
+                # be folded together. Papers are already deduped by DOI upstream.
+                first_from_domain = first_n_by_domain.get(pub) if hit.kind != "paper" else None
                 n = len(collected) + 1
 
                 src = {
@@ -262,6 +288,7 @@ class ResearchEngine:
                     "title": hit.title,
                     "url": hit.url,
                     "domain": dom,
+                    "publisher": pub,   # independence key -- see providers.SearchHit
                     "date": hit.date,
                     "type": hit.type,
                     "authors": hit.authors,        # display string, evidence card
@@ -282,8 +309,8 @@ class ResearchEngine:
                     # marked as reprints rather than counted as fresh evidence.
                     "dup_of": "" if first_from_domain is None else f"e{first_from_domain}",
                 }
-                if first_from_domain is None:
-                    first_n_by_domain[dom] = n
+                if first_from_domain is None and hit.kind != "paper":
+                    first_n_by_domain[pub] = n
                 collected.append(src)
                 return src
 
@@ -478,7 +505,7 @@ class ResearchEngine:
 
         await emit(events.DONE, {
             "sources": len(collected),
-            "independent": len({s["domain"] for s in collected}),
+            "independent": len({s.get("publisher") or s.get("domain") for s in collected}),
             "elapsed_s": round(time.monotonic() - started, 1),
         })
 
@@ -777,20 +804,26 @@ class ResearchEngine:
                 "order. If the material is not genuinely tabular, omit `table` entirely."},
             {"role": "user", "content": f"{brief}\n\nSources:\n{numbered}"},
         ]
+        simple = model_is_small(model)
         try:
-            data = await self._llm.chat_json(model, msgs, SECTION_SCHEMA, temperature=0.2)
+            data = await self._llm.chat_json(
+                model, msgs,
+                SIMPLE_SECTION_SCHEMA if simple else SECTION_SCHEMA,
+                temperature=0.2,
+            )
         except Exception as e:
             log.warning("section '%s' failed: %s", heading, e)
             data = None
 
-        raw = (data or {}).get("paragraphs") or []
-        if not raw:
-            # A failed section must not leave a hole in the paper. Fall back to
-            # the strongest passage, clearly attributed -- thin, but honest and
-            # still citable.
-            raw = [{"text": s.get("passage", "")[:400], "citations": [s["n"]]} for s in sources[:1]]
-
-        import re
+        if simple:
+            # One flat string comes back; split it into paragraphs ourselves.
+            # Citations are recovered from the inline [n] markers below, which
+            # is why the union of declared-and-inline exists in the first place.
+            body = ((data or {}).get("body") or "").strip()
+            raw = [{"text": chunk.strip(), "citations": []}
+                   for chunk in re.split(r"\n\s*\n", body) if chunk.strip()]
+        else:
+            raw = (data or {}).get("paragraphs") or []
 
         out: list[dict] = []
         for i, p in enumerate(raw):
@@ -805,7 +838,7 @@ class ResearchEngine:
             cites = sorted({c for c in [*(p.get("citations") or []), *inline] if c in by_n})
             for c in cites:
                 by_n[c]["used"] = True
-            publishers = {by_n[c].get("domain") or by_n[c].get("venue") for c in cites}
+            publishers = {by_n[c].get("publisher") or by_n[c].get("domain") for c in cites}
             conf = "ok" if len(publishers) >= 2 else ("thin" if cites else "unverified")
             # No authorship flag: Arthur writes every paragraph in the paper,
             # so a per-paragraph "written by AI" marker would be true of all of
@@ -816,6 +849,23 @@ class ResearchEngine:
                 "citations": cites,
                 "conf": conf,
             })
+
+        # The fallback lives HERE, after filtering, not before it. A small
+        # model that returns the right JSON shape with empty strings inside is
+        # the common failure -- commoner than returning nothing at all -- and
+        # checking `raw` alone let that through as a heading with no body,
+        # which is what produced the empty "Introduction" bug. Judge the
+        # output that survived validation, not the output that arrived.
+        if not out and sources:
+            best = sources[0]
+            out = [{
+                "id": "p1",
+                "text": (best.get("passage") or "")[:600].strip(),
+                "citations": [best["n"]],
+                "conf": "thin",
+            }]
+            by_n[best["n"]]["used"] = True
+            log.info("section '%s' produced nothing usable; fell back to a cited extract", heading)
 
         table = _validate_table((data or {}).get("table"), by_n)
         if table:
@@ -843,6 +893,25 @@ class ResearchEngine:
         title = ((data or {}).get("title") or "").strip() or _title_case(question)
         abstract = ((data or {}).get("abstract") or "").strip()
         return title[:200], abstract
+
+
+def model_is_small(model: str) -> bool:
+    """Guess parameter count from the model NAME, e.g. "llama3.1:8b" -> 8.
+
+    Reading the name is crude, but it is the only signal available without a
+    round trip to Ollama, and model names in this ecosystem are near-universally
+    honest about size because that is the thing people pick on. When there is
+    no size in the name we assume the model is capable -- degrading a good
+    model's output on a bad guess is worse than letting a small one try and
+    fall back.
+    """
+    m = re.search(r"[:\-_ ](\d+(?:\.\d+)?)\s*b\b", (model or "").lower())
+    if not m:
+        return False
+    try:
+        return float(m.group(1)) < SMALL_MODEL_B
+    except ValueError:
+        return False
 
 
 def _validate_table(raw: dict | None, by_n: dict[int, dict]) -> dict | None:

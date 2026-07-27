@@ -913,6 +913,17 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
   font-size: 14.5px; color: var(--tmut); line-height: 1.6; padding: 13px 15px;
   background: var(--muted); border: 1px solid var(--border); border-radius: 11px; margin-bottom: 20px;
 }
+/* Shown on the plan screen only: the last point where swapping the model is
+   free. Yellow, not red -- a small model still produces a real paper, just a
+   thinner one, so this is a heads-up rather than a failure. */
+.research-model-warning {
+  display: flex; align-items: flex-start; gap: 10px; padding: 11px 13px;
+  border-radius: 11px; background: rgba(252, 211, 77, 0.07);
+  border: 1px solid rgba(252, 211, 77, 0.22); color: var(--yellow);
+  margin-bottom: 18px;
+}
+.research-model-warning span { color: var(--text); font-size: 12.5px; line-height: 1.55; }
+
 .research-sub {
   display: flex; align-items: center; gap: 10px; padding: 10px 13px; border: 1px solid var(--border);
   border-radius: 11px; background: var(--muted); margin-bottom: 8px;

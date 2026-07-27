@@ -143,6 +143,86 @@ class TestSectionConfidence:
         assert out and out[0]["citations"] == [1]
 
 
+class TestPublisherIndependence:
+    """Regression: every OpenAlex hit used to carry domain='openalex.org', so
+    forty papers from forty different journals collapsed into ONE evidence
+    card reading '40 sources - 1 independent', and any paragraph citing two of
+    them scored 'thin' because the publisher set had size 1. A search index is
+    not a publisher."""
+
+    def test_openalex_papers_do_not_share_a_publisher(self):
+        from research.providers import _venue_or_host
+
+        a = _venue_or_host("The Lancet", "https://thelancet.com/x.pdf")
+        b = _venue_or_host("BMJ", "https://bmj.com/y.pdf")
+        assert a != b
+
+    def test_a_missing_venue_falls_back_to_the_host_not_the_index(self):
+        from research.providers import _venue_or_host
+
+        assert _venue_or_host("", "https://europepmc.org/article/MED/1") == "europepmc.org"
+
+    def test_placeholder_venues_are_not_treated_as_real_publishers(self):
+        from research.providers import _venue_or_host
+
+        # "Preprint"/"Journal" are filler values several APIs return; treating
+        # them as publisher names would merge unrelated papers again.
+        assert _venue_or_host("Preprint", "https://arxiv.org/abs/1") == "arxiv.org"
+
+    async def test_two_papers_in_different_journals_are_two_publishers(self):
+        eng = make_engine([section([{"text": "Both agree [1][2].", "citations": [1, 2]}])])
+        by_n = {1: source(1, "thelancet.com"), 2: source(2, "bmj.com")}
+        by_n[1]["publisher"], by_n[2]["publisher"] = "The Lancet", "BMJ"
+        out, _ = await eng._write_section("m", "H", "b", list(by_n.values()), by_n)
+        assert out[0]["conf"] == "ok"
+
+    async def test_two_papers_in_the_same_journal_are_one_publisher(self):
+        eng = make_engine([section([{"text": "Same journal [1][2].", "citations": [1, 2]}])])
+        by_n = {1: source(1, "thelancet.com"), 2: source(2, "thelancet.com")}
+        by_n[1]["publisher"] = by_n[2]["publisher"] = "The Lancet"
+        out, _ = await eng._write_section("m", "H", "b", list(by_n.values()), by_n)
+        assert out[0]["conf"] == "thin"
+
+
+class TestSmallModelHandling:
+    def test_size_is_read_off_the_model_name(self):
+        from research.engine import model_is_small
+
+        assert model_is_small("llama3.2:3b") is True
+        assert model_is_small("qwen2.5:14b") is False
+        assert model_is_small("phi3.5:3.8b") is True
+
+    def test_an_unlabelled_model_is_assumed_capable(self):
+        # Degrading a good model on a bad guess is worse than letting a small
+        # one try and fall back.
+        from research.engine import model_is_small
+
+        assert model_is_small("mistral-nemo") is False
+
+    async def test_structurally_valid_but_empty_output_still_yields_a_section(self):
+        """THE empty-Introduction regression. A small model returning the right
+        JSON shape with empty strings inside satisfies the grammar and says
+        nothing -- the fallback has to judge what survived validation, not what
+        arrived."""
+        eng = make_engine([section([{"text": "   ", "citations": []}])])
+        by_n = {1: source(1, "a.com")}
+        by_n[1]["passage"] = "A real extracted passage about the topic."
+        out, _ = await eng._write_section("m", "H", "b", list(by_n.values()), by_n)
+        assert out and out[0]["text"]
+        assert out[0]["citations"] == [1]
+        assert out[0]["conf"] == "thin"
+
+    async def test_small_models_get_the_flat_schema_and_still_get_citations(self):
+        # The simple path returns one string; citations come from inline [n].
+        eng = make_engine([{"heading": "H", "body": "First para [1].\n\nSecond para [2]."}])
+        by_n = {1: source(1, "a.com"), 2: source(2, "b.com")}
+        by_n[1]["publisher"], by_n[2]["publisher"] = "a.com", "b.com"
+        out, _ = await eng._write_section("llama3.2:3b", "H", "b", list(by_n.values()), by_n)
+        assert len(out) == 2
+        assert out[0]["citations"] == [1]
+        assert out[1]["citations"] == [2]
+
+
 class TestTableValidation:
     """A comparison table is the most authoritative-looking thing a paper can
     contain, so it gets the strictest validation in the engine. Anything

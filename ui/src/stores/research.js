@@ -100,6 +100,7 @@ const BLANK = {
   writing: false,
   finding: false,      // a "find more sources" search is running
   newSourceIds: [],    // arrived since the paper was written -> offer a rewrite
+  modelWarning: "",    // set by /research/plan when the model looks too small
 };
 
 export const useResearch = create((set, get) => ({
@@ -143,6 +144,9 @@ export const useResearch = create((set, get) => ({
         stage: "plan",
         planning: false,
         subs: (res.sub_questions || []).map((text, i) => ({ id: `sq${i}`, text })),
+        // Shown on the plan screen, which is the last moment the model can be
+        // changed for free -- after this a run costs minutes.
+        modelWarning: res.warning || "",
       });
     } catch (e) {
       set({ planning: false });

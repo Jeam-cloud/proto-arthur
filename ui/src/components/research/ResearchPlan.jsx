@@ -6,17 +6,25 @@
 // seconds. It reads as a courtesy; it is really the thing that makes small
 // models viable for multi-step work.
 import React from "react";
-import { GripVertical, X, Plus } from "lucide-react";
+import { GripVertical, X, Plus, TriangleAlert } from "lucide-react";
 import { useResearch } from "../../stores/research";
 
 export default function ResearchPlan() {
   const { question, subs, editSub, delSub, addSub, backHome, run } = useResearch();
+  const modelWarning = useResearch((s) => s.modelWarning);
 
   return (
     <div className="research-scroll">
       <div className="research-col wide">
         <div className="micro-label">Proposed approach</div>
         <div className="research-question-echo">{question}</div>
+
+        {modelWarning && (
+          <div className="research-model-warning">
+            <TriangleAlert size={15} strokeWidth={1.8} />
+            <span>{modelWarning}</span>
+          </div>
+        )}
         <p className="research-lede">
           Arthur will work through these sub-questions in parallel. Edit, reorder or remove any of
           them before the run starts.
