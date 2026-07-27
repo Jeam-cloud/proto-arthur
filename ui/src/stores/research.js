@@ -473,14 +473,15 @@ export const useResearch = create((set, get) => ({
   clearFocusSource: () => set({ focusSource: null }),
 
   // Paragraph edits are local edits to a local document -- nothing is sent
-  // anywhere, and editing drops the "Arthur wrote this" attribution because
-  // once you have rewritten a sentence it is yours.
+  // anywhere. There is no authorship flag to clear: Arthur wrote the whole
+  // paper, so tracking which paragraphs it wrote would mark all of them, and
+  // an "accept" step over prose the user can already edit does no work.
   editParagraph: (sectionId, paraId, text) =>
     set((s) => ({
       sections: s.sections.map((sec) =>
         sec.id !== sectionId ? sec : {
           ...sec,
-          paragraphs: sec.paragraphs.map((p) => (p.id === paraId ? { ...p, text, ai: false } : p)),
+          paragraphs: sec.paragraphs.map((p) => (p.id === paraId ? { ...p, text } : p)),
         }),
     })),
   deleteParagraph: (sectionId, paraId) =>

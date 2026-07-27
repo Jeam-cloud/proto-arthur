@@ -29,15 +29,23 @@ log = logging.getLogger(__name__)
 def _prepared(paper: dict, sources: list[dict], style: str) -> tuple[list[dict], dict[int, dict]]:
     """Sections with citations rendered into the prose, plus the lookup used
     to build the reference list. Shared by both renderers so they cannot
-    disagree about what the text says."""
+    disagree about what the text says.
+
+    Blocks keep their kind: prose becomes a string, a table stays structured
+    so each renderer can lay it out natively (a real Word table, a real PDF
+    table) rather than flattening it to text.
+    """
     by_n = {int(s["n"]): s for s in sources if s.get("n") is not None}
     out = []
     for sec in paper.get("sections", []):
-        paras = []
+        blocks = []
         for p in sec.get("paragraphs", []):
+            if p.get("kind") == "table":
+                blocks.append({"kind": "table", **p})
+                continue
             text = citations.render_in_text(p.get("text", ""), by_n, style)
-            paras.append(citations.dedupe_adjacent(text))
-        out.append({"heading": sec.get("heading", ""), "paragraphs": paras})
+            blocks.append({"kind": "text", "text": citations.dedupe_adjacent(text)})
+        out.append({"heading": sec.get("heading", ""), "blocks": blocks})
     return out, by_n
 
 
@@ -89,8 +97,11 @@ def to_docx(paper: dict, sources: list[dict], style: str, prebuilt_refs: list[di
     for sec in sections:
         h = doc.add_paragraph(sec["heading"])
         h.runs[0].bold = True
-        for text in sec["paragraphs"]:
-            p = doc.add_paragraph(text)
+        for block in sec["blocks"]:
+            if block["kind"] == "table":
+                _docx_table(doc, block, style, Pt, Inches, WD_ALIGN_PARAGRAPH)
+                continue
+            p = doc.add_paragraph(block["text"])
             p.paragraph_format.first_line_indent = Inches(0.5)
 
     refs = _refs(paper, sources, style, prebuilt_refs)
@@ -109,6 +120,51 @@ def to_docx(paper: dict, sources: list[dict], style: str, prebuilt_refs: list[di
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()
+
+
+def _docx_table(doc, block, style, Pt, Inches, WD_ALIGN_PARAGRAPH) -> None:
+    """A real Word table, not an ASCII imitation -- the whole point of
+    exporting to .docx is that the result is editable in Word."""
+    cols = list(block.get("columns") or [])
+    rows = list(block.get("rows") or [])
+    srcs = list(block.get("row_sources") or [])
+    if not cols or not rows:
+        return
+
+    table = doc.add_table(rows=1, cols=len(cols) + 1)
+    table.style = "Table Grid"
+    header = table.rows[0].cells
+    for i, label in enumerate(cols):
+        header[i].text = label
+        for p in header[i].paragraphs:
+            p.paragraph_format.line_spacing = 1.0
+            for run in p.runs:
+                run.bold = True
+    header[len(cols)].text = "Src"
+    for p in header[len(cols)].paragraphs:
+        p.paragraph_format.line_spacing = 1.0
+        for run in p.runs:
+            run.bold = True
+
+    for ri, row in enumerate(rows):
+        cells = table.add_row().cells
+        for ci, value in enumerate(row[:len(cols)]):
+            cells[ci].text = str(value)
+            for p in cells[ci].paragraphs:
+                p.paragraph_format.line_spacing = 1.0
+        n = srcs[ri] if ri < len(srcs) else ""
+        # Src column stays a bare number in every style. In a table it is a
+        # locator back to the reference list, not a running-text citation.
+        cells[len(cols)].text = f"[{n}]" if n else ""
+        for p in cells[len(cols)].paragraphs:
+            p.paragraph_format.line_spacing = 1.0
+
+    if block.get("caption"):
+        cap = doc.add_paragraph(block["caption"])
+        cap.paragraph_format.line_spacing = 1.0
+        cap.paragraph_format.space_after = Pt(12)
+        for run in cap.runs:
+            run.italic = True
 
 
 # ---------- PDF ----------
@@ -152,7 +208,11 @@ def to_pdf(paper: dict, sources: list[dict], style: str, prebuilt_refs: list[dic
                  Paragraph(_esc(paper["abstract"]), ParagraphStyle("Abs", parent=body, firstLineIndent=0))]
     for sec in sections:
         flow.append(Paragraph(_esc(sec["heading"]), heading))
-        flow += [Paragraph(_esc(t), body) for t in sec["paragraphs"]]
+        for block in sec["blocks"]:
+            if block["kind"] == "table":
+                flow += _pdf_table(block, base, inch)
+                continue
+            flow.append(Paragraph(_esc(block["text"]), body))
 
     refs = _refs(paper, sources, style, prebuilt_refs)
     if refs:
@@ -163,6 +223,46 @@ def to_pdf(paper: dict, sources: list[dict], style: str, prebuilt_refs: list[dic
 
     doc.build(flow, onFirstPage=_page_number, onLaterPages=_page_number)
     return buf.getvalue()
+
+
+def _pdf_table(block: dict, base, inch) -> list:
+    """reportlab flowables for one comparison table plus its caption."""
+    from reportlab.lib import colors
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.platypus import Paragraph, Spacer, Table, TableStyle
+
+    cols = list(block.get("columns") or [])
+    rows = list(block.get("rows") or [])
+    srcs = list(block.get("row_sources") or [])
+    if not cols or not rows:
+        return []
+
+    data = [[*cols, "Src"]]
+    for ri, row in enumerate(rows):
+        n = srcs[ri] if ri < len(srcs) else ""
+        data.append([*[str(c) for c in row[:len(cols)]], f"[{n}]" if n else ""])
+
+    table = Table(data, hAlign="LEFT", repeatRows=1)
+    table.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, 0), "Times-Bold"),
+        ("FONTNAME", (0, 1), (-1, -1), "Times-Roman"),
+        ("FONTSIZE", (0, 0), (-1, -1), 10),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.75, colors.black),
+        ("LINEABOVE", (0, 0), (-1, 0), 0.75, colors.black),
+        ("LINEBELOW", (0, -1), (-1, -1), 0.75, colors.black),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ALIGN", (-1, 0), (-1, -1), "RIGHT"),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+
+    out = [Spacer(1, 10), table]
+    if block.get("caption"):
+        cap = ParagraphStyle("Cap", parent=base["Normal"], fontName="Times-Italic",
+                             fontSize=10, leading=13, spaceBefore=6)
+        out.append(Paragraph(_esc(block["caption"]), cap))
+    out.append(Spacer(1, 12))
+    return out
 
 
 def _esc(text: str) -> str:

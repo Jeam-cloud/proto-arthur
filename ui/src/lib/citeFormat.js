@@ -26,7 +26,7 @@ export const STYLES = [
 export const HEADINGS = {
   apa: "References",
   mla: "Works Cited",
-  chicago: "References",
+  chicago: "Bibliography",
   harvard: "Reference list",
   ieee: "References",
   custom: "References",

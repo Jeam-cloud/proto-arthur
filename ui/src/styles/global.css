@@ -1196,6 +1196,46 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
   display: inline-flex; align-items: center;
 }
 .paper-para-del:hover { color: var(--red); }
+/* Comparison tables. Sit on --bg2 so they read as an inset object inside the
+   paper rather than as more prose, and scroll horizontally instead of
+   crushing columns on a narrow window. The last column is always Src: every
+   row names the source behind it, so a table is exactly as traceable as a
+   sentence is. */
+.paper-table-wrap {
+  border: 1px solid var(--border); border-radius: 13px; overflow-x: auto;
+  background: var(--bg2); margin: 14px 0 0;
+}
+.paper-table { width: 100%; min-width: 430px; border-collapse: collapse; }
+.paper-table th {
+  padding: 9px 12px; font-size: 10px; font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--tmut); text-align: left;
+  font-family: var(--sans); border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+.paper-table td {
+  padding: 11px 12px; font-size: 13px; color: var(--tmut); line-height: 1.35;
+  border-bottom: 1px solid var(--border); font-family: var(--sans);
+}
+/* First column is the thing being compared, so it gets the emphasis. */
+.paper-table td:first-child { color: var(--text); font-weight: 500; }
+.paper-table tr:last-child td { border-bottom: none; }
+.paper-table th.src-col, .paper-table td.src-col {
+  width: 44px; text-align: right; padding-right: 10px; padding-left: 4px;
+}
+.paper-table-caption {
+  font-family: Georgia, "Iowan Old Style", serif; font-size: 13px;
+  color: var(--tmut); margin-top: 9px;
+}
+
+/* The only action offered on an unverified claim. Yellow ties it to the
+   confidence rail beside it; it is a button rather than a label because the
+   useful response to "nothing backs this" is to go looking. */
+.paper-verify {
+  font-size: 11px; color: var(--yellow); background: none; border: none;
+  padding: 0; cursor: pointer; font-weight: 500; font-family: var(--sans);
+}
+.paper-verify:hover { text-decoration: underline; text-underline-offset: 3px; }
+.paper-verify:disabled { opacity: 0.5; cursor: not-allowed; text-decoration: none; }
+
 .paper-writing {
   display: flex; align-items: center; gap: 9px; color: var(--tmut); font-size: 13px;
   font-family: var(--sans); font-style: italic; margin: 18px 0;
@@ -1250,9 +1290,6 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
 /* Cited sources are clickable (they jump into the paper); uncited ones are not. */
 .evidence-card.citable { cursor: pointer; }
 
-.research-attrib {
-  font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--tmut);
-}
 .research-conf-btn {
   display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--tmut);
   background: none; border: none; padding: 0; cursor: pointer;

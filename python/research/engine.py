@@ -131,6 +131,27 @@ SECTION_SCHEMA = {
             "minItems": 1,
             "maxItems": 6,
         },
+        # A table, only when the section genuinely compares the same handful of
+        # attributes across several things. Optional in the schema on purpose:
+        # forcing one would guarantee tables full of invented rows, and a
+        # literature review with a fabricated comparison table is worse than
+        # one with none. Every row's last cell is a source number, so a table
+        # is as traceable as a sentence.
+        "table": {
+            "type": "object",
+            "properties": {
+                "caption": {"type": "string"},
+                "columns": {"type": "array", "items": {"type": "string"},
+                            "minItems": 2, "maxItems": 5},
+                "rows": {
+                    "type": "array",
+                    "items": {"type": "array", "items": {"type": "string"}},
+                    "minItems": 2, "maxItems": 8,
+                },
+                "row_sources": {"type": "array", "items": {"type": "integer"}},
+            },
+            "required": ["caption", "columns", "rows", "row_sources"],
+        },
     },
     "required": ["heading", "paragraphs"],
 }
@@ -748,7 +769,12 @@ class ResearchEngine:
                 "Place a marker like [3] in the sentence itself, directly after the claim that "
                 "source supports, and ALSO list every number used in `citations`. Never state "
                 "anything the passages do not support. Do not describe the search process or "
-                "refer to 'the sources' as objects; write about the subject matter."},
+                "refer to 'the sources' as objects; write about the subject matter.\n\n"
+                "Include a `table` ONLY when the passages give you the same few attributes for "
+                "three or more distinct things (models, studies, jurisdictions). A table must "
+                "compare facts that are actually in the passages -- never fill a cell by "
+                "inference. `row_sources` gives the source number backing each row, in row "
+                "order. If the material is not genuinely tabular, omit `table` entirely."},
             {"role": "user", "content": f"{brief}\n\nSources:\n{numbered}"},
         ]
         try:
@@ -781,13 +807,19 @@ class ResearchEngine:
                 by_n[c]["used"] = True
             publishers = {by_n[c].get("domain") or by_n[c].get("venue") for c in cites}
             conf = "ok" if len(publishers) >= 2 else ("thin" if cites else "unverified")
+            # No authorship flag: Arthur writes every paragraph in the paper,
+            # so a per-paragraph "written by AI" marker would be true of all of
+            # them and therefore tell the reader nothing.
             out.append({
                 "id": f"p{i + 1}",
                 "text": text,
                 "citations": cites,
                 "conf": conf,
-                "ai": True,
             })
+
+        table = _validate_table((data or {}).get("table"), by_n)
+        if table:
+            out.append({"id": f"p{len(out) + 1}", "kind": "table", "conf": "ok", **table})
 
         # The model's own heading for the section, if it produced a usable one.
         proposed = (data or {}).get("heading") if isinstance(data, dict) else None
@@ -811,6 +843,49 @@ class ResearchEngine:
         title = ((data or {}).get("title") or "").strip() or _title_case(question)
         abstract = ((data or {}).get("abstract") or "").strip()
         return title[:200], abstract
+
+
+def _validate_table(raw: dict | None, by_n: dict[int, dict]) -> dict | None:
+    """Accept a model-proposed table only if it is structurally sound AND
+    every row is backed by a real source.
+
+    A comparison table is the most authoritative-looking thing a paper can
+    contain, which is exactly why it gets the strictest validation in this
+    file. A ragged table, or one row citing a source that does not exist, is
+    dropped whole rather than rendered with a hole in it -- half a table
+    invites the reader to trust the half that is left.
+    """
+    if not isinstance(raw, dict):
+        return None
+    cols = [str(c).strip() for c in (raw.get("columns") or []) if str(c).strip()]
+    rows = raw.get("rows") or []
+    row_sources = raw.get("row_sources") or []
+    if len(cols) < 2 or len(rows) < 2:
+        return None
+
+    kept_rows, kept_sources = [], []
+    for i, row in enumerate(rows):
+        if not isinstance(row, list):
+            continue
+        # Ragged rows are a model error, not something to paper over by padding.
+        if len(row) != len(cols):
+            continue
+        n = row_sources[i] if i < len(row_sources) else None
+        if n not in by_n:
+            continue
+        kept_rows.append([str(c).strip() for c in row])
+        kept_sources.append(n)
+        by_n[n]["used"] = True
+
+    if len(kept_rows) < 2:
+        return None
+    return {
+        "caption": (raw.get("caption") or "").strip()[:200],
+        "columns": cols,
+        "rows": kept_rows,
+        "row_sources": kept_sources,
+        "citations": sorted(set(kept_sources)),
+    }
 
 
 def _outline_from_sources(sources: list[dict], question: str) -> list[str]:

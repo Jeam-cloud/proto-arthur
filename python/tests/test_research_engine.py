@@ -143,6 +143,97 @@ class TestSectionConfidence:
         assert out and out[0]["citations"] == [1]
 
 
+class TestTableValidation:
+    """A comparison table is the most authoritative-looking thing a paper can
+    contain, so it gets the strictest validation in the engine. Anything
+    structurally unsound is dropped WHOLE rather than rendered with a hole --
+    half a table invites trust in the half that survived."""
+
+    def _by_n(self):
+        return {1: source(1, "a.com"), 2: source(2, "b.com")}
+
+    def test_a_sound_table_is_kept(self):
+        from research.engine import _validate_table
+
+        out = _validate_table({
+            "caption": "Licence terms compared",
+            "columns": ["Model", "Licence"],
+            "rows": [["Qwen", "Apache 2.0"], ["Phi", "MIT"]],
+            "row_sources": [1, 2],
+        }, self._by_n())
+        assert out["columns"] == ["Model", "Licence"]
+        assert out["citations"] == [1, 2]
+
+    def test_rows_citing_a_nonexistent_source_are_dropped(self):
+        from research.engine import _validate_table
+
+        out = _validate_table({
+            "caption": "c", "columns": ["A", "B"],
+            "rows": [["x", "y"], ["p", "q"], ["m", "n"]],
+            "row_sources": [1, 99, 2],  # 99 does not exist
+        }, self._by_n())
+        assert len(out["rows"]) == 2
+        assert out["row_sources"] == [1, 2]
+
+    def test_ragged_rows_are_dropped_not_padded(self):
+        from research.engine import _validate_table
+
+        out = _validate_table({
+            "caption": "c", "columns": ["A", "B", "C"],
+            "rows": [["x", "y", "z"], ["short", "row"], ["p", "q", "r"]],
+            "row_sources": [1, 1, 2],
+        }, self._by_n())
+        assert len(out["rows"]) == 2
+
+    def test_a_table_reduced_below_two_rows_is_discarded_entirely(self):
+        from research.engine import _validate_table
+
+        out = _validate_table({
+            "caption": "c", "columns": ["A", "B"],
+            "rows": [["x", "y"], ["p", "q"]],
+            "row_sources": [99, 98],  # neither exists
+        }, self._by_n())
+        assert out is None
+
+    def test_a_single_column_is_not_a_table(self):
+        from research.engine import _validate_table
+
+        assert _validate_table({
+            "caption": "c", "columns": ["Only"],
+            "rows": [["a"], ["b"]], "row_sources": [1, 2],
+        }, self._by_n()) is None
+
+    def test_no_table_at_all_is_fine(self):
+        from research.engine import _validate_table
+
+        assert _validate_table(None, self._by_n()) is None
+
+    def test_table_rows_mark_their_sources_used(self):
+        from research.engine import _validate_table
+
+        by_n = self._by_n()
+        _validate_table({
+            "caption": "c", "columns": ["A", "B"],
+            "rows": [["x", "y"], ["p", "q"]], "row_sources": [1, 2],
+        }, by_n)
+        assert by_n[1]["used"] is True and by_n[2]["used"] is True
+
+    async def test_a_valid_table_is_appended_to_the_section(self):
+        eng = make_engine([{
+            "heading": "Licences",
+            "paragraphs": [{"text": "Prose [1].", "citations": [1]}],
+            "table": {
+                "caption": "Compared", "columns": ["Model", "Licence"],
+                "rows": [["Qwen", "Apache"], ["Phi", "MIT"]],
+                "row_sources": [1, 2],
+            },
+        }])
+        by_n = {1: source(1, "a.com"), 2: source(2, "b.com")}
+        out, _ = await eng._write_section("m", "H", "brief", list(by_n.values()), by_n)
+        assert out[-1]["kind"] == "table"
+        assert out[-1]["caption"] == "Compared"
+
+
 class TestPaperAssembly:
     async def test_sections_follow_the_approved_plan_in_order(self):
         # The plan the user reviewed IS the outline: intro, one section per

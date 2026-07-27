@@ -18,7 +18,7 @@
 // the citations, so there is nothing to regenerate -- see lib/citeFormat.js.
 import React, { useEffect, useRef, useState } from "react";
 import {
-  Download, FileText, Loader2, PanelRight, Plus, Search, X, Check, Undo2,
+  Download, FileText, Loader2, PanelRight, Plus, Search, Trash2,
 } from "lucide-react";
 import { useResearch } from "../../stores/research";
 import { STYLES, HEADINGS, inTextLabel, isNumericStyle, referenceLine, orderReferences }
@@ -225,6 +225,68 @@ export default function ResearchPaper() {
                 {(sec.paragraphs || []).map((p) => {
                   const key = `${sec.id}:${p.id}`;
                   const conf = CONF[p.conf];
+
+                  // A table is a paragraph-shaped block with structured data
+                  // instead of prose. It still lights up from the sidebar and
+                  // still cites: every row carries the source behind it.
+                  if (p.kind === "table") {
+                    return (
+                      <div
+                        key={p.id}
+                        ref={(el) => { if (el) paraRefs.current[key] = el; }}
+                        className={`paper-para${litN && (p.citations || []).includes(litN) ? " lit" : ""}`}
+                      >
+                        <span className="paper-conf-rail ok" />
+                        <div className="paper-para-body">
+                          <div className="paper-table-wrap">
+                            <table className="paper-table">
+                              <thead>
+                                <tr>
+                                  {(p.columns || []).map((c, i) => <th key={i}>{c}</th>)}
+                                  <th className="src-col">Src</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {(p.rows || []).map((row, ri) => {
+                                  const n = (p.row_sources || [])[ri];
+                                  const src = byN[n];
+                                  return (
+                                    <tr key={ri}>
+                                      {row.map((cell, ci) => <td key={ci}>{cell}</td>)}
+                                      <td className="src-col">
+                                        {src && (
+                                          <span
+                                            className={`cite-pill numeric${hoverCite === src.id ? " hot" : ""}`}
+                                            onMouseEnter={() => setHoverCite(src.id)}
+                                            onMouseLeave={() => setHoverCite(null)}
+                                            onClick={() => { setHoverCite(src.id); toggleEv(src.id); }}
+                                            title={src.title}
+                                          >
+                                            {n}
+                                          </span>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                          {p.caption && <div className="paper-table-caption">{p.caption}</div>}
+                          <div className="paper-para-foot">
+                            <button
+                              className="paper-para-del"
+                              title="Remove this table"
+                              onClick={() => deleteParagraph(sec.id, p.id)}
+                            >
+                              <Trash2 size={11} strokeWidth={2} />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+
                   return (
                     <div
                       key={p.id}
@@ -251,19 +313,38 @@ export default function ResearchPaper() {
                             />
                           </p>
                         )}
+                        {/* No "Arthur wrote this" attribution and no
+                            accept/revert. Arthur wrote the ENTIRE paper, so
+                            marking each paragraph as machine-written says
+                            nothing, and "accepting" prose that is already
+                            yours to edit is a step that does no work. The
+                            only real actions are edit (double-click) and
+                            remove. */}
                         <div className="paper-para-foot">
                           {conf && (
                             <button className="research-conf-btn" onClick={() => setExplain(p.conf)}>
                               {conf.label}
                             </button>
                           )}
-                          {p.ai && <span className="research-attrib">Arthur wrote this</span>}
+                          {/* An unverified claim is the one place the app
+                              should offer to DO something rather than just
+                              label the problem: send this exact sentence back
+                              out to search and see if anything backs it. */}
+                          {p.conf === "unverified" && (
+                            <button
+                              className="paper-verify"
+                              disabled={finding}
+                              onClick={() => findMore(p.text.replace(/\[\d+\]/g, "").slice(0, 300))}
+                            >
+                              Verify this
+                            </button>
+                          )}
                           <button
                             className="paper-para-del"
                             title="Remove this paragraph"
                             onClick={() => deleteParagraph(sec.id, p.id)}
                           >
-                            <Undo2 size={11} strokeWidth={2} />
+                            <Trash2 size={11} strokeWidth={2} />
                           </button>
                         </div>
                       </div>
