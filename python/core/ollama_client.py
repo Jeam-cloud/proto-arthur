@@ -12,6 +12,7 @@ WHY wrap it at all:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from typing import Any
@@ -95,6 +96,7 @@ class OllamaClient:
         messages: list[dict[str, Any]],
         schema: dict[str, Any],
         temperature: float = 0.0,
+        timeout_s: float = 150.0,
     ) -> Any:
         """Generate output that is GUARANTEED to match `schema`.
 
@@ -113,15 +115,27 @@ class OllamaClient:
 
         temperature=0 by default: these calls are structure extraction, and we
         want the same input to produce the same plan twice.
+
+        timeout_s bounds the call. WHY this exists at all: a research run makes
+        several of these back to back (plan, per-lane requery, conflict check,
+        synthesis) with NO other progress indicator in between -- a model that
+        stalls (a busy GPU, a schema the runtime chokes on) previously hung the
+        whole investigation forever with the UI stuck at "100%, Stop still
+        showing" and no way out. Every caller in research/engine.py already
+        catches generic Exception and falls back gracefully, so timing out
+        here turns a silent hang into a handled failure, not a crash.
         """
         try:
-            res = await self._client.chat(
-                model=model,
-                messages=messages,
-                format=schema,
-                stream=False,
-                keep_alive=self._keep_alive,
-                options={"temperature": temperature},
+            res = await asyncio.wait_for(
+                self._client.chat(
+                    model=model,
+                    messages=messages,
+                    format=schema,
+                    stream=False,
+                    keep_alive=self._keep_alive,
+                    options={"temperature": temperature},
+                ),
+                timeout=timeout_s,
             )
         except (httpx.ConnectError, ConnectionError) as e:
             raise OllamaUnavailableError() from e
@@ -129,6 +143,9 @@ class OllamaClient:
             if e.status_code == 404:
                 raise ModelNotFoundError(f"Model '{model}' is not installed") from e
             raise
+        except TimeoutError as e:
+            log.warning("chat_json timed out after %.0fs for model %s", timeout_s, model)
+            raise OllamaUnavailableError(f"'{model}' did not respond within {timeout_s:.0f}s") from e
 
         import json
 
