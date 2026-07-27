@@ -15,10 +15,14 @@ export const useApprovals = create((set, get) => ({
     set((s) => ({ queue: s.queue.filter((a) => a.id !== id) }));
   },
 
-  async decide(id, approved) {
+  async decide(id, approved, args = null) {
     get().dismiss(id); // optimistic: the dialog closes immediately
     try {
-      await api.post(`/approvals/${id}`, { approved });
+      // `args` carries an edited draft (e.g. a reworded email) back through
+      // the same Pydantic gate the model's own call went through — see
+      // agent/loop.py _execute_one. Omit it entirely when nothing was edited
+      // so the backend runs the tool with its original, already-validated args.
+      await api.post(`/approvals/${id}`, args ? { approved, args } : { approved });
     } catch {
       // stream may already have timed out to deny — that's the safe direction
     }

@@ -174,3 +174,10 @@ class TestSearchHitDefaults:
     def test_web_hits_carry_no_paper_metadata(self):
         h = SearchHit(url="https://x.com/a", title="A")
         assert h.kind == "web" and h.doi == "" and h.cites == 0
+
+    def test_pdf_fields_default_to_false_and_zero(self):
+        # These back the "Np read" badge -- must never default to something
+        # that LOOKS like a real page count when nothing was actually read.
+        h = SearchHit(url="https://x.com/a.pdf", title="A")
+        assert h.is_pdf is False
+        assert h.pages == 0

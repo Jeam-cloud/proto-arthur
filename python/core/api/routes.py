@@ -380,7 +380,7 @@ async def clone_conversation(request: Request, cid: str) -> dict:
 @router.post("/approvals/{approval_id}")
 async def resolve_approval(request: Request, approval_id: str, body: ApprovalDecision) -> dict:
     s = state(request)
-    resolved = s.approvals.resolve(approval_id, body.approved)
+    resolved = s.approvals.resolve(approval_id, body.approved, body.args)
     await s.audit.record(
         "approval_decision", "info" if body.approved else "warning",
         approval_id=approval_id, approved=body.approved, known=resolved,

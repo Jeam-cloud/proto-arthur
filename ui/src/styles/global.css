@@ -406,6 +406,24 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
   font-family: var(--mono); font-size: 12px; line-height: 1.5; overflow-x: auto;
   white-space: pre; color: var(--tmut); max-height: 180px; overflow-y: auto;
 }
+
+/* Editable email draft inside the approval dialog -- same card as
+   .approval-doc but with real inputs instead of read-only rows, so a typo or
+   a line the model got wrong can be fixed right here instead of restarting
+   the request. */
+.approval-doc-edit { max-height: none; padding: 10px 12px; display: flex; flex-direction: column; gap: 9px; }
+.approval-edit-field { display: flex; align-items: center; gap: 12px; }
+.approval-edit-field.stack { flex-direction: column; align-items: stretch; gap: 5px; }
+.approval-edit-field span {
+  color: var(--tmut); width: 60px; flex-shrink: 0; font-size: 12px;
+}
+.approval-edit-field.stack span { width: auto; }
+.approval-edit-field input, .approval-edit-field textarea {
+  flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 11px; font-size: 13px; color: var(--text); outline: none; font-family: var(--sans);
+}
+.approval-edit-field input:focus, .approval-edit-field textarea:focus { border-color: var(--tmut); }
+.approval-edit-field textarea { resize: vertical; line-height: 1.55; }
 .modal-actions { display: flex; gap: 10px; align-items: center; }
 .btn {
   padding: 8px 16px; height: 38px; border-radius: 10px; font-size: 13.5px; font-weight: 500;
@@ -1016,22 +1034,50 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
   flex-shrink: 0; font-family: var(--mono);
 }
 .evidence-body { flex: 1; min-width: 0; }
-.evidence-card-title { font-size: 12.5px; line-height: 1.45; font-weight: 500; }
-.evidence-web { display: flex; align-items: center; gap: 7px; margin-top: 5px; flex-wrap: wrap; }
-.evidence-domain { font-size: 11px; color: var(--tmut); }
-.evidence-date { font-size: 11px; color: var(--tmut); }
-.evidence-type, .evidence-venue, .evidence-provider {
+.evidence-card-title { font-size: 12.5px; line-height: 1.45; font-weight: 500; margin-top: 7px; }
+
+/* Web card identity row: a coloured avatar (first letter of the domain) reads
+   faster than a favicon fetch would, never fails to load, and needs no
+   network call of its own. The domain itself is a real link -- clicking it
+   opens the source directly, same promise the PDF badge makes for papers. */
+.evidence-avatar-row { display: flex; align-items: center; gap: 8px; }
+.evidence-avatar {
+  width: 20px; height: 20px; border-radius: 6px; background: var(--emph); color: var(--text);
+  display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700;
+  flex-shrink: 0;
+}
+.evidence-domain {
+  font-size: 11px; color: var(--tmut); text-decoration: none; flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.evidence-domain:hover { color: var(--text); text-decoration: underline; }
+.evidence-date { font-size: 11px; color: var(--tmut); margin-top: 3px; }
+.evidence-type {
   font-size: 9.5px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
-  padding: 2px 7px; border-radius: 5px; background: var(--emph); color: var(--tmut);
-  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 7px; border-radius: 5px; background: var(--emph); color: var(--tmut); flex-shrink: 0;
 }
-.evidence-venue { color: var(--text); }
-/* Papers get their own inset card: a peer-reviewed source and a blog post are
-   not the same kind of claim and should not look interchangeable. */
-.evidence-paper {
-  margin-top: 6px; padding: 8px 10px; border-radius: 8px;
-  background: var(--bg); border: 1px solid var(--border);
+
+/* Paper identity row: provider (where Arthur found it) + a real link to what
+   Arthur actually read. Green ties back to the same "supported/good" color
+   used everywhere else in Research mode, since a peer-reviewed or preprint
+   source is exactly the kind of thing that earns a report's confidence. */
+.evidence-badges { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.badge-provider {
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+  padding: 3px 8px; border-radius: 5px; background: rgba(110, 231, 183, 0.12); color: var(--green);
 }
+.badge-pdf {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 9.5px; font-weight: 700;
+  letter-spacing: 0.04em; text-transform: uppercase; color: var(--text); text-decoration: none;
+  padding: 3px 8px; border-radius: 5px; background: var(--emph);
+}
+.badge-pdf:hover { background: var(--accent); color: var(--inv); }
+
+.evidence-venue { color: var(--text); font-weight: 600; font-size: 11.5px; }
+.evidence-year { color: var(--tmut); font-size: 11px; }
+/* Papers get their own metadata block: a peer-reviewed source and a blog post
+   are not the same kind of claim and should not look interchangeable. */
+.evidence-paper { margin-top: 6px; }
 .evidence-paper-authors { font-size: 11.5px; color: var(--tmut); line-height: 1.5; }
 .evidence-paper-row { display: flex; align-items: center; gap: 8px; margin-top: 5px; flex-wrap: wrap; }
 .evidence-cites { font-size: 11px; color: var(--tmut); }
@@ -1039,12 +1085,6 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
   font-size: 10.5px; color: var(--tmut); margin-top: 5px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.evidence-pdf {
-  display: inline-flex; align-items: center; gap: 4px; margin-top: 6px; font-size: 10.5px;
-  font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text);
-  text-decoration: none; padding: 3px 8px; border-radius: 5px; background: var(--emph);
-}
-.evidence-pdf:hover { background: var(--accent); color: var(--inv); }
 .evidence-tags { display: flex; align-items: center; gap: 7px; margin-top: 7px; flex-wrap: wrap; }
 .evidence-tags .tag {
   font-size: 9.5px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
@@ -1052,18 +1092,37 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
 }
 .evidence-tags .tag.good { background: rgba(110, 231, 183, 0.12); color: var(--green); }
 .evidence-reprints { font-size: 10.5px; color: var(--tmut); }
-.evidence-contra {
-  display: flex; align-items: flex-start; gap: 7px; margin-top: 8px; padding: 8px 10px;
-  border-radius: 8px; background: rgba(252, 165, 165, 0.07);
-  border: 1px solid rgba(252, 165, 165, 0.22); color: var(--red);
-}
-.evidence-contra span { font-size: 11px; color: var(--text); line-height: 1.5; }
-.evidence-contra em { color: var(--tmut); font-style: normal; }
-.evidence-contra-note { display: block; color: var(--tmut); margin-top: 3px; }
 .evidence-passage {
   margin-top: 9px; padding: 10px 12px; border-radius: 9px; background: var(--bg);
   border: 1px solid var(--border); font-size: 12px; line-height: 1.6; color: var(--tmut);
 }
+/* Only appears when a page count is REAL (research/engine.py never invents
+   one) -- honest proof Arthur opened the primary source, not a summary of it. */
+.evidence-passage-foot { margin-top: 7px; color: var(--text); font-weight: 500; font-size: 11px; }
+
+/* The contradiction card: a fact about a PAIR of sources, so it gets its own
+   card between them rather than a note squeezed into each one. Red ties to
+   the same semantic red used for errors elsewhere, but the tone stays matter
+   -of-fact ("both are shown") rather than alarmed -- disagreement between
+   sources is normal, not a failure. */
+.contra-card {
+  margin: 2px 0 8px; padding: 12px 13px; border-radius: 12px;
+  background: rgba(252, 165, 165, 0.06); border: 1px solid rgba(252, 165, 165, 0.25);
+}
+.contra-head {
+  display: flex; align-items: center; gap: 8px; color: var(--red);
+  font-size: 12.5px; font-weight: 700;
+}
+.contra-question { margin-top: 7px; font-size: 12.5px; color: var(--text); line-height: 1.5; }
+.contra-note { margin-top: 5px; font-size: 11.5px; color: var(--tmut); font-style: italic; }
+.contra-refs { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.contra-ref {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px 4px 4px; border-radius: 20px;
+  background: var(--bg2); border: 1px solid var(--border); color: var(--tmut); font-size: 11px;
+  cursor: pointer;
+}
+.contra-ref:hover { border-color: var(--text); color: var(--text); }
+.evidence-num.small { width: 16px; height: 16px; font-size: 9px; }
 
 /* ---- report + live document ---- */
 .research-report { flex: 1; display: flex; min-height: 0; }

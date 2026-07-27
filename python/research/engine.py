@@ -232,6 +232,8 @@ class ResearchEngine:
                     "cites": hit.cites,
                     "doi": hit.doi,
                     "pdf_url": hit.pdf_url,
+                    "is_pdf": hit.is_pdf,
+                    "pages": hit.pages,
                     "sub": lane_idx,
                     "used": False,          # set during synthesis
                     "passage": passage,
@@ -371,6 +373,8 @@ class ResearchEngine:
             row = by_url.get(hit.url) or {}
             hit.text = (row.get("text") or "")[:40_000]
             hit.error = row.get("error") or ""
+            hit.is_pdf = bool(row.get("is_pdf"))
+            hit.pages = int(row.get("pages") or 0)
             if not hit.text and hit.snippet:
                 hit.text = hit.snippet  # abstract / search snippet beats nothing
         return hits
@@ -383,12 +387,13 @@ class ResearchEngine:
         out = []
         async with httpx.AsyncClient(follow_redirects=True, timeout=25) as client:
             for url in urls[:8]:
-                row = {"url": url, "title": url, "text": "", "error": None}
+                row = {"url": url, "title": url, "text": "", "error": None, "is_pdf": False, "pages": 0}
                 try:
                     resp = await client.get(url)
                     ctype = resp.headers.get("content-type", "")
                     if "pdf" in ctype or url.lower().endswith(".pdf"):
-                        row["text"] = _pdf_text(resp.content)
+                        row["is_pdf"] = True
+                        row["text"], row["pages"] = _pdf_text(resp.content)
                     else:
                         try:
                             import trafilatura
@@ -548,17 +553,20 @@ class ResearchEngine:
         return blocks
 
 
-def _pdf_text(data: bytes) -> str:
+def _pdf_text(data: bytes) -> tuple[str, int]:
     """Papers are PDFs. A research tool that cannot read a PDF can only ever
-    read what other people wrote ABOUT the research."""
+    read what other people wrote ABOUT the research. Returns (text, real
+    page count read) -- same contract as the sandboxed fetch_pages.py so the
+    "Np read" badge means the same thing on both paths."""
     try:
         import io
 
         from pypdf import PdfReader
 
         reader = PdfReader(io.BytesIO(data))
-        pages = [(p.extract_text() or "") for p in reader.pages[:40]]
-        return "\n\n".join(pages)[:40_000]
+        read = reader.pages[:40]
+        pages = [(p.extract_text() or "") for p in read]
+        return "\n\n".join(pages)[:40_000], len(read)
     except Exception as e:
         log.info("pdf extraction failed: %s", e)
-        return ""
+        return "", 0

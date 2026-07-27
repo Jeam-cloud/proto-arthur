@@ -282,18 +282,37 @@ class AgentLoop:
                 tool=name,
                 summary=tool.approval_summary(args),
                 args_preview=_preview(args.model_dump()),
+                # Structured (unstringified) args, distinct from args_preview:
+                # the dialog can seed an editable form from real values (a list
+                # stays a list) instead of the comma-joined display string.
+                args=args.model_dump(mode="json"),
             )
             await emit(events.APPROVAL_REQUIRED, {
-                "id": approval.id, "tool": name,
-                "summary": approval.summary, "args_preview": approval.args_preview,
+                "id": approval.id, "tool": name, "summary": approval.summary,
+                "args_preview": approval.args_preview, "args": approval.args,
             })
-            approved = await self._approvals.wait(approval.id)
-            await emit(events.APPROVAL_RESOLVED, {"id": approval.id, "approved": approved})
-            if not approved:
+            resolution = await self._approvals.wait(approval.id)
+            await emit(events.APPROVAL_RESOLVED, {"id": approval.id, "approved": resolution.approved})
+            if not resolution.approved:
                 return tool_msg(
                     f"The user declined to allow '{name}'. Do not retry it; "
                     "acknowledge and continue without this action."
                 )
+            if resolution.edited_args is not None:
+                # The user rewrote the draft before sending it — e.g. reworded
+                # an email or fixed a typo'd address. Re-run it through the
+                # SAME validation gate the model's own args went through
+                # (never a trusted bypass just because a human typed it).
+                try:
+                    args = tool.Args.model_validate(resolution.edited_args)
+                except ValidationError as e:
+                    await emit(events.TOOL_RESULT, {
+                        "name": name, "ok": False, "summary": "your edit was invalid", "flagged": False,
+                    })
+                    return tool_msg(
+                        f"The user edited the arguments for '{name}' before approving, but the edit "
+                        f"was invalid: {e.errors(include_url=False)}. The action was NOT taken."
+                    )
 
         await emit(events.TOOL_START, {"name": name, "summary": tool.approval_summary(args)})
         try:

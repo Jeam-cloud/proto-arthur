@@ -69,6 +69,12 @@ class PersonaBody(BaseModel):
 
 class ApprovalDecision(BaseModel):
     approved: bool
+    # Present only when the user edited the draft before approving (e.g.
+    # reworded an email). Left untyped here on purpose: the shape depends on
+    # which tool's approval this resolves, and the REAL validation gate is
+    # tool.Args.model_validate() in agent/loop.py -- this schema only needs to
+    # keep the payload a plain JSON object, not police its contents.
+    args: dict | None = None
 
 
 class SecretBody(BaseModel):

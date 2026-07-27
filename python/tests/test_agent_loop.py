@@ -119,6 +119,59 @@ async def test_confirm_tool_runs_when_approved(db, settings):
     assert text == "did it"
 
 
+async def test_confirm_tool_runs_with_edited_args_when_user_rewrote_the_draft(db, settings):
+    """The approval dialog lets the person editing (e.g. an email) change the
+    draft before it's sent. What actually runs must be the EDITED text, not
+    the model's original -- this is the whole point of the feature."""
+    tool = ConfirmEchoTool()
+    llm = FakeLLM([
+        {"tool_calls": [{"name": "confirm_echo", "arguments": {"text": "draft from model"}}]},
+        {"tokens": ["sent"]},
+    ])
+    loop, broker = make_loop(db, settings, llm, [tool], timeout=2.0)
+
+    async def approve_with_edit():
+        for _ in range(200):
+            if broker.pending():
+                broker.resolve(broker.pending()[0].id, True, {"text": "user's rewritten version"})
+                return
+            await asyncio.sleep(0.005)
+
+    await asyncio.gather(
+        approve_with_edit(),
+        loop.run("m", [], TaskMode.GENERAL, CTX, CollectingEmit()),
+    )
+    assert tool.executions == ["user's rewritten version"]  # not the model's draft
+
+
+async def test_confirm_tool_rejects_an_invalid_edit_without_running(db, settings):
+    """A person can still typo an edit (EchoArgs caps text at 100 chars here).
+    The edit goes through the SAME Pydantic gate the model's args did -- an
+    invalid edit must not execute, and the model must be told plainly that
+    nothing happened."""
+    tool = ConfirmEchoTool()
+    llm = FakeLLM([
+        {"tool_calls": [{"name": "confirm_echo", "arguments": {"text": "ok"}}]},
+        {"tokens": ["noted"]},
+    ])
+    loop, broker = make_loop(db, settings, llm, [tool], timeout=2.0)
+
+    async def approve_with_bad_edit():
+        for _ in range(200):
+            if broker.pending():
+                broker.resolve(broker.pending()[0].id, True, {"text": "x" * 200})
+                return
+            await asyncio.sleep(0.005)
+
+    text = (await asyncio.gather(
+        approve_with_bad_edit(),
+        loop.run("m", [], TaskMode.GENERAL, CTX, CollectingEmit()),
+    ))[1]
+    assert tool.executions == []  # never ran
+    assert text == "noted"
+    assert "invalid" in llm.calls[1]["messages"][-1]["content"].lower()
+
+
 async def test_crashing_tool_reports_error_not_exception(db, settings):
     llm = FakeLLM([
         {"tool_calls": [{"name": "crash", "arguments": {"text": "x"}}]},

@@ -65,6 +65,12 @@ class SearchHit:
     pdf_url: str = ""
     text: str = ""             # filled in later by the fetch step
     error: str = ""
+    # Filled in by the fetch step (research/engine.py._read) when the fetched
+    # document was actually a PDF -- real numbers only, never guessed. Used to
+    # show "PDF · 14p read" on the evidence card so a person can tell the app
+    # opened the primary source rather than reading a page ABOUT it.
+    is_pdf: bool = False
+    pages: int = 0
     extra: dict = field(default_factory=dict)
 
 
