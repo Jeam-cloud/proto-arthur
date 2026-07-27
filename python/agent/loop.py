@@ -105,6 +105,7 @@ def _salvage_unescaped_field(text: str, start: int) -> dict[str, Any] | None:
     Recovery result still goes through Pydantic validation before anything
     runs, so a wrong guess here surfaces as a normal "invalid arguments" tool
     result, not a security hole."""
+    import json
     import re
 
     m_name = re.search(r'"name"\s*:\s*"([a-zA-Z_][a-zA-Z0-9_]*)"', text[start:])
@@ -112,7 +113,11 @@ def _salvage_unescaped_field(text: str, start: int) -> dict[str, Any] | None:
         return None
     name = m_name.group(1)
 
-    m_params = re.search(r'"(?:arguments|parameters|args)"\s*:\s*\{', text[start:])
+    # Colon is OPTIONAL here on purpose: small models sometimes drop the ":"
+    # between "parameters" and its opening brace ({"parameters" {"to": ...} —
+    # exactly the malformation that motivated this fix). Requiring the brace
+    # immediately after is still specific enough not to misfire elsewhere.
+    m_params = re.search(r'"(?:arguments|parameters|args)"\s*:?\s*\{', text[start:])
     if not m_params:
         return None
     rest = text[start + m_params.end():]
@@ -124,10 +129,25 @@ def _salvage_unescaped_field(text: str, start: int) -> dict[str, Any] | None:
     # one at exactly that spot.
     clean_field = re.compile(r'\s*"([a-zA-Z_][a-zA-Z0-9_]*)"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,')
     final_field = re.compile(r'\s*"([a-zA-Z_][a-zA-Z0-9_]*)"\s*:\s*"')
+    # List-typed args (email_send's `to`/`cc`/`bcc`) sometimes come back as a
+    # JSON array that the model then wrapped in an extra pair of quotes --
+    # "to": "["a@x.com"]" instead of "to": ["a@x.com"]. clean_field can't match
+    # that (the bare quote right after "[" looks like the value's closing
+    # quote), so it's tried FIRST and, when it parses, produces a real list
+    # instead of a string Pydantic would reject outright.
+    array_field = re.compile(r'\s*"([a-zA-Z_][a-zA-Z0-9_]*)"\s*:\s*"(\[[^\]]*\])"\s*,')
 
     arguments: dict[str, Any] = {}
     pos = 0
     while True:
+        m = array_field.match(rest, pos)
+        if m:
+            try:
+                arguments[m.group(1)] = json.loads(m.group(2))
+            except json.JSONDecodeError:
+                arguments[m.group(1)] = _unescape(m.group(2))
+            pos = m.end()
+            continue
         m = clean_field.match(rest, pos)
         if not m:
             break

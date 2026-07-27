@@ -283,3 +283,32 @@ class TestRecoverTextToolCall:
         assert result["arguments"]["path"] == "notes/app.py"
         assert 'x = {"k": "v"}' in result["arguments"]["content"]
         assert 'y = ("a", "b")' in result["arguments"]["content"]
+
+    def test_missing_colon_before_parameters_brace_is_tolerated(self):
+        """Regression: a real email_send call where the model dropped the ':'
+        between "parameters" and its opening brace, AND wrapped the `to` list
+        in an extra pair of quotes ("to": "[\"x@x.com\"]" instead of a real
+        JSON array). Before this fix m_params never matched at all -- the
+        missing colon meant recovery gave up instantly and the user saw the
+        raw JSON blob as chat text."""
+        text = (
+            '{"name":"email_send","parameters {"to": "["drachir102175@gmail.com"]", '
+            '"subject": "Meeting Invitation", "body": "Hello,\\n\\nWe have a meeting '
+            'scheduled for 2 pm. I look forward to seeing you then.\\nBest '
+            'regards,\\n[Your Name]"}}'
+        )
+        result = recover_text_tool_call(text)
+        assert result["name"] == "email_send"
+        assert result["arguments"]["to"] == ["drachir102175@gmail.com"]
+        assert result["arguments"]["subject"] == "Meeting Invitation"
+        assert result["arguments"]["body"].startswith("Hello,\n\nWe have a meeting")
+        assert result["arguments"]["body"].endswith("[Your Name]")
+
+    def test_array_field_that_fails_to_parse_falls_back_to_raw_string(self):
+        """If the bracketed content isn't valid JSON even after unwrapping,
+        recovery must not crash -- it keeps the raw text so Pydantic can
+        reject it cleanly as an invalid argument instead of the loop blowing
+        up on a malformed call."""
+        text = '{"name":"email_send","arguments":{"to": "[not valid json]", "subject": "s", "body": "b"}}'
+        result = recover_text_tool_call(text)
+        assert result["arguments"]["to"] == "[not valid json]"
