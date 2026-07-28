@@ -6,6 +6,9 @@ import Composer from "./Composer";
 import ModeBadge from "./ModeBadge";
 import Markdown from "./Markdown";
 import ActivityFeed from "./ActivityFeed";
+import WorkspaceBar from "../code/WorkspaceBar";
+import FileTree from "../code/FileTree";
+import { useWorkspace } from "../../stores/workspace";
 
 // Model selection lives in the composer bar (ModelMenu inside Composer),
 // mode-aware recommendations, Claude-bar style. The header stays clean.
@@ -15,6 +18,7 @@ export default function ChatView({ mode, setMode }) {
   const conv = list.find((c) => c.id === activeId);
   const slice = useChat((s) => s.slice(activeId || ""));
   const loadMessages = useChat((s) => s.loadMessages);
+  const requestInsert = useWorkspace((s) => s.requestInsert);
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -46,6 +50,12 @@ export default function ChatView({ mode, setMode }) {
         <ModeBadge mode={mode} />
       </div>
 
+      {/* Code mode only. Every other mode either touches no files or resolves
+          its own paths, so a folder bar would be chrome asking a question that
+          mode never has to answer. */}
+      {mode === "code" && <WorkspaceBar conversationId={activeId} />}
+
+      <div className={mode === "code" ? "chat-with-files" : undefined}>
       {showSuggestions ? (
         <EmptyChat conversationId={activeId} mode={mode} />
       ) : (
@@ -81,6 +91,11 @@ export default function ChatView({ mode, setMode }) {
           <div ref={bottomRef} />
         </div>
       )}
+      {/* Clicking a file appends its path to the draft rather than sending
+          anything: the path is the hard part to remember, the sentence around
+          it is the user's. */}
+      {mode === "code" && <FileTree onPick={(p) => requestInsert(`\`${p}\` `)} />}
+      </div>
 
       <Composer conversationId={activeId} mode={mode} setMode={setMode} />
     </>

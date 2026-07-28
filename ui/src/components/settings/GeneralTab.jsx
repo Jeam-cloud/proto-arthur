@@ -37,13 +37,18 @@ export default function GeneralTab() {
       </div>
 
       <div className="field">
-        <label>Coding workspace folder</label>
+        <label>Default folder for new chats</label>
         <div className="field-row">
           <input type="text" readOnly value={values.workspace_root || "Not set"} className="grow" />
           <button className="btn" onClick={pickWorkspace}>Choose…</button>
         </div>
+        {/* Reworded because the meaning changed. Each chat now has its OWN
+            folder (set from the bar at the top of Code mode); this setting is
+            only what a NEW chat starts with, and changing it can no longer
+            widen what an existing conversation is allowed to reach. */}
         <div className="hint">
-          Code mode can only read and write inside this one folder, never outside it.
+          Each chat has its own folder, chosen at the top of Code mode. This is only what a new
+          chat starts with — changing it never affects a conversation you've already set.
         </div>
       </div>
 

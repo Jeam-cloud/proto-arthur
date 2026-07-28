@@ -93,7 +93,15 @@ const RECENTS_KEY = "arthur.research.recents";
 // would have to migrate later.
 function loadRecents() {
   try {
-    return JSON.parse(localStorage.getItem(RECENTS_KEY) || "[]");
+    const list = JSON.parse(localStorage.getItem(RECENTS_KEY) || "[]");
+    // Nothing can still be running at load time -- the app has only just
+    // started and no stream exists yet. An entry left marked "running" is a
+    // run that was interrupted by a quit, a crash, or a switch away, and
+    // showing it with a live spinner forever is the list claiming work is
+    // happening that isn't. Demote to what it actually is: partial if it
+    // gathered anything, failed if it never got that far.
+    return list.map((r) =>
+      r.status === "running" ? { ...r, status: r.sources ? "partial" : "failed" } : r);
   } catch {
     return [];
   }
@@ -161,6 +169,14 @@ const BLANK = {
   // in the evidence panel, but there's no report yet and re-running the whole
   // search would throw that work away. See writeReportNow().
   stopped: false,
+  // True only while a stream is actually open.
+  //
+  // The module-level `abort` controller cannot answer this: it is never
+  // cleared when a run finishes normally, so a completed investigation leaves
+  // a non-null controller behind and any check of `!!abort` reports a stream
+  // that ended minutes ago. openRecent needs to know the difference to decide
+  // whether switching away is interrupting real work or nothing at all.
+  streaming: false,
   writing: false,
   finding: false,      // a "find more sources" search is running
   newSourceIds: [],    // arrived since the paper was written -> offer a rewrite
@@ -330,6 +346,7 @@ export const useResearch = create((set, get) => ({
       fault: null,
       statusText: "",
       stopped: false,
+      streaming: true,
     });
     get().persistRun("running");
     timer = setInterval(() => set((st) => ({ elapsed: st.elapsed + 1 })), 1000);
@@ -372,7 +389,8 @@ export const useResearch = create((set, get) => ({
       // Clearing `writing` here rather than only on the `done` event means a
       // dropped connection cannot leave the toolbar saying "Arthur is
       // writing…" forever over a paper nothing is coming for.
-      set({ writing: false });
+      set({ writing: false, streaming: false });
+      abort = null;
       stopTimer();
     }
   },
@@ -504,7 +522,7 @@ export const useResearch = create((set, get) => ({
         // Stop is now reachable from the paper toolbar mid-write, and the
         // button that stops the write must not leave the toolbar still saying
         // "Arthur is writing" for however long the abort takes to unwind.
-        return { stage: "report", writing: false, statusText: "" };
+        return { stage: "report", writing: false, streaming: false, statusText: "" };
       }
       // Search finished (or was cut short) but nothing was written yet. Stay
       // on the run screen -- the lanes and evidence are still useful -- and
@@ -556,7 +574,8 @@ export const useResearch = create((set, get) => ({
         set({ stopped: true });
       }
     } finally {
-      set({ writing: false });
+      set({ writing: false, streaming: false });
+      abort = null;
       stopTimer();
     }
   },
@@ -743,6 +762,14 @@ export const useResearch = create((set, get) => ({
       snapshot: {
         question: s.question, paper: s.paper, sections: s.sections,
         evidence: s.evidence, subs: s.subs.map((q) => q.text),
+        // Lanes are part of the run, not scaffolding around it. Leaving them
+        // out meant reopening an unfinished investigation restored its
+        // sources but not the lanes that found them, and the run screen is
+        // built entirely around lanes -- so it came back reading "42 sources
+        // found · 0%" above an empty pane. The progress bar was measuring a
+        // list that had been thrown away.
+        lanes: s.lanes,
+        depth: s.depth,
       },
     };
     const recents = [entry, ...s.recents.filter((r) => r.id !== entry.id)];
@@ -757,31 +784,84 @@ export const useResearch = create((set, get) => ({
   },
 
   openRecent: (id) => {
+    const s = get();
+
+    // Clicking the investigation you are ALREADY looking at used to tear it
+    // down and rebuild it from its last checkpoint -- so a stray click on the
+    // active row replaced live progress with a saved copy of itself. It is a
+    // no-op now.
+    if (s.runId === id && s.stage !== "home") return;
+
+    // Switching away from a LIVE run.
+    //
+    // This is what "swapping between these breaks everything" was. The old
+    // code called abort.abort() unconditionally and said nothing: clicking
+    // another entry in the runs list silently killed a streaming
+    // investigation, and because the snapshot carried no lanes, the run you
+    // came back to rendered as an empty pane at 0%.
+    //
+    // Nothing can run two investigations at once -- there is one stream and
+    // one store -- so switching genuinely has to stop the current one. What it
+    // must NOT do is stop it quietly, or lose what it had. Checkpoint first,
+    // mark it as partial rather than leaving it reading "running" forever, and
+    // say so.
+    const wasStreaming = (s.streaming || s.writing) && s.runId && s.runId !== id;
+    if (wasStreaming) {
+      if (s.evidence.length || s.sections.length) s.persistRun("partial");
+      const title = (s.paper && s.paper.title) || s.question.slice(0, 50) || "the previous run";
+      useToasts.getState().push(
+        `Paused “${title}”. Everything it had gathered is saved — open it again to finish.`,
+        "info",
+        8000,
+      );
+    }
+
     if (abort) abort.abort();
     abort = null;
     stopTimer();
+
     const r = get().recents.find((x) => x.id === id);
     if (!r || !r.snapshot) return;
+
+    const snap = r.snapshot;
+    const evidence = snap.evidence || [];
+    const sections = snap.sections || [];
     // An interrupted investigation (stopped or crashed before a paper was
     // written) has evidence but no paper/sections. Sending it to "report"
     // would show a permanent "Writing the paper…" spinner (see
     // ResearchPaper's `!paper && !sections.length` guard) since nothing is
     // ever going to arrive. Route it to "run" instead, where the gathered
     // evidence and the "Write the report" button are actually usable.
-    const hasPaper = !!(r.snapshot.paper || (r.snapshot.sections || []).length);
+    const hasPaper = !!(snap.paper || sections.length);
+    // ...and a run with NEITHER a paper nor a single source has nothing for
+    // either screen to show. It used to land on the run screen anyway, which
+    // is how a 0-source entry opened onto a blank pane with a dead "Write the
+    // report" button. Send it back to the composer with its question intact,
+    // which is the only useful thing left to do with it.
+    const stage = hasPaper ? "report" : (evidence.length ? "run" : "home");
+
     set({
-      stage: hasPaper ? "report" : "run",
+      stage,
       runId: r.id,
-      question: r.snapshot.question,
-      paper: r.snapshot.paper || null,
-      sections: r.snapshot.sections || [],
-      evidence: r.snapshot.evidence || [],
-      subs: (r.snapshot.subs || []).map((text, i) => ({ id: `sq${i}`, text })),
-      lanes: [],
+      question: snap.question,
+      depth: snap.depth || s.depth,
+      paper: snap.paper || null,
+      sections,
+      evidence,
+      subs: (snap.subs || []).map((text, i) => ({ id: `sq${i}`, text })),
+      // Restored, not blanked. Older entries saved before lanes were
+      // persisted fall back to [] -- the run screen handles that by showing
+      // no lanes rather than breaking, and the sources are still there.
+      lanes: snap.lanes || [],
       fault: null,
       cursorBlock: null,
-      stopped: !hasPaper,
+      // Only meaningful on the run screen, and only true when there is
+      // something to write a report FROM.
+      stopped: stage === "run",
       writing: false,
+      // Was never reset, so a reopened run inherited the previous one's clock
+      // and showed a stale "00:07 elapsed" that never moved.
+      elapsed: 0,
       statusText: "",
       newSourceIds: [],
     });

@@ -880,6 +880,49 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
 .research-actions.end { margin-top: 22px; }
 .research-actions.end .research-budget { flex: 1; }
 
+/* ---- Code mode: workspace bar + file tree ---- */
+.ws-bar {
+  display: flex; align-items: center; gap: 10px; padding: 9px 20px; flex-shrink: 0;
+  border-bottom: 1px solid var(--border); background: var(--muted);
+  font-size: 12.5px; color: var(--tmut);
+}
+.ws-bar code { font-family: var(--mono); font-size: 12px; color: var(--text); }
+.ws-bar-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-bar-note {
+  margin-left: 8px; font-size: 11px; padding: 2px 7px; border-radius: 6px;
+  background: var(--emph); color: var(--tmut);
+}
+/* The two states that used to be silent dead ends get colour; the working
+   state deliberately does not, because a folder being set is not news. */
+.ws-bar.empty { background: rgba(110, 231, 183, 0.06); color: var(--text); }
+.ws-bar.missing { background: rgba(252, 165, 165, 0.06); color: var(--red); }
+.ws-bar.missing code { color: var(--red); }
+
+/* Messages and files side by side. The tree is narrow and fixed: it is a
+   reference aid, not a file manager, and taking width from the conversation
+   would make the mode worse at the thing it is mainly for. */
+.chat-with-files { flex: 1; min-height: 0; display: flex; }
+.chat-with-files > .message-list, .chat-with-files > .empty-chat { flex: 1; min-width: 0; }
+.filetree {
+  width: 232px; flex-shrink: 0; overflow-y: auto; padding: 10px 8px 20px;
+  border-left: 1px solid var(--border); background: var(--bg2);
+}
+.filetree-head {
+  font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--tmut); padding: 4px 8px 9px;
+}
+.filetree-empty { font-size: 12px; color: var(--tmut); padding: 8px; line-height: 1.5; }
+.filetree-row {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  padding: 4px 8px; border: none; background: none; border-radius: 6px;
+  color: var(--tmut); font-size: 12.5px; font-family: inherit; text-align: left; cursor: pointer;
+}
+.filetree-row:hover { background: var(--emph); color: var(--text); }
+.filetree-row svg { flex-shrink: 0; }
+.filetree-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.filetree-caret { transition: transform 0.13s; }
+.filetree-caret.open { transform: rotate(90deg); }
+
 /* ---- home: the brief composer ----
    The card is SEGMENTED: one band per decision, divided by rules, with the
    footer on a tinted ground. `overflow:hidden` is what lets the footer's

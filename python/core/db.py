@@ -81,6 +81,22 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX idx_security_ts ON security_events(ts DESC);
     """,
+    # 2 — a folder per conversation.
+    #
+    # The workspace used to be ONE app-wide setting, so every chat pointed at
+    # the same folder and switching projects meant a round trip through
+    # Settings. Binding it to the conversation makes "which files can this chat
+    # touch" a property of the chat itself, which is also the honest answer for
+    # a security boundary: the containment check in tools/coding.py is only
+    # meaningful if the root it checks against cannot change under a running
+    # conversation.
+    #
+    # NULL means "not chosen yet", not "no access" -- resolution falls back to
+    # the last-used folder so a new chat inherits rather than prompting again.
+    # See _conversation_workspace() in core/api/routes.py.
+    """
+    ALTER TABLE conversations ADD COLUMN workspace_root TEXT;
+    """,
 ]
 
 

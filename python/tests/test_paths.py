@@ -40,7 +40,11 @@ class TestSafePath:
             _safe_path(workspace, ".git/hooks/pre-commit")
 
     def test_no_workspace_configured(self):
-        with pytest.raises(PathTraversalError, match="No workspace folder"):
+        # The message must name a place that EXISTS. It used to send people to
+        # "Settings → Workspace", which was never a tab.
+        with pytest.raises(PathTraversalError, match="No folder is set for this chat"):
+            _safe_path(None, "anything.txt")
+        with pytest.raises(PathTraversalError, match="Code mode"):
             _safe_path(None, "anything.txt")
 
     def test_dotdot_that_stays_inside_is_fine(self, workspace):

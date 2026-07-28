@@ -76,6 +76,118 @@ class TestConversations:
         assert resp.json()["error"]["code"] == "not_found"
 
 
+class TestConversationWorkspace:
+    """A folder per conversation, inherited on first use.
+
+    The invariant that matters is the asymmetry: a new chat INHERITS the
+    last-used folder so nobody re-picks one every time, but once a chat is
+    bound, changing the global default must never widen what that chat can
+    reach. Silently expanding an existing conversation's filesystem access
+    from a settings screen would be the bug worth avoiding here.
+    """
+
+    async def test_a_new_conversation_has_no_folder(self, client):
+        conv = (await client.post("/conversations")).json()
+        ws = (await client.get(f"/conversations/{conv['id']}/workspace")).json()
+        assert ws["root"] is None
+        assert ws["bound"] is False
+
+    async def test_setting_a_folder_binds_it(self, client, tmp_path):
+        conv = (await client.post("/conversations")).json()
+        await client.put(f"/conversations/{conv['id']}/workspace", json={"root": str(tmp_path)})
+        ws = (await client.get(f"/conversations/{conv['id']}/workspace")).json()
+        assert ws["root"] == str(tmp_path)
+        assert ws["bound"] is True
+        assert ws["exists"] is True
+
+    async def test_a_later_conversation_inherits_the_last_folder(self, client, tmp_path):
+        first = (await client.post("/conversations")).json()
+        await client.put(f"/conversations/{first['id']}/workspace", json={"root": str(tmp_path)})
+
+        second = (await client.post("/conversations")).json()
+        ws = (await client.get(f"/conversations/{second['id']}/workspace")).json()
+        assert ws["root"] == str(tmp_path)   # inherited, so no re-picking
+        assert ws["bound"] is False          # but not bound: it can still diverge
+
+    async def test_a_bound_conversation_ignores_a_later_default(self, client, tmp_path):
+        # THE load-bearing case. Chat A is bound to one folder; chat B then
+        # picks another, which updates the global default. A must not move.
+        a = (await client.post("/conversations")).json()
+        b = (await client.post("/conversations")).json()
+        folder_a = tmp_path / "project-a"
+        folder_b = tmp_path / "project-b"
+        folder_a.mkdir()
+        folder_b.mkdir()
+
+        await client.put(f"/conversations/{a['id']}/workspace", json={"root": str(folder_a)})
+        await client.put(f"/conversations/{b['id']}/workspace", json={"root": str(folder_b)})
+
+        ws_a = (await client.get(f"/conversations/{a['id']}/workspace")).json()
+        assert ws_a["root"] == str(folder_a)
+
+    async def test_a_folder_that_is_gone_is_reported_not_forgotten(self, client, tmp_path):
+        # An unplugged drive should still show as the chosen folder, flagged.
+        gone = tmp_path / "removed"
+        gone.mkdir()
+        conv = (await client.post("/conversations")).json()
+        await client.put(f"/conversations/{conv['id']}/workspace", json={"root": str(gone)})
+        gone.rmdir()
+
+        ws = (await client.get(f"/conversations/{conv['id']}/workspace")).json()
+        assert ws["root"] == str(gone)   # remembered
+        assert ws["exists"] is False     # but honest about it
+
+    async def test_clearing_returns_to_inheriting(self, client, tmp_path):
+        conv = (await client.post("/conversations")).json()
+        await client.put(f"/conversations/{conv['id']}/workspace", json={"root": str(tmp_path)})
+        await client.put(f"/conversations/{conv['id']}/workspace", json={"root": None})
+        ws = (await client.get(f"/conversations/{conv['id']}/workspace")).json()
+        assert ws["bound"] is False
+
+
+class TestWorkspaceTree:
+    # A dedicated subdirectory, NOT tmp_path itself: the `settings` fixture
+    # puts arthur.db in tmp_path too, so pointing the workspace at the bare
+    # tmp_path makes the app's own database show up as project files.
+    @pytest.fixture
+    def project(self, tmp_path):
+        p = tmp_path / "project"
+        p.mkdir()
+        return p
+
+    async def test_lists_files_and_folders(self, client, project):
+        (project / "src").mkdir()
+        (project / "src" / "app.py").write_text("x")
+        (project / "README.md").write_text("y")
+        conv = (await client.post("/conversations")).json()
+        await client.put(f"/conversations/{conv['id']}/workspace", json={"root": str(project)})
+
+        tree = (await client.get(f"/workspace/tree?conversation_id={conv['id']}")).json()
+        names = [n["name"] for n in tree["tree"]]
+        # Folders sort before files, the ordering every file browser uses.
+        assert names == ["src", "README.md"]
+        src = tree["tree"][0]
+        assert src["dir"] is True
+        assert src["children"][0]["path"] == "src/app.py"
+
+    async def test_noise_directories_are_skipped(self, client, project):
+        for junk in ("node_modules", "__pycache__", ".git"):
+            (project / junk).mkdir()
+            (project / junk / "f.txt").write_text("x")
+        (project / "real.py").write_text("x")
+        conv = (await client.post("/conversations")).json()
+        await client.put(f"/conversations/{conv['id']}/workspace", json={"root": str(project)})
+
+        tree = (await client.get(f"/workspace/tree?conversation_id={conv['id']}")).json()
+        assert [n["name"] for n in tree["tree"]] == ["real.py"]
+
+    async def test_no_folder_is_an_empty_tree_not_an_error(self, client):
+        conv = (await client.post("/conversations")).json()
+        resp = await client.get(f"/workspace/tree?conversation_id={conv['id']}")
+        assert resp.status_code == 200
+        assert resp.json() == {"root": None, "tree": [], "truncated": False}
+
+
 class TestChatStream:
     async def test_stream_yields_tokens_then_done(self, client, fake_llm):
         fake_llm.turns = [{"tokens": ["Hi", " there"]}]

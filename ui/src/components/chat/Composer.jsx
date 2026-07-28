@@ -11,6 +11,7 @@ import { Mic, Send, Square, Loader2 } from "lucide-react";
 import { useBackend } from "../../stores/backend";
 import { useChat } from "../../stores/chat";
 import { useToasts } from "../../stores/toasts";
+import { useWorkspace } from "../../stores/workspace";
 import ModelMenu from "./ModelMenu";
 import ModeBadge from "./ModeBadge";
 import { useRecorder } from "./useRecorder";
@@ -33,6 +34,18 @@ export default function Composer({ conversationId, mode, setMode }) {
   const { send, stop } = useChat();
   const streaming = useChat((s) => s.slice(conversationId).streaming);
   const pushToast = useToasts((s) => s.push);
+
+  // A file clicked in the Code mode tree lands in the draft here. It appends
+  // rather than replaces, and focuses, because the path is the part that was
+  // hard to remember -- the sentence around it is still the user's to write.
+  const pendingInsert = useWorkspace((s) => s.pendingInsert);
+  const clearInsert = useWorkspace((s) => s.clearInsert);
+  useEffect(() => {
+    if (!pendingInsert) return;
+    setText((prev) => (prev && !prev.endsWith(" ") ? `${prev} ` : prev) + pendingInsert.text);
+    clearInsert();
+    textareaRef.current?.focus();
+  }, [pendingInsert, clearInsert]);
 
   // dispatch: shared send path for typed AND spoken input -- mode auto-switch
   // and model resolution behave identically either way.

@@ -102,6 +102,18 @@ class ArchiveRequest(BaseModel):
     archived: bool = True
 
 
+class WorkspaceRequest(BaseModel):
+    """The folder a conversation may read and write.
+
+    `None` clears the binding rather than denying access -- an unbound
+    conversation falls back to the last-used folder (see
+    _conversation_workspace in routes.py). The path is NOT validated here on
+    purpose: containment is enforced when a tool touches a file, not when the
+    folder is chosen, so an unplugged drive is remembered rather than lost.
+    """
+    root: str | None = Field(default=None, max_length=500)
+
+
 class MemoryCreate(BaseModel):
     text: str = Field(min_length=3, max_length=500)
     category: str = Field(default="other", pattern="^(profile|preference|project|other)$")

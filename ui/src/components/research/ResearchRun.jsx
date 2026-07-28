@@ -31,6 +31,7 @@ export default function ResearchRun() {
   const statusText = useResearch((s) => s.statusText);
   const stopped = useResearch((s) => s.stopped);
   const writing = useResearch((s) => s.writing);
+  const streaming = useResearch((s) => s.streaming);
   const stop = useResearch((s) => s.stop);
   const writeReportNow = useResearch((s) => s.writeReportNow);
   const runId = useResearch((s) => s.runId);
@@ -53,11 +54,17 @@ export default function ResearchRun() {
     <div className="research-run">
       <div className="research-runlist">
         <div className="micro-label">Runs</div>
+        {/* The state was hardcoded to "running", so a REOPENED investigation
+            -- which by definition is not running -- sat in the list with a
+            live dot claiming to be in progress next to a screen offering to
+            write its report. */}
         <div className="research-runrow active">
-          <span className="research-dot running" />
+          <span className={`research-dot ${streaming || writing ? "running" : "partial"}`} />
           <div>
             <div className="research-runrow-title">{question || "Investigation"}</div>
-            <div className="research-runrow-meta">running</div>
+            <div className="research-runrow-meta">
+              {streaming ? "running" : writing ? "writing" : stopped ? "paused" : "open"}
+            </div>
           </div>
         </div>
         {recents.slice(0, 6).map((r) => (

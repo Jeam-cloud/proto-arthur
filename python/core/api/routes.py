@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request, Response, UploadFile
@@ -29,6 +30,7 @@ from core.api.schemas import (
     ApprovalDecision, ArchiveRequest, ChatRequest, MemoryCreate, MemoryUpdate, PersonaBody,
     PullRequest, RenameRequest, ResearchExportRequest, ResearchFindSourcesRequest,
     ResearchPlanRequest, ResearchRunRequest, ResearchSynthesizeRequest, SecretBody, SettingsPatch,
+    WorkspaceRequest,
 )
 from research import citations as research_citations
 from research import engine as research_engine
@@ -230,7 +232,7 @@ async def chat_stream(request: Request, body: ChatRequest) -> EventSourceRespons
                 model=model,
                 emit=emit,
                 provider=body.provider,
-                workspace_root=await s.db.get_setting("workspace_root", None),
+                workspace_root=await _conversation_workspace(s, body.conversation_id),
                 scanner_mode=await s.db.get_setting("scanner_mode", "standard"),
             )
         except ArthurError as e:
@@ -268,6 +270,34 @@ async def _research_model(s: AppState, requested: str) -> str:
         return requested
     mode_models = await s.db.get_setting("mode_models", {}) or {}
     return mode_models.get("research", "") or await s.db.get_setting("default_model", "")
+
+
+async def _conversation_workspace(s: AppState, cid: str | None) -> str | None:
+    """Which folder THIS conversation may touch.
+
+    Resolution order, and the reasoning for it:
+
+      1. The conversation's own `workspace_root`. Once a chat is bound to a
+         folder, that binding wins forever -- a global setting changed later
+         must never silently widen what an existing conversation can reach.
+      2. `workspace_root` in settings, which now means "the last folder
+         chosen" rather than "the one folder". A NEW chat inherits it, so
+         per-conversation scoping does not turn into re-picking a folder every
+         time you start a conversation.
+      3. None, which every file tool treats as "no access" rather than "all
+         access" (see _safe_path in tools/coding.py).
+
+    Note the asymmetry in (1): inheritance happens once, at first use. After
+    that the conversation owns its root.
+    """
+    if cid:
+        try:
+            row = await s.conversations.get(cid)
+        except NotFoundError:
+            row = None
+        if row and row.get("workspace_root"):
+            return row["workspace_root"]
+    return await s.db.get_setting("workspace_root", None)
 
 
 def _target_words(body: Any) -> int:
@@ -546,6 +576,120 @@ async def archive_conversation(request: Request, cid: str, body: ArchiveRequest)
 @router.post("/conversations/{cid}/clone")
 async def clone_conversation(request: Request, cid: str) -> dict:
     return await state(request).conversations.clone(cid)
+
+
+@router.get("/conversations/{cid}/workspace")
+async def get_conversation_workspace(request: Request, cid: str) -> dict:
+    """What folder this chat is bound to, and whether it is actually there.
+
+    `exists` is returned separately from `root` because they answer different
+    questions. A remembered path pointing at an unplugged drive should still
+    show as the chosen folder -- clearing it would lose the binding for a
+    project the user has not abandoned -- but the UI has to be able to say so
+    rather than presenting a dead path as working.
+    """
+    s = state(request)
+    root = await _conversation_workspace(s, cid)
+    row = await s.conversations.get(cid)
+    return {
+        "root": root,
+        # True only when the conversation set it itself; False means it is
+        # currently inheriting the last-used folder and has not been bound.
+        "bound": bool(row.get("workspace_root")),
+        "exists": bool(root) and Path(root).is_dir(),
+    }
+
+
+@router.put("/conversations/{cid}/workspace")
+async def set_conversation_workspace(request: Request, cid: str, body: WorkspaceRequest) -> dict:
+    s = state(request)
+    await s.conversations.set_workspace(cid, body.root)
+    # Also remembered globally as "the last folder chosen", which is what a
+    # brand-new conversation inherits. This is the whole reason per-conversation
+    # scoping does not become a folder prompt on every new chat.
+    if body.root:
+        await s.db.set_setting("workspace_root", body.root)
+    return {"root": body.root, "bound": bool(body.root)}
+
+
+# ---------- workspace ----------
+
+# Directories that are never worth showing and expensive to walk. Not a
+# security control -- _safe_path is that -- purely signal-to-noise, so the tree
+# shows the project rather than its build output.
+_TREE_SKIP = {
+    ".git", ".hg", ".svn", "node_modules", "__pycache__", ".venv", "venv",
+    ".mypy_cache", ".pytest_cache", ".ruff_cache", "dist", "build", ".next",
+    ".idea", ".vscode", ".DS_Store", "target", ".tox", ".cache",
+}
+# A hard ceiling on nodes returned. A user can always point Arthur at their
+# home directory by mistake; walking it unbounded would hang the request and
+# then hand the UI a tree nobody can read. Truncating and SAYING SO is the
+# honest failure.
+_TREE_MAX_NODES = 2000
+
+
+@router.get("/workspace/tree")
+async def workspace_tree(request: Request, conversation_id: str | None = None) -> dict:
+    """The conversation's folder as a nested tree.
+
+    Exists because a folder you cannot see is only half a feature: before this,
+    the workspace was a path string in Settings, so there was no way to confirm
+    Arthur was pointed at the right place or to reference a file without typing
+    its path from memory.
+    """
+    s = state(request)
+    root = await _conversation_workspace(s, conversation_id)
+    if not root:
+        return {"root": None, "tree": [], "truncated": False}
+    base = Path(root)
+    if not base.is_dir():
+        return {"root": root, "tree": [], "truncated": False, "missing": True}
+
+    budget = [_TREE_MAX_NODES]
+
+    def walk(directory: Path, depth: int) -> list[dict]:
+        if depth > 6 or budget[0] <= 0:
+            return []
+        try:
+            entries = sorted(
+                directory.iterdir(),
+                # Folders first, then case-insensitive by name -- the ordering
+                # every file browser uses, so the tree reads without thinking.
+                key=lambda p: (not p.is_dir(), p.name.lower()),
+            )
+        except OSError:
+            return []  # unreadable directory is a gap in the tree, not an error
+        out = []
+        for entry in entries:
+            if budget[0] <= 0:
+                break
+            name = entry.name
+            if name in _TREE_SKIP or name.startswith("."):
+                continue
+            budget[0] -= 1
+            if entry.is_dir():
+                out.append({
+                    "name": name,
+                    "path": str(entry.relative_to(base)).replace("\\", "/"),
+                    "dir": True,
+                    "children": walk(entry, depth + 1),
+                })
+            else:
+                try:
+                    size = entry.stat().st_size
+                except OSError:
+                    size = 0
+                out.append({
+                    "name": name,
+                    "path": str(entry.relative_to(base)).replace("\\", "/"),
+                    "dir": False,
+                    "size": size,
+                })
+        return out
+
+    tree = await asyncio.to_thread(walk, base, 0)
+    return {"root": root, "tree": tree, "truncated": budget[0] <= 0}
 
 
 # ---------- approvals ----------

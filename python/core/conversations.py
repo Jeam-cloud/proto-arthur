@@ -34,6 +34,22 @@ class ConversationStore:
             raise NotFoundError(f"Conversation {cid} not found")
         return row
 
+    async def set_workspace(self, cid: str, root: str | None) -> None:
+        """Bind this conversation to a folder (or clear it with None).
+
+        Deliberately NOT validated against the filesystem here. A folder can be
+        on a drive that is currently unplugged, and refusing to remember it
+        would lose the binding for a project the user still has. The only place
+        that must be strict is the moment a tool actually touches a path, which
+        is `_safe_path` in tools/coding.py -- containment is enforced at use,
+        not at configuration.
+        """
+        await self.get(cid)  # 404 for unknown ids
+        await self._db.write(
+            "UPDATE conversations SET workspace_root=?, updated_at=? WHERE id=?",
+            ((root or None), now(), cid),
+        )
+
     async def rename(self, cid: str, title: str) -> None:
         await self.get(cid)
         await self._db.write(

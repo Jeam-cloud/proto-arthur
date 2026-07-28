@@ -41,7 +41,13 @@ _SUSPICIOUS = [
 
 def _safe_path(workspace_root: str | None, relative: str) -> Path:
     if not workspace_root:
-        raise PathTraversalError("No workspace folder is set. Pick one in Settings → Workspace.")
+        # The signpost has to be RIGHT. This used to say "Settings → Workspace",
+        # and there is no Workspace tab -- so the one piece of guidance a user
+        # got when Code mode refused to work pointed at a screen that does not
+        # exist. The folder is now chosen in Code mode itself.
+        raise PathTraversalError(
+            "No folder is set for this chat. Choose one from the folder bar at the top of Code mode."
+        )
     # Reject absolute-shaped paths under BOTH OS conventions before touching
     # the filesystem. Relying only on join+resolve is platform-dependent: on
     # Linux "C:\..." is just a weird filename; on Windows it would replace the
