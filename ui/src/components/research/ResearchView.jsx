@@ -6,13 +6,23 @@
 // composer at the bottom would keep telling the user "type a message", which is
 // the wrong mental model for something that runs for four minutes.
 import React, { useEffect } from "react";
-import { Search, FlaskConical, WifiOff, SearchX, TriangleAlert, AlertCircle } from "lucide-react";
+import {
+  ArrowLeft, Search, FlaskConical, WifiOff, SearchX, TriangleAlert, AlertCircle,
+} from "lucide-react";
 import { useResearch } from "../../stores/research";
 import { useBackend } from "../../stores/backend";
 import ResearchHome from "./ResearchHome";
 import ResearchPlan from "./ResearchPlan";
 import ResearchRun from "./ResearchRun";
 import ResearchPaper from "./ResearchPaper";
+
+// Where you are, in one word. A back arrow with nothing next to it says you
+// can leave but not what you would be leaving.
+const STAGE_LABEL = {
+  plan: "Plan",
+  run: "Running",
+  report: "Paper",
+};
 
 export default function ResearchView({ onOpenIntegrations }) {
   const stage = useResearch((s) => s.stage);
@@ -21,7 +31,7 @@ export default function ResearchView({ onOpenIntegrations }) {
   const degraded = useResearch((s) => s.degraded);
   const lanes = useResearch((s) => s.lanes);
   const evidence = useResearch((s) => s.evidence);
-  const { newInvestigation, clearFault, dismissDegraded, setDegraded } = useResearch();
+  const { newInvestigation, clearFault, dismissDegraded, setDegraded, toHome } = useResearch();
   const status = useBackend((s) => s.status);
 
   // Docker off is a degradation, not a failure: search snippets still work, the
@@ -36,9 +46,27 @@ export default function ResearchView({ onOpenIntegrations }) {
 
   return (
     <div className="research">
+      {/* The header is the only fixed thing on every research screen, so it is
+          where "how do I get out of here" has to be answered. It used to hold
+          one control -- New investigation -- which DISCARDS the current run, so
+          the only visible exit was also the destructive one and there was no
+          way to simply go back and look at the composer. */}
       <div className="research-header">
-        <Search size={16} strokeWidth={1.8} />
-        <h2>Research</h2>
+        {stage === "home" ? (
+          <>
+            <Search size={16} strokeWidth={1.8} />
+            <h2>Research</h2>
+          </>
+        ) : (
+          <>
+            <button className="research-back" onClick={toHome} title="Back to Research">
+              <ArrowLeft size={16} strokeWidth={1.9} />
+            </button>
+            <h2>Research</h2>
+            <span className="research-crumb">{STAGE_LABEL[stage] || ""}</span>
+          </>
+        )}
+        <span className="research-header-spacer" />
         <button className="btn small ghost" onClick={newInvestigation}>New investigation</button>
       </div>
 

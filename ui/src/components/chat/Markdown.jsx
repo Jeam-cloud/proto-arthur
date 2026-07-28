@@ -14,16 +14,26 @@ import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import DOMPurify from "dompurify";
 import { Copy, Check, Eye, Code } from "lucide-react";
+import { copyToClipboard } from "../../lib/clipboard";
+import { useToasts } from "../../stores/toasts";
 
 function CodeBlock({ language, value }) {
   const [copied, setCopied] = useState(false);
   const [showPreview, setShowPreview] = useState(language === "svg");
   const isSvg = language === "svg" || value.trimStart().startsWith("<svg");
 
+  // Goes through lib/clipboard so it survives the same conditions the paper's
+  // Copy does. It used to call navigator.clipboard directly and threw an
+  // unhandled rejection when the permission was denied -- the button simply
+  // never ticked and no error reached the user.
   const copy = async () => {
-    await navigator.clipboard.writeText(value);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    try {
+      await copyToClipboard({ text: value });
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (e) {
+      useToasts.getState().push(e.message || "Copy failed.", "error");
+    }
   };
 
   return (

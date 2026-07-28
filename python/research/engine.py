@@ -391,7 +391,12 @@ class ResearchEngine:
 
                 kept = 0
                 for hit in read_hits:
-                    body = hit.text or hit.snippet
+                    # Cleaned HERE, at the one point where provider text turns
+                    # into a passage. Everything downstream -- the model's
+                    # evidence, the evidence panel, the exports -- reads the
+                    # passage, so cleaning once here covers all three. See
+                    # providers.clean_text for what arrives and why it matters.
+                    body = providers.clean_text(hit.text or hit.snippet)
                     if not body.strip():
                         continue
                     passage = await self._best_passage(query, body, cfg["passages"])
@@ -499,7 +504,7 @@ class ResearchEngine:
         domains = {(s.get("domain") or "") for s in existing}
         added = 0
         for hit in read_hits:
-            body = hit.text or hit.snippet
+            body = providers.clean_text(hit.text or hit.snippet)
             if not body.strip():
                 continue
             passage = await self._best_passage(query, body, 6)

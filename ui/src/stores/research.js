@@ -274,6 +274,30 @@ export const useResearch = create((set, get) => ({
     })),
   backHome: () => set({ stage: "home" }),
 
+  // Leave the current investigation on screen and go back to the composer,
+  // WITHOUT throwing it away.
+  //
+  // WHY this is separate from newInvestigation(): the only way out of a run
+  // used to be "New investigation", which aborts the stream and clears
+  // everything. That makes going back to look at the composer a destructive
+  // act, so people avoid pressing it and end up stuck on a screen with no
+  // exit. Here the run keeps streaming in the background and the finished
+  // paper stays in recents, so returning is free and reversible -- which is
+  // the whole reason a back button can be pressed without thinking.
+  toHome: () => {
+    const s = get();
+    if (s.runId && (s.evidence.length || s.sections.length)) s.persistRun(
+      s.sections.length ? "done" : "partial",
+    );
+    set({ stage: "home" });
+  },
+
+  // Reopen whatever is currently loaded. Paired with toHome() so the composer
+  // can offer a way BACK into the investigation you just stepped out of.
+  resume: () => set((s) => ({
+    stage: s.sections.length || s.paper ? "report" : (s.lanes.length ? "run" : "home"),
+  })),
+
   // ---------- run ----------
   async run() {
     const s = get();
@@ -476,7 +500,11 @@ export const useResearch = create((set, get) => ({
         // Some of the paper already exists -- a partial paper is still a real
         // one, and the sections that finished are complete in themselves.
         useToasts.getState().push("Stopped. Everything gathered so far has been kept.", "info");
-        return { stage: "report" };
+        // `writing` is cleared here as well as in the stream's finally block.
+        // Stop is now reachable from the paper toolbar mid-write, and the
+        // button that stops the write must not leave the toolbar still saying
+        // "Arthur is writing" for however long the abort takes to unwind.
+        return { stage: "report", writing: false, statusText: "" };
       }
       // Search finished (or was cut short) but nothing was written yet. Stay
       // on the run screen -- the lanes and evidence are still useful -- and
@@ -584,23 +612,16 @@ export const useResearch = create((set, get) => ({
     }
     const state = { paper: s.paper, sections: s.sections, evidence: s.evidence, style: s.style };
     const { paperToHtml, paperToText } = await import("../lib/paperDoc");
-    const html = paperToHtml(state);
-    const text = paperToText(state);
+    const { copyToClipboard } = await import("../lib/clipboard");
     try {
-      // The rich path needs ClipboardItem, which older Electron/Chromium
-      // builds lack. Falling back to writeText still gets the user their
-      // paper -- losing the formatting is a far smaller failure than losing
-      // the copy.
-      if (window.ClipboardItem && navigator.clipboard?.write) {
-        await navigator.clipboard.write([new window.ClipboardItem({
-          "text/html": new Blob([html], { type: "text/html" }),
-          "text/plain": new Blob([text], { type: "text/plain" }),
-        })]);
-        useToasts.getState().push("Paper copied, formatting included.", "success");
-      } else {
-        await navigator.clipboard.writeText(text);
-        useToasts.getState().push("Paper copied as plain text.", "success");
-      }
+      // Which fidelity landed is reported honestly: losing the formatting is a
+      // far smaller failure than losing the copy, but the user should know
+      // which one they got before they paste.
+      const how = await copyToClipboard({ text: paperToText(state), html: paperToHtml(state) });
+      useToasts.getState().push(
+        how === "rich" ? "Paper copied, formatting included." : "Paper copied as plain text.",
+        "success",
+      );
     } catch (e) {
       useToasts.getState().push(e.message || "Copy failed.", "error");
     }

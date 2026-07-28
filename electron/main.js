@@ -7,7 +7,9 @@
 // plus: navigation is pinned to our own UI, window.open is denied (external
 // links go to the system browser), permission requests are denied except the
 // microphone (voice input), and every IPC handler validates its sender frame.
-const { app, BrowserWindow, ipcMain, dialog, shell, globalShortcut, session } = require("electron");
+const {
+  app, BrowserWindow, ipcMain, dialog, shell, globalShortcut, session, clipboard,
+} = require("electron");
 const path = require("path");
 const { BackendManager } = require("./backend");
 const { createTray } = require("./tray");
@@ -124,11 +126,36 @@ function pinNavigation(win) {
   });
 }
 
+// Permissions the renderer is allowed to have. Deny-by-default still: this is
+// an allowlist, not a switch to "ask the user".
+//
+//   media                      -> the microphone, for voice input.
+//   clipboard-sanitized-write  -> Copy buttons.
+//
+// WHY clipboard had to be added: the handler used to be `cb(permission ===
+// "media")`, which denied EVERY other permission including clipboard writes,
+// so every Copy button in the app failed with "Failed to execute 'write' on
+// 'Clipboard': Write permission denied". The renderer runs our own UI from
+// file:// with no remote content (see pinNavigation), so the page asking to
+// write to the clipboard is always our page.
+//
+// SANITIZED, not raw: `clipboard-sanitized-write` lets the renderer put plain
+// text and HTML on the clipboard with Chromium sanitising the payload first.
+// `clipboard-read` is deliberately NOT here -- nothing in Arthur needs to read
+// what the user copied from other applications, and granting it would let a
+// prompt-injected page exfiltrate whatever is on their clipboard.
+const ALLOWED_PERMISSIONS = new Set(["media", "clipboard-sanitized-write"]);
+
 function hardenSession() {
-  // Deny-by-default permissions; the mic is the single legitimate ask (voice).
   session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => {
-    cb(permission === "media");
+    cb(ALLOWED_PERMISSIONS.has(permission));
   });
+  // Chromium checks some permissions through this synchronous path instead of
+  // the request handler above, and clipboard writes are one of them. Without
+  // it the grant above is silently ignored for exactly the case it was added
+  // for.
+  session.defaultSession.setPermissionCheckHandler((_wc, permission) =>
+    ALLOWED_PERMISSIONS.has(permission));
 }
 
 function registerHotkey() {
@@ -175,6 +202,29 @@ function registerIpc() {
 
   handle("backend:info", () => backend.info());
   handle("app:version", () => app.getVersion());
+
+  // WRITE-ONLY clipboard, on purpose.
+  //
+  // The web Clipboard API needs a permission grant AND transient user
+  // activation, and it silently varies by Chromium version and origin -- which
+  // is how every Copy button in the app ended up broken at once. The native
+  // module has neither constraint, so on the desktop this is the reliable
+  // path and the web API is only the fallback (see ui/src/lib/clipboard.js).
+  //
+  // There is deliberately no clipboard:read counterpart. Reading would let
+  // any injected content in the renderer lift whatever the user last copied
+  // from another application -- passwords included -- and nothing in Arthur
+  // needs it.
+  handle("clipboard:write", (_e, payload) => {
+    const text = typeof payload?.text === "string" ? payload.text : "";
+    const html = typeof payload?.html === "string" ? payload.html : "";
+    if (!text && !html) return false;
+    // Both formats in one write: the receiving app picks the richest it
+    // understands, so this pastes as a formatted document into Word and as
+    // clean text into a plain editor.
+    clipboard.write(html ? { text, html } : { text });
+    return true;
+  });
   handle("window:showMain", () => showMain());
   handle("window:hideQuick", () => quickWindow && quickWindow.hide());
 

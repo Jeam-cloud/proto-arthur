@@ -18,6 +18,10 @@ contextBridge.exposeInMainWorld("arthur", {
   },
 
   // native helpers
+  // Write-only by design -- there is no readClipboard counterpart, and there
+  // should not be. See the clipboard:write handler in main.js.
+  writeClipboard: ({ text, html } = {}) =>
+    ipcRenderer.invoke("clipboard:write", { text, html }),
   pickFolder: () => ipcRenderer.invoke("dialog:pickFolder"),
   openExternal: (url) => ipcRenderer.invoke("shell:openExternal", url),
   getVersion: () => ipcRenderer.invoke("app:version"),

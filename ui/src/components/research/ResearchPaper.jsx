@@ -19,7 +19,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   AlertCircle, ClipboardCheck, Copy, Download, FileText, Loader2, PanelRight,
-  Plus, Search, Trash2,
+  Plus, Search, Square, Trash2,
 } from "lucide-react";
 import { useResearch } from "../../stores/research";
 import { STYLES, HEADINGS, inTextLabel, isNumericStyle, referenceLine, orderReferences }
@@ -56,7 +56,7 @@ export default function ResearchPaper() {
   const {
     setStyle, setCustomStyle, toggleEvidencePanel, exportAs, findMore,
     editParagraph, editHeading, editTitle, editAbstract, deleteParagraph,
-    setHoverCite, toggleEv, clearFocusSource, writeReportNow, copyPaper,
+    setHoverCite, toggleEv, clearFocusSource, writeReportNow, copyPaper, stop,
   } = useResearch();
 
   const [editing, setEditing] = useState(null);   // "title" | "abstract" | paraId | headingId
@@ -147,6 +147,18 @@ export default function ResearchPaper() {
               ? <><Loader2 size={12} className="spin" /> Arthur is writing — {sections.length} section{sections.length === 1 ? "" : "s"} so far</>
               : `${cited.length} of ${evidence.length} sources cited`}
           </span>
+
+          {/* Stop lived ONLY on the run screen, but the stage flips to
+              "report" the moment the first section streams in -- so for the
+              entire multi-minute write, which is the longest single wait in
+              the app, there was no way to interrupt it. Stopping here keeps
+              every section already written (see stop() in stores/research.js),
+              so it is a pause, not a discard. */}
+          {writing && (
+            <button className="btn tiny" onClick={stop} title="Stop writing and keep what is done">
+              <Square size={12} fill="currentColor" strokeWidth={0} /> Stop
+            </button>
+          )}
 
           <button className="btn tiny" disabled={finding} onClick={() => setFindOpen(true)}>
             {finding ? <><Loader2 size={13} className="spin" /> Searching</> : <><Plus size={13} strokeWidth={1.9} /> Find more sources</>}

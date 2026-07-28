@@ -24,6 +24,7 @@ continues -- one flaky API must never sink an investigation.
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 import re
 import xml.etree.ElementTree as ET
@@ -672,6 +673,41 @@ async def search_pubmed(query: str, max_results: int = 4) -> list[SearchHit]:
             doi=doi,
         ))
     return hits
+
+
+def clean_text(s: str) -> str:
+    """Make provider text readable before anything else touches it.
+
+    Abstracts arrive carrying the debris of however many systems they passed
+    through on the way: HTML entities that were never decoded (`&#13;` is a
+    carriage return, and it renders as the literal five characters), escape
+    sequences that got serialised as text rather than interpreted (a backslash
+    followed by an n), and non-breaking spaces.
+
+    WHY this has to happen at ingest rather than at render: this text is not
+    only displayed, it is handed to the model as evidence. Garbage in the
+    passage is garbage in the model's context, and a model that has been shown
+    `&#13;\\n` in its source material will cheerfully reproduce it in the prose
+    it writes. Cleaning it once, here, fixes the paper and the evidence panel
+    and the exports together.
+
+    Entities are decoded BEFORE tags are considered elsewhere, deliberately:
+    decoding after stripping would let an encoded `&lt;script&gt;` turn into a
+    real tag that nothing then removes.
+    """
+    if not s:
+        return ""
+    # Literal escape sequences that were serialised as text. \r\n first, so it
+    # does not become two blank lines.
+    text = s.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\r", "\n")
+    text = text.replace("\\t", " ")
+    text = html.unescape(text)
+    # Real control characters, plus the non-breaking space that survives
+    # unescaping and then confuses word counts and search.
+    text = text.replace("\r", "\n").replace("\xa0", " ")
+    # Collapse whitespace. Passages are shown and prompted as single blocks, so
+    # internal newlines buy nothing and cost tokens.
+    return " ".join(text.split())
 
 
 def _strip_tags(s: str) -> str:

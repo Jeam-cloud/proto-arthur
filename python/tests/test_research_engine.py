@@ -118,6 +118,43 @@ class TestCrossrefAbstract:
         assert _strip_tags(raw) == "Enterprises reported 6.2 weeks."
 
 
+class TestCleanText:
+    """Abstracts arrive carrying the debris of every system they passed
+    through. It reached the paper -- "&#13;\\nThey play a vital role" was
+    rendered literally on screen -- and, worse, reached the MODEL as evidence,
+    where a model shown that will happily reproduce it."""
+
+    def test_undecoded_entities_are_decoded(self):
+        from research.providers import clean_text
+        out = clean_text("The oceans cover two-thirds.&#13;\\nThey play a vital role.")
+        assert "&#13;" not in out
+        assert "\\n" not in out
+        assert out == "The oceans cover two-thirds. They play a vital role."
+
+    def test_named_entities_too(self):
+        from research.providers import clean_text
+        assert clean_text("Smith &amp; Jones &mdash; a review") == "Smith & Jones — a review"
+
+    def test_non_breaking_spaces_become_real_spaces(self):
+        from research.providers import clean_text
+        assert clean_text("5\xa0mg per\xa0day") == "5 mg per day"
+
+    def test_whitespace_is_collapsed_to_one_block(self):
+        from research.providers import clean_text
+        assert clean_text("line one\n\n   line two\t\tend") == "line one line two end"
+
+    def test_encoded_markup_does_not_become_live_markup(self):
+        # Decoding AFTER a tag strip would turn this into a real tag that
+        # nothing then removes. Decoding here must not resurrect one either.
+        from research.providers import clean_text
+        assert clean_text("&lt;script&gt;alert(1)&lt;/script&gt;") == "<script>alert(1)</script>"
+
+    def test_empty_input_is_safe(self):
+        from research.providers import clean_text
+        assert clean_text("") == ""
+        assert clean_text(None) == ""
+
+
 class FakeLLM:
     """Returns whatever the test queued, ignoring the schema. Schema
     enforcement is Ollama's job; what we test here is our handling of the
