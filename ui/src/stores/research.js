@@ -181,6 +181,10 @@ const BLANK = {
   finding: false,      // a "find more sources" search is running
   newSourceIds: [],    // arrived since the paper was written -> offer a rewrite
   modelWarning: "",    // set by /research/plan when the model looks too small
+  // {failed, total, context_full, model} when most sections failed to write.
+  // Distinct from modelWarning, which is a guess made from the model's NAME
+  // before the run. This is what actually happened.
+  struggling: null,
   // Identifies the recents entry for the CURRENT investigation, set the
   // moment a run starts (see run()/persistRun()) so progress can be saved
   // incrementally instead of only at the very end. null before anything has
@@ -347,6 +351,7 @@ export const useResearch = create((set, get) => ({
       statusText: "",
       stopped: false,
       streaming: true,
+      struggling: null,
     });
     get().persistRun("running");
     timer = setInterval(() => set((st) => ({ elapsed: st.elapsed + 1 })), 1000);
@@ -468,6 +473,10 @@ export const useResearch = create((set, get) => ({
         }));
         break;
 
+      case "research_model_struggling":
+        set({ struggling: data });
+        break;
+
       case "error":
         set({ writing: false });
         if (data.code === "tavily_missing") set({ fault: "tavily" });
@@ -550,6 +559,10 @@ export const useResearch = create((set, get) => ({
     set({
       writing: true, stopped: false, statusText: "Writing the paper", elapsed: 0,
       sections: [], paper: null, newSourceIds: [],
+      // Cleared on every rewrite: the banner reports what happened THIS
+      // attempt, so leaving it up after switching model would tell the user
+      // their fix did not work before it had been tried.
+      struggling: null,
     });
     timer = setInterval(() => set((st) => ({ elapsed: st.elapsed + 1 })), 1000);
 

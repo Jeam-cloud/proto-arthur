@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     ollama_host: str = "http://127.0.0.1:11434"
     embed_model: str = "nomic-embed-text"
     keep_alive: str = "10m"  # keep model warm between messages; big UX win on consumer GPUs
+    # Context window Ollama allocates. MUST be set explicitly -- Ollama's own
+    # default is 2048, which every research synthesis prompt overflows, and an
+    # overflowed prompt returns an empty generation rather than an error. See
+    # DEFAULT_NUM_CTX in core/ollama_client.py for the full reasoning and the
+    # memory trade-off. Lower it only on a machine that cannot spare the KV
+    # cache; raising it past the model's own context does nothing.
+    num_ctx: int = 8192
 
     # --- agent guardrails ---
     max_agent_iterations: int = 6      # hard cap: a confused local model can't loop forever

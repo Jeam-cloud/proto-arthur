@@ -34,6 +34,51 @@ class ModelNotFoundError(ArthurError):
     http_status = 404
 
 
+class EmptyGenerationError(ArthurError):
+    """The model produced no output at all.
+
+    Two causes, and telling them apart is the entire point of this class:
+
+      * The prompt overflowed the context window and was truncated. A
+        CONFIGURATION problem — one setting fixes it, and the model was never
+        really asked. `context_full` is True.
+      * The model genuinely could not satisfy the schema. A CAPABILITY
+        problem — the user needs a bigger model. `context_full` is False.
+
+    Reporting both as "the model returned nothing usable" is what made a
+    fixable 2048-token default look like an incapable model for weeks. The
+    numbers travel with the exception so the UI can say which one happened
+    and offer the right remedy.
+    """
+
+    code = "empty_generation"
+    http_status = 503
+
+    def __init__(self, model: str, prompt_tokens: int, num_ctx: int, context_full: bool):
+        if context_full:
+            message = (
+                f"The prompt filled {model}'s context window "
+                f"({prompt_tokens} of {num_ctx} tokens), so it was cut short and the model "
+                "returned nothing. Raising the context window or shortening the request fixes this."
+            )
+        else:
+            message = (
+                f"{model} returned nothing for this request. The prompt fitted "
+                f"({prompt_tokens} of {num_ctx} tokens), so this is the model struggling with "
+                "the task rather than running out of room — a larger model usually succeeds."
+            )
+        super().__init__(message, detail={
+            "model": model,
+            "prompt_tokens": prompt_tokens,
+            "num_ctx": num_ctx,
+            "context_full": context_full,
+        })
+        self.model = model
+        self.prompt_tokens = prompt_tokens
+        self.num_ctx = num_ctx
+        self.context_full = context_full
+
+
 class SecurityBlockError(ArthurError):
     """The security gateway blocked this content."""
 

@@ -33,3 +33,8 @@ RESEARCH_GAP = "research_gap"        # {ids: [lane_id], note}  second pass start
 # place them correctly without relying on arrival order.
 RESEARCH_SECTION = "research_section"  # {id, kind, heading, order, paragraphs[]}
 RESEARCH_PAPER = "research_paper"      # {title, abstract, question, sections[]}
+# The writer is failing repeatedly and the user needs to change something.
+# Carries WHICH thing: a truncated context is a setting, an overwhelmed model
+# is a download. Sent once per run, after the paper, so it never interrupts
+# writing that might still recover.
+RESEARCH_MODEL_STRUGGLING = "research_model_struggling"  # {failed, total, context_full, model}

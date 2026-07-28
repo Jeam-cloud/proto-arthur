@@ -40,6 +40,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from core import events
+from core.errors import EmptyGenerationError
 from memory.vector_store import cosine
 from research import providers
 from research.providers import SearchHit, root_domain
@@ -238,6 +239,19 @@ class ResearchEngine:
         self._embedder = embedder
         self._gateway = gateway
         self._allow_unsandboxed = allow_unsandboxed
+
+    async def _is_small(self, model: str) -> bool:
+        """Size check that asks Ollama first and only guesses from the name if
+        it cannot. See model_is_small for why the name alone is not enough.
+
+        A lookup failure must degrade to the NAME, never to "small": wrongly
+        simplifying a capable model costs quality on every section, silently.
+        """
+        try:
+            actual = await self._llm.parameter_size_b(model)
+        except Exception:
+            actual = None
+        return model_is_small(model, actual_b=actual)
 
     # ---------------- step 1: plan ----------------
 
@@ -925,6 +939,27 @@ class ResearchEngine:
             "sections": sections,
         })
 
+        # Say something when most of the paper failed to write.
+        #
+        # A notice per section explains each hole, but a reader looking at four
+        # of them still has to work out for themselves that the model is the
+        # problem and that switching it is the fix. Emitted AFTER the paper so
+        # a run that recovers halfway through never gets interrupted by advice
+        # it does not need.
+        notices = [
+            p for sec in sections for p in sec["paragraphs"] if p.get("kind") == "notice"
+        ]
+        if notices and len(notices) >= max(2, len(sections) // 2):
+            # If ANY failure was a truncated prompt, that is the one to report:
+            # it is the cheaper fix and it may be the whole cause.
+            context_full = any((p.get("failure") or {}).get("context_full") for p in notices)
+            await emit(events.RESEARCH_MODEL_STRUGGLING, {
+                "failed": len(notices),
+                "total": len(sections),
+                "context_full": context_full,
+                "model": model,
+            })
+
     async def _write_section(
         self, model: str, heading: str, brief: str, sources: list[dict], by_n: dict[int, dict],
         words: int = 0, min_paras: int = 1,
@@ -1020,16 +1055,26 @@ class ResearchEngine:
                 "order. If the material is not genuinely tabular, omit `table` entirely."},
             {"role": "user", "content": f"{brief}{length_rule}\n\nSources:\n{numbered}"},
         ]
-        simple = model_is_small(model)
+        simple = await self._is_small(model)
+        failure: EmptyGenerationError | None = None
         try:
             data = await self._llm.chat_json(
                 model, msgs,
                 SIMPLE_SECTION_SCHEMA if simple else _section_schema(min_paras),
                 temperature=0.2,
             )
+        except EmptyGenerationError as e:
+            # The one failure mode worth naming precisely: it carries whether
+            # the prompt was truncated (fixable setting) or the model simply
+            # could not do it (needs a bigger model). Kept so the notice below
+            # can say which, instead of "returned nothing usable" for both.
+            log.warning("section '%s': %s", heading, e.message)
+            data = None
+            failure = e
         except Exception as e:
             log.warning("section '%s' failed: %s", heading, e)
             data = None
+            failure = None
 
         if simple:
             # One flat string comes back; split it into paragraphs ourselves.
@@ -1085,20 +1130,45 @@ class ResearchEngine:
             #
             # Saying plainly that the section could not be written is worse
             # output and a far better answer.
-            best = sources[0]
+            # The notice now NAMES the cause. "The model returned nothing
+            # usable" was true of both a truncated prompt and a model that is
+            # too small, and those need opposite responses -- one is a setting,
+            # the other is a download. Saying which is the difference between a
+            # dead end and an instruction.
+            if failure and failure.context_full:
+                why = (
+                    f"the request filled {failure.model}'s context window "
+                    f"({failure.prompt_tokens} of {failure.num_ctx} tokens), so it was cut short "
+                    "before the model could answer. Raising the context window in Settings, or "
+                    "using a shorter paper length, fixes this"
+                )
+            elif failure:
+                why = (
+                    f"{failure.model} returned nothing, and the request fitted comfortably "
+                    f"({failure.prompt_tokens} of {failure.num_ctx} tokens) — so this is the model "
+                    "finding the task too hard, not running out of room. A larger model usually "
+                    "succeeds"
+                )
+            else:
+                why = "the model returned nothing usable for it"
+
             out = [{
                 "id": "p1",
                 "text": (
-                    "Arthur could not write this section. The model returned nothing usable for "
-                    f"it, so no claim is made here. The evidence gathered for this part of the "
-                    f"question is still in the sources panel, starting with “{best.get('title') or 'an untitled source'}”. "
-                    "Rewriting with a larger model, or narrowing this sub-question, usually fixes it."
+                    f"Arthur could not write this section: {why}. No claim is made here, and the "
+                    "evidence gathered for this part of the question is still in the sources panel."
                 ),
                 "citations": [],
                 "conf": "unverified",
                 # Marks this as an app message rather than written prose, so the
                 # UI and the exporters can treat it differently from a claim.
                 "kind": "notice",
+                # Consumed by _write_paper to decide whether to offer a model
+                # switch, and which reason to give for it.
+                "failure": (
+                    {"context_full": failure.context_full, "model": failure.model}
+                    if failure else {"context_full": False, "model": model}
+                ),
             }]
             log.info("section '%s' produced nothing usable; emitted a failure notice", heading)
 
@@ -1130,17 +1200,28 @@ class ResearchEngine:
         return title[:200], abstract
 
 
-def model_is_small(model: str) -> bool:
-    """Guess parameter count from the model NAME, e.g. "llama3.1:8b" -> 8.
+def model_is_small(model: str, actual_b: float | None = None) -> bool:
+    """Is this model small enough to need the simplified writing path?
 
-    Reading the name is crude, but it is the only signal available without a
-    round trip to Ollama, and model names in this ecosystem are near-universally
-    honest about size because that is the thing people pick on. When there is
-    no size in the name we assume the model is capable -- degrading a good
-    model's output on a bad guess is worse than letting a small one try and
-    fall back.
+    `actual_b` is the parameter count Ollama itself reports, and it WINS when
+    provided. The name is only consulted as a fallback.
+
+    WHY that inversion matters: reading the name is crude and it failed
+    completely on the Gemma 4 family, which writes its edge sizes as `e2b` and
+    `e4b` -- "effective" parameters. The old pattern required a separator
+    immediately followed by a digit, so `:e4b` did not match, and EVERY Gemma 4
+    variant came back "not small". A 2.3B model was being handed the full
+    nested schema with a three-paragraph floor and optional tables, instead of
+    the flat-string path that exists precisely for models that size. `:latest`
+    is worse still: it carries no size at all, and on Gemma 4 it resolves to
+    the 4.5B edge model.
+
+    The `e?` in the pattern below covers the naming convention; the `actual_b`
+    argument covers `:latest` and anything else the convention misses.
     """
-    m = re.search(r"[:\-_ ](\d+(?:\.\d+)?)\s*b\b", (model or "").lower())
+    if actual_b is not None:
+        return actual_b < SMALL_MODEL_B
+    m = re.search(r"[:\-_ ]e?(\d+(?:\.\d+)?)\s*b\b", (model or "").lower())
     if not m:
         return False
     try:

@@ -14,21 +14,58 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
 import ollama
 
-from core.errors import ModelNotFoundError, OllamaUnavailableError
+from core.errors import EmptyGenerationError, ModelNotFoundError, OllamaUnavailableError
 
 log = logging.getLogger(__name__)
 
+# THE SINGLE MOST CONSEQUENTIAL NUMBER IN THIS FILE.
+#
+# Ollama's default context window is 2048 tokens. Not the model's context
+# window -- llama3.1 advertises 128K and qwen2.5-coder 32K -- but the window
+# Ollama actually allocates when the caller does not say otherwise. Anything
+# past it is silently dropped, and a chat request whose prompt overflows comes
+# back with an EMPTY generation rather than an error.
+#
+# That is precisely how Research mode failed: a section prompt carrying a dozen
+# source passages measures around 2900 tokens, overflowed 2048 every single
+# time, and returned nothing. Every section fell back to "Arthur could not
+# write this section", which read as the model being too weak when the model
+# had never actually been asked. There is a comment further down this file that
+# says "an empty generation (model hit its context limit) still has to be
+# handled" -- the handling was right, the cause was fixable and nobody had.
+#
+# WHY one value for the whole app instead of sizing per request: Ollama keeps a
+# model resident with the options it was loaded under, so varying num_ctx
+# between calls evicts and reloads the model -- seconds of stall on every
+# alternation. One value means one load.
+#
+# WHY 8192 and not larger: the KV cache is allocated up front and scales
+# linearly with this number. At 8K an 8B model costs roughly a gigabyte of
+# extra memory, which the 8GB tier can absorb; at 32K it cannot. 8K comfortably
+# fits every prompt this app constructs, with the research synthesis call --
+# the largest by far -- using about a third of it.
+DEFAULT_NUM_CTX = 8192
+
 
 class OllamaClient:
-    def __init__(self, host: str, keep_alive: str = "10m"):
+    def __init__(self, host: str, keep_alive: str = "10m", num_ctx: int = DEFAULT_NUM_CTX):
         self._client = ollama.AsyncClient(host=host)
         self._keep_alive = keep_alive
+        self._num_ctx = max(2048, int(num_ctx or DEFAULT_NUM_CTX))
+        self._size_cache: dict[str, float | None] = {}
+
+    def _options(self, **extra: Any) -> dict[str, Any]:
+        """Options every generation call shares. num_ctx belongs here rather
+        than at each call site precisely because it must not vary between
+        them -- see DEFAULT_NUM_CTX."""
+        return {"num_ctx": self._num_ctx, **extra}
 
     async def is_up(self) -> bool:
         try:
@@ -51,6 +88,38 @@ class OllamaClient:
             }
             for m in res.models
         ]
+
+    async def parameter_size_b(self, model: str) -> float | None:
+        """How many billion parameters this model actually has, per Ollama.
+
+        Exists because the model NAME is not a reliable size signal. `:latest`
+        carries no size at all, and Gemma 4 writes its edge sizes as `e2b`/`e4b`
+        for "effective" parameters -- so name-parsing classified a 2.3B edge
+        model as a large one and handed it the hardest code path in the app.
+        Ollama already knows the real number; asking is better than guessing.
+
+        Cached: the answer cannot change while a model is installed, and this
+        is called once per section of a research paper.
+
+        Returns None when Ollama cannot say, which callers must treat as
+        "unknown" and fall back to the name -- never as "small".
+        """
+        if model in self._size_cache:
+            return self._size_cache[model]
+        size: float | None = None
+        try:
+            res = await self._client.show(model)
+            raw = ((getattr(res, "details", None) and res.details.parameter_size) or "").strip()
+            # Ollama reports strings like "8.0B", "4.5B", "596.99M".
+            m = re.fullmatch(r"([\d.]+)\s*([BM])", raw, re.I)
+            if m:
+                size = float(m.group(1))
+                if m.group(2).upper() == "M":
+                    size /= 1000.0
+        except Exception as e:
+            log.info("could not read parameter size for %s: %s", model, e)
+        self._size_cache[model] = size
+        return size
 
     async def delete(self, model: str) -> None:
         """Uninstall a model, freeing its disk space. Ollama 404s if the name
@@ -133,7 +202,7 @@ class OllamaClient:
                     format=schema,
                     stream=False,
                     keep_alive=self._keep_alive,
-                    options={"temperature": temperature},
+                    options=self._options(temperature=temperature),
                 ),
                 timeout=timeout_s,
             )
@@ -143,16 +212,58 @@ class OllamaClient:
             if e.status_code == 404:
                 raise ModelNotFoundError(f"Model '{model}' is not installed") from e
             raise
-        except TimeoutError as e:
+        # `asyncio.TimeoutError`, NOT the builtin `TimeoutError`.
+        #
+        # They are the same class from Python 3.11 onward, and DIFFERENT
+        # classes on 3.10 and earlier, where asyncio.TimeoutError aliases
+        # concurrent.futures.TimeoutError instead. Catching the builtin alone
+        # therefore worked on the developer's machine and let the timeout
+        # escape unhandled on 3.10 -- so a stalled model surfaced as a raw
+        # asyncio.TimeoutError instead of the OllamaUnavailableError every
+        # caller in research/engine.py is written to expect. Naming the asyncio
+        # one covers both, because on 3.11+ it IS the builtin.
+        except asyncio.TimeoutError as e:
             log.warning("chat_json timed out after %.0fs for model %s", timeout_s, model)
             raise OllamaUnavailableError(f"'{model}' did not respond within {timeout_s:.0f}s") from e
 
         import json
 
         content = (res.message.content or "").strip()
-        # The grammar guarantees well-formed JSON, but an empty generation (model
-        # hit its context limit) still has to be handled.
-        return json.loads(content) if content else None
+
+        # WHY the prompt size is inspected on every call.
+        #
+        # An empty generation has two very different causes that are impossible
+        # to tell apart from the outside: the prompt overflowed the context
+        # window, or the model is simply not capable of satisfying the schema.
+        # The first is a configuration bug and takes one setting to fix; the
+        # second means the user needs a bigger model. Reporting both as "the
+        # model returned nothing usable" made the fixable one look like the
+        # hopeless one for weeks.
+        #
+        # Ollama reports how many tokens the prompt actually consumed. Compare
+        # it to the window we asked for and the answer stops being a guess.
+        # Carried on the EXCEPTION, not on the client instance. Research runs
+        # two lanes concurrently, so `self.last_whatever` would be overwritten
+        # by whichever call finished second and the diagnosis would be attached
+        # to the wrong failure.
+        prompt_tokens = int(getattr(res, "prompt_eval_count", 0) or 0)
+        # 0.9 rather than 1.0: llama.cpp reserves part of the window for the
+        # reply, so a prompt sitting at 90% has already lost tokens off the
+        # front -- it does not have to reach the ceiling to have been truncated.
+        context_full = bool(prompt_tokens) and prompt_tokens >= self._num_ctx * 0.9
+        if context_full:
+            log.warning(
+                "prompt used %d tokens of a %d window for %s -- it was truncated",
+                prompt_tokens, self._num_ctx, model,
+            )
+
+        # The grammar guarantees well-formed JSON, but an empty generation still
+        # has to be handled. It now RAISES rather than returning None so the
+        # reason travels with it; every caller already sits inside a
+        # `try/except Exception` and falls back exactly as before.
+        if not content:
+            raise EmptyGenerationError(model, prompt_tokens, self._num_ctx, context_full)
+        return json.loads(content)
 
     async def chat_stream(
         self,
@@ -189,6 +300,13 @@ class OllamaClient:
             tools=tools or None,
             stream=True,
             keep_alive=self._keep_alive,
+            # Same window as the structured path. Chat overflows the 2048
+            # default more quietly than research did -- rather than returning
+            # nothing, a long conversation silently loses its oldest turns and
+            # the model starts contradicting things it said ten messages ago.
+            # That is the "it forgets what we were talking about" complaint,
+            # and it is a configuration bug, not a model limitation.
+            options=self._options(),
         )
         pending_calls: list[dict[str, Any]] = []
         eval_count = 0

@@ -163,8 +163,19 @@ class FakeLLM:
     def __init__(self, replies: list):
         self._replies = list(replies)
         self.calls: list[dict] = []
+        # Set by a test to make every call fail the way the real client does
+        # when the model generates nothing.
+        self.raise_with: Exception | None = None
+
+    async def parameter_size_b(self, model):
+        # Fakes report nothing, so the engine falls back to name parsing --
+        # which is what the existing size tests assert against.
+        return None
 
     async def chat_json(self, model, messages, schema, temperature=0.0):
+        if self.raise_with:
+            self.calls.append({"model": model, "schema": schema, "messages": messages})
+            raise self.raise_with
         # `messages` is recorded too: the length-budget tests assert on what
         # the prompt actually said, which is the only way to tell a target that
         # reached the model from one that was quietly dropped on the way.
@@ -323,6 +334,42 @@ class TestSmallModelHandling:
         from research.engine import model_is_small
 
         assert model_is_small("mistral-nemo") is False
+
+    def test_effective_parameter_naming_is_understood(self):
+        """Gemma 4 writes its edge sizes as e2b/e4b -- "effective" parameters.
+
+        The old pattern required a separator immediately followed by a digit,
+        so `:e4b` never matched and EVERY Gemma 4 variant came back "not
+        small". A 2.3B edge model was being handed the full nested schema with
+        a three-paragraph floor, instead of the flat path built for its size.
+        """
+        from research.engine import model_is_small
+
+        assert model_is_small("gemma4:e2b") is True   # 2.3B effective
+        assert model_is_small("gemma4:e4b") is True   # 4.5B effective
+        assert model_is_small("gemma4:12b") is False
+        assert model_is_small("gemma4:31b") is False
+
+    def test_a_reported_size_beats_the_name(self):
+        # `:latest` carries no size at all, and on Gemma 4 it resolves to the
+        # 4.5B edge model. Only Ollama can answer that, so its number wins.
+        from research.engine import model_is_small
+
+        assert model_is_small("gemma4:latest") is False           # name knows nothing
+        assert model_is_small("gemma4:latest", actual_b=4.5) is True
+        assert model_is_small("mistral-nemo", actual_b=12.0) is False
+
+    async def test_an_unknown_size_falls_back_to_the_name_not_to_small(self):
+        # Wrongly simplifying a capable model degrades every section silently,
+        # which is worse than letting a small one try and fall back visibly.
+        eng = make_engine([])
+
+        async def no_answer(_model):
+            raise RuntimeError("ollama down")
+
+        eng._llm.parameter_size_b = no_answer
+        assert await eng._is_small("qwen3:32b") is False
+        assert await eng._is_small("qwen3:4b") is True
 
     async def test_structurally_valid_but_empty_output_still_yields_a_section(self):
         """THE empty-Introduction regression. A small model returning the right
@@ -553,6 +600,55 @@ class TestSectionFallback:
         out, _ = await eng._write_section("m", "H", "b", list(by_n.values()), by_n)
         assert out[0].get("kind") != "notice"
         assert by_n[1]["used"] is True
+
+
+class TestFailureDiagnosis:
+    """An empty generation has two causes that need opposite responses: a
+    truncated prompt is a setting, an overwhelmed model is a download.
+    Reporting both as "returned nothing usable" is what made a fixable
+    2048-token default look like an incapable model."""
+
+    async def test_a_truncated_prompt_says_so(self):
+        from core.errors import EmptyGenerationError
+        eng = make_engine([])
+        eng._llm.raise_with = EmptyGenerationError("qwen3:4b", 7400, 8192, True)
+        by_n = {1: source(1, "a.com")}
+        out, _ = await eng._write_section("qwen3:4b", "H", "b", list(by_n.values()), by_n)
+
+        text = out[0]["text"]
+        assert "context window" in text
+        assert "7400" in text and "8192" in text
+        assert out[0]["failure"]["context_full"] is True
+
+    async def test_a_prompt_that_fitted_blames_the_model(self):
+        from core.errors import EmptyGenerationError
+        eng = make_engine([])
+        eng._llm.raise_with = EmptyGenerationError("qwen3:4b", 900, 8192, False)
+        by_n = {1: source(1, "a.com")}
+        out, _ = await eng._write_section("qwen3:4b", "H", "b", list(by_n.values()), by_n)
+
+        text = out[0]["text"]
+        assert "too hard" in text
+        assert "larger model" in text
+        assert out[0]["failure"]["context_full"] is False
+
+    async def test_a_mostly_failed_paper_asks_for_a_bigger_model(self):
+        eng = make_engine([])  # every call returns nothing
+        emit = CollectingEmit()
+        await eng._write_paper("q", [source(1, "a.com")], ["one", "two"], "qwen3:4b", emit)
+
+        [warn] = emit.of("research_model_struggling")
+        assert warn["failed"] >= 2
+        assert warn["model"] == "qwen3:4b"
+
+    async def test_a_paper_that_wrote_fine_says_nothing(self):
+        # The banner must not appear on a healthy run.
+        replies = [section([{"text": "Real prose [1].", "citations": [1]}]) for _ in range(4)]
+        replies += [{"title": "T", "abstract": "A"}]
+        eng = make_engine(replies)
+        emit = CollectingEmit()
+        await eng._write_paper("q", [source(1, "a.com")], ["one"], "m", emit)
+        assert emit.of("research_model_struggling") == []
 
 
 class TestSourceBreadth:

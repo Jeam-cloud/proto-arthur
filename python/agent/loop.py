@@ -113,11 +113,20 @@ def _salvage_unescaped_field(text: str, start: int) -> dict[str, Any] | None:
         return None
     name = m_name.group(1)
 
-    # Colon is OPTIONAL here on purpose: small models sometimes drop the ":"
-    # between "parameters" and its opening brace ({"parameters" {"to": ...} —
-    # exactly the malformation that motivated this fix). Requiring the brace
-    # immediately after is still specific enough not to misfire elsewhere.
-    m_params = re.search(r'"(?:arguments|parameters|args)"\s*:?\s*\{', text[start:])
+    # Both the colon AND the key's closing quote are optional here.
+    #
+    # The colon being optional was already intended. What this missed is WHERE
+    # the quote lands when a model drops the colon: it does not write
+    # `"parameters" {`, it writes `"parameters {"` -- the brace ends up INSIDE
+    # the quoted key and the closing quote lands after it. The old pattern
+    # required `"parameters"` as a complete token before the brace, so it never
+    # matched the real malformation and recovery returned None for every
+    # email_send call that hit it.
+    #
+    # Not consuming that trailing quote is deliberate: in the malformed form it
+    # is exactly the opening quote of the first argument, so leaving it makes
+    # the remainder parse identically to the well-formed case below.
+    m_params = re.search(r'"(?:arguments|parameters|args)\s*"?\s*:?\s*\{', text[start:])
     if not m_params:
         return None
     rest = text[start + m_params.end():]

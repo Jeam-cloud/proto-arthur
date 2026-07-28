@@ -72,7 +72,9 @@ async def build_state(settings: Settings) -> AppState:
     db = Database(settings.db_path)
     await db.connect()
 
-    llm = OllamaClient(settings.ollama_host, keep_alive=settings.keep_alive)
+    llm = OllamaClient(
+        settings.ollama_host, keep_alive=settings.keep_alive, num_ctx=settings.num_ctx,
+    )
     vault = SecretsVault()
     audit = AuditLog(db)
     scanner = build_scanner(settings.scanner_backend)

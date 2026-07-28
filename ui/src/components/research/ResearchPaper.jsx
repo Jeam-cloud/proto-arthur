@@ -25,6 +25,7 @@ import { useResearch } from "../../stores/research";
 import { STYLES, HEADINGS, inTextLabel, isNumericStyle, referenceLine, orderReferences }
   from "../../lib/citeFormat";
 import EvidencePanel from "./EvidencePanel";
+import ModelMenu from "../chat/ModelMenu";
 
 const CONF = {
   thin: {
@@ -53,6 +54,9 @@ export default function ResearchPaper() {
   const finding = useResearch((s) => s.finding);
   const newSourceIds = useResearch((s) => s.newSourceIds);
   const focusSource = useResearch((s) => s.focusSource);
+  const struggling = useResearch((s) => s.struggling);
+  const model = useResearch((s) => s.model);
+  const setModel = useResearch((s) => s.setModel);
   const {
     setStyle, setCustomStyle, toggleEvidencePanel, exportAs, findMore,
     editParagraph, editHeading, editTitle, editAbstract, deleteParagraph,
@@ -198,6 +202,37 @@ export default function ResearchPaper() {
             <PanelRight size={13} strokeWidth={1.8} /> Sources
           </button>
         </div>
+
+        {/* Most of the paper failed to write. A notice per section explains
+            each hole, but a reader looking at four of them still has to work
+            out on their own that the model is the problem and that switching
+            it is the fix. This says so once, names which problem it was, and
+            puts the remedy next to the sentence describing it. */}
+        {struggling && (
+          <div className="paper-struggling">
+            <AlertCircle size={15} strokeWidth={1.9} />
+            <div className="paper-struggling-body">
+              <div className="paper-struggling-title">
+                {struggling.failed} of {struggling.total} sections couldn&apos;t be written
+              </div>
+              <div className="paper-struggling-why">
+                {struggling.context_full
+                  ? `The request didn't fit in ${struggling.model}'s context window, so it was cut
+                     short before the model could answer. A shorter paper length, or a larger
+                     context window in Settings, fixes this.`
+                  : `${struggling.model} returned nothing, and the request fitted comfortably — so
+                     it's finding the task too hard rather than running out of room. A larger
+                     model usually succeeds.`}
+              </div>
+            </div>
+            {/* The picker itself, not a link to Settings. The remedy should be
+                one click from the sentence that recommends it. */}
+            <ModelMenu mode="research" value={model} onChange={setModel} placement="down" />
+            <button className="btn tiny primary" disabled={writing} onClick={writeReportNow}>
+              Rewrite
+            </button>
+          </div>
+        )}
 
         {newSourceIds.length > 0 && (
           <div className="paper-new-sources">
