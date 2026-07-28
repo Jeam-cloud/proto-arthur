@@ -12,7 +12,81 @@ from __future__ import annotations
 import pytest
 
 from research.engine import ResearchEngine
-from research.providers import SearchHit, _strip_tags, _undo_inverted_index, root_domain
+from research.providers import (
+    RELEVANCE_FLOOR, SearchHit, _strip_tags, _undo_inverted_index, key_terms,
+    keyword_query, relevance, root_domain,
+)
+
+
+class TestQueryShaping:
+    """The bug: sub-questions went to keyword indexes as whole sentences, so
+    the indexes matched the filler words and ranked by citation count. An ADHD
+    question came back with a global asthma strategy."""
+
+    def test_filler_is_stripped_but_subject_survives(self):
+        q = "Differences in attention span between ADHD and neurotypical individuals"
+        terms = key_terms(q)
+        assert "attention" in terms
+        assert "span" in terms
+        assert "neurotypical" in terms
+        # The words that poisoned the match.
+        assert "differences" not in terms
+        assert "individuals" not in terms
+        assert "between" not in terms
+
+    def test_acronyms_survive_the_length_floor(self):
+        # Dropping ADHD for being four letters would discard the single most
+        # discriminating token in the question.
+        assert "adhd" in key_terms("What is ADHD")
+        assert "iq" in key_terms("IQ and PTSD in adults")
+        assert "ptsd" in key_terms("IQ and PTSD in adults")
+
+    def test_terms_keep_order_and_deduplicate(self):
+        assert key_terms("asthma asthma inhaler") == ["asthma", "inhaler"]
+
+    def test_a_question_of_pure_filler_falls_back_to_the_original(self):
+        # An empty query makes providers return their most-cited works, which
+        # is the exact failure being fixed.
+        assert keyword_query("What are the main differences") != ""
+
+    def test_query_is_capped(self):
+        long_q = " ".join(f"term{i}" for i in range(30))
+        assert len(keyword_query(long_q).split()) <= 8
+
+
+class TestRelevance:
+    def _hit(self, title, snippet=""):
+        return SearchHit(url="https://x.test/1", title=title, snippet=snippet)
+
+    def test_the_asthma_case_scores_below_the_floor(self):
+        terms = key_terms("attention span in ADHD and neurotypical individuals")
+        off = self._hit(
+            "Global strategy for asthma management and prevention",
+            "Asthma is a serious health problem throughout the world.",
+        )
+        assert relevance(off, terms) < RELEVANCE_FLOOR
+
+    def test_an_on_topic_paper_scores_well(self):
+        terms = key_terms("attention span in ADHD and neurotypical individuals")
+        on = self._hit(
+            "Attention span in adults with ADHD",
+            "We compare sustained attention in ADHD and neurotypical adults.",
+        )
+        assert relevance(on, terms) > RELEVANCE_FLOOR
+
+    def test_title_matches_outweigh_body_matches(self):
+        terms = key_terms("adhd attention")
+        in_title = self._hit("ADHD and attention", "")
+        in_body = self._hit("A study", "adhd attention are discussed here")
+        assert relevance(in_title, terms) > relevance(in_body, terms)
+
+    def test_prefix_stemming_matches_word_forms(self):
+        terms = key_terms("attention deficits")
+        assert relevance(self._hit("Attentional control"), terms) > 0
+
+    def test_no_terms_means_everything_passes(self):
+        # A question we could not extract terms from must not filter the world.
+        assert relevance(self._hit("Anything"), []) == 1.0
 
 
 class TestRootDomain:
@@ -137,13 +211,24 @@ class TestSectionConfidence:
         assert by_n[1]["used"] is True
         assert by_n[2]["used"] is False
 
-    async def test_a_failed_section_still_yields_a_cited_paragraph(self):
-        # A dead model call must not leave a hole in the paper: fall back to
-        # the strongest passage, attributed, rather than an empty section.
+    async def test_a_failed_section_says_so_instead_of_quoting_a_source(self):
+        # SUPERSEDES "a failed section still yields a cited paragraph".
+        #
+        # The old contract was: fall back to the strongest passage, attributed.
+        # In practice that pasted a source's abstract into the paper as body
+        # prose in the paper's own voice -- an ADHD review opened with the
+        # verbatim executive summary of a global asthma strategy. An attributed
+        # verbatim extract presented as written prose is still plagiarism, and
+        # it also disguised a total model failure as a working section.
+        #
+        # The new contract: leave a visible, honest hole.
         eng = make_engine([None])
         by_n = {1: source(1, "a.com")}
+        by_n[1]["passage"] = "Asthma is a serious health problem throughout the world."
         out, _ = await eng._write_section("m", "H", "brief", list(by_n.values()), by_n)
-        assert out and out[0]["citations"] == [1]
+        assert out and out[0]["kind"] == "notice"
+        assert "Asthma" not in out[0]["text"]
+        assert out[0]["citations"] == []
 
 
 class TestPublisherIndependence:
@@ -211,9 +296,12 @@ class TestSmallModelHandling:
         by_n = {1: source(1, "a.com")}
         by_n[1]["passage"] = "A real extracted passage about the topic."
         out, _ = await eng._write_section("m", "H", "b", list(by_n.values()), by_n)
+        # Still no hole in the paper -- but the filler is now Arthur saying it
+        # failed, not the source's own passage wearing the paper's voice.
         assert out and out[0]["text"]
-        assert out[0]["citations"] == [1]
-        assert out[0]["conf"] == "thin"
+        assert out[0]["kind"] == "notice"
+        assert "A real extracted passage" not in out[0]["text"]
+        assert out[0]["conf"] == "unverified"
 
     async def test_small_models_get_the_flat_schema_and_still_get_citations(self):
         # The simple path returns one string; citations come from inline [n].
@@ -372,6 +460,77 @@ class TestPaperAssembly:
         emit = CollectingEmit()
         await eng._write_paper("why is the sky blue", [source(1, "a.com")], ["one"], "m", emit)
         assert emit.of("research_paper")[-1]["title"]
+
+
+class TestHeadings:
+    """Sub-questions are statements of what to find out. Headings are topics.
+    Printing the former where the latter belongs is what made the paper read
+    as a list of sentences."""
+
+    def test_a_sentence_becomes_a_topic(self):
+        from research.engine import _short_heading
+        out = _short_heading(
+            "Differences in attention span and focus maintenance between ADHD "
+            "and neurotypical individuals"
+        )
+        assert out == "Attention span and focus maintenance"
+
+    def test_question_words_are_dropped(self):
+        from research.engine import _short_heading
+        assert _short_heading("How does caffeine affect sleep?") == "Caffeine affect sleep"
+
+    def test_length_is_capped(self):
+        from research.engine import _short_heading
+        assert len(_short_heading(" ".join(f"w{i}" for i in range(20))).split()) <= 6
+
+    def test_a_good_heading_is_left_alone(self):
+        from research.engine import _short_heading
+        assert _short_heading("Licensing and commercial use") == "Licensing and commercial use"
+
+    def test_empty_input_does_not_crash(self):
+        from research.engine import _short_heading
+        assert _short_heading("") == "Untitled section"
+
+
+class TestSectionFallback:
+    """A section the model could not write must SAY so. It used to paste the
+    top source's abstract in as body prose, which presented someone else's
+    paragraph as the paper's own argument."""
+
+    async def test_no_verbatim_passage_is_emitted_as_prose(self):
+        eng = make_engine([])  # model returns nothing
+        by_n = {1: source(1, "a.com")}
+        by_n[1]["passage"] = "OBJECTIVE: The relationship between sex and autism..."
+        out, _ = await eng._write_section("m", "H", "b", list(by_n.values()), by_n)
+        assert len(out) == 1
+        assert out[0]["kind"] == "notice"
+        assert "OBJECTIVE" not in out[0]["text"]
+        # A notice makes no claim, so it must carry no citations and must not
+        # mark its source as used.
+        assert out[0]["citations"] == []
+        assert by_n[1]["used"] is False
+
+    async def test_a_section_that_worked_is_untouched(self):
+        eng = make_engine([section([{"text": "Real prose [1].", "citations": [1]}])])
+        by_n = {1: source(1, "a.com")}
+        out, _ = await eng._write_section("m", "H", "b", list(by_n.values()), by_n)
+        assert out[0].get("kind") != "notice"
+        assert by_n[1]["used"] is True
+
+
+class TestSourceBreadth:
+    async def test_the_writer_sees_far_more_than_eight_sources(self):
+        # "Only 2 of 40 sources used" was mostly this number: a section cannot
+        # cite what it was never shown.
+        from research.engine import SOURCES_PER_SECTION
+        assert SOURCES_PER_SECTION >= 12
+
+        eng = make_engine([section([{"text": "x", "citations": [1]}])])
+        by_n = {n: source(n, f"d{n}.com") for n in range(1, 21)}
+        await eng._write_section("m", "H", "b", list(by_n.values()), by_n)
+        sent = eng._llm.calls[-1]["messages"][-1]["content"]
+        assert "[12]" in sent          # a source the old window excluded
+        assert "[20]" not in sent      # still bounded
 
 
 class TestLengthBudget:

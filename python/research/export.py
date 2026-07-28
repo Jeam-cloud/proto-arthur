@@ -43,6 +43,12 @@ def _prepared(paper: dict, sources: list[dict], style: str) -> tuple[list[dict],
             if p.get("kind") == "table":
                 blocks.append({"kind": "table", **p})
                 continue
+            if p.get("kind") == "notice":
+                # Carried into the file, bracketed, rather than dropped. A
+                # tidier document with a silent hole where a section should be
+                # is the worse of the two outcomes.
+                blocks.append({"kind": "notice", "text": p.get("text", "")})
+                continue
             text = citations.render_in_text(p.get("text", ""), by_n, style)
             blocks.append({"kind": "text", "text": citations.dedupe_adjacent(text)})
         out.append({"heading": sec.get("heading", ""), "blocks": blocks})
@@ -100,6 +106,11 @@ def to_docx(paper: dict, sources: list[dict], style: str, prebuilt_refs: list[di
         for block in sec["blocks"]:
             if block["kind"] == "table":
                 _docx_table(doc, block, style, Pt, Inches, WD_ALIGN_PARAGRAPH)
+                continue
+            if block["kind"] == "notice":
+                note = doc.add_paragraph(f"[{block['text']}]")
+                for run in note.runs:
+                    run.italic = True
                 continue
             p = doc.add_paragraph(block["text"])
             p.paragraph_format.first_line_indent = Inches(0.5)
@@ -211,6 +222,11 @@ def to_pdf(paper: dict, sources: list[dict], style: str, prebuilt_refs: list[dic
         for block in sec["blocks"]:
             if block["kind"] == "table":
                 flow += _pdf_table(block, base, inch)
+                continue
+            if block["kind"] == "notice":
+                notice = ParagraphStyle("Notice", parent=body,
+                                        fontName="Times-Italic", firstLineIndent=0)
+                flow.append(Paragraph(f"[{_esc(block['text'])}]", notice))
                 continue
             flow.append(Paragraph(_esc(block["text"]), body))
 

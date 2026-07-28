@@ -1403,6 +1403,15 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
   border-radius: 7px; cursor: pointer;
 }
 .paper-export-menu button:hover { background: var(--emph); }
+/* Arthur admitting it could not write a section. Sans-serif on purpose: the
+   paper body is serif, so this visibly is not part of the document. */
+.paper-notice {
+  display: flex; align-items: flex-start; gap: 9px; margin: 14px 0;
+  padding: 12px 14px; border-radius: 10px;
+  background: rgba(252, 211, 77, 0.06); border: 1px solid rgba(252, 211, 77, 0.2);
+  font-family: var(--sans); font-size: 13px; line-height: 1.6; color: var(--yellow);
+}
+.paper-notice svg { flex-shrink: 0; margin-top: 2px; }
 .paper-new-sources {
   display: flex; align-items: center; gap: 12px; padding: 10px 24px; flex-shrink: 0;
   background: rgba(110, 231, 183, 0.07); border-bottom: 1px solid var(--border);

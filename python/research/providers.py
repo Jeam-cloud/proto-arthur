@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
@@ -35,6 +36,132 @@ log = logging.getLogger(__name__)
 
 TIMEOUT = 20.0
 UA = "Arthur/1.0 (local research assistant; https://github.com/arthur-app)"
+
+# ---------------------------------------------------------------------------
+# QUERY SHAPING AND RELEVANCE
+#
+# THE BUG THIS EXISTS TO FIX. Sub-questions arrive as natural-language
+# sentences ("Differences in attention span and focus maintenance between ADHD
+# and neurotypical individuals"). Every academic index here is a KEYWORD engine,
+# not a semantic one: handed that sentence, they match the common words --
+# differences, individuals, maintenance, performance -- and then rank what
+# survives by citation count. The result was an investigation into ADHD coming
+# back with a global asthma strategy, an attachment-theory paper, and a study of
+# IT assets and firm performance, all of which are heavily cited and all of
+# which contain the word "differences" or "individuals".
+#
+# So two deterministic gates, both cheap, neither involving a model:
+#   1. Strip the sentence down to content words before it is sent (below).
+#   2. Score what comes back against those words and drop the ones that do not
+#      overlap at all (see `relevance` and the filter in `gather`).
+#
+# WHY not embeddings for the gate: the embedder is already used to pick the
+# best PASSAGE inside a document we have decided to keep, which is a fine use of
+# it. Running it over every candidate from six providers before we know whether
+# any are worth reading would add a model round trip to the slowest part of the
+# run to solve a problem that word overlap already solves. Cheap first.
+
+# Deliberately NOT a general English stopword list. These are the words that
+# make a research question read like a research question -- they carry the
+# intent and none of the subject, so they are exactly what poisons a keyword
+# match. Subject nouns are never in here.
+_FILLER = frozenset("""
+a an the and or but of in on at to for with without from by as is are was were
+be been being do does did how what why when which who whom whose that this these
+those it its their there here than then so such if between among across within
+into over under about against during before after above below up down out off
+i we you they he she them us our your his her
+compare compared comparing comparison contrast difference differences differ
+differing relationship relationships association associations link links
+effect effects impact impacts influence influences role roles
+study studies research researching investigate investigation examine examining
+analysis analyse analyze evidence findings finding results outcome outcomes
+review reviews overview summary literature paper papers article articles
+use used using usage
+individual individuals people person persons participants subjects
+factor factors aspect aspects issue issues question questions topic topics
+level levels type types kind kinds way ways
+identify identifying determine determining assess assessing evaluate evaluating
+understand understanding explore exploring
+main major key primary significant important relevant various different several
+more most less least much many any all some other others
+new recent current modern latest existing
+""".split())
+
+# Terms shorter than this are usually noise ("of", "vs") -- except acronyms,
+# which are handled separately because ADHD, PTSD and IQ are the whole point.
+_MIN_TERM = 3
+
+
+def key_terms(query: str) -> list[str]:
+    """The content words of a research question, in order, deduplicated.
+
+    Acronyms survive whatever their length: a question about ADHD, IQ or PTSD
+    is ABOUT that acronym, and dropping it for being short would discard the
+    single most discriminating token in the sentence.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in re.split(r"[^A-Za-z0-9+#-]+", query or ""):
+        if not raw:
+            continue
+        # An all-caps token of 2+ chars in the original is an acronym.
+        is_acronym = len(raw) >= 2 and raw.isupper() and raw.isalpha()
+        word = raw.lower()
+        if word in seen:
+            continue
+        if is_acronym:
+            seen.add(word)
+            out.append(word)
+            continue
+        if len(word) < _MIN_TERM or word in _FILLER or word.isdigit():
+            continue
+        seen.add(word)
+        out.append(word)
+    return out
+
+
+def keyword_query(query: str, limit: int = 8) -> str:
+    """What actually gets sent to a keyword index.
+
+    Falls back to the original string when stripping leaves nothing -- a
+    question made entirely of filler is unlikely, but returning an empty query
+    would make the provider return its most-cited works, which is precisely the
+    failure being fixed here.
+    """
+    terms = key_terms(query)[:limit]
+    return " ".join(terms) if terms else (query or "").strip()
+
+
+def relevance(hit: SearchHit, terms: list[str]) -> float:
+    """Fraction of the question's content words that appear in this hit.
+
+    Title matches count double: a paper whose TITLE contains the subject is
+    about the subject, whereas an abstract may merely mention it in passing.
+    Stems are compared by prefix so "attention" matches "attentional" without
+    dragging in a stemming dependency.
+    """
+    if not terms:
+        return 1.0
+    title = (hit.title or "").lower()
+    body = (hit.snippet or "").lower()
+    score = 0.0
+    for t in terms:
+        stem = t[:6]
+        in_title = stem in title
+        in_body = stem in body
+        if in_title:
+            score += 2.0
+        elif in_body:
+            score += 1.0
+    # Normalised against the best achievable (every term in the title).
+    return score / (2.0 * len(terms))
+
+
+# A hit matching NONE of the question's content words is not a weak result, it
+# is a wrong one. The floor is deliberately low -- it exists to catch the
+# asthma-for-ADHD case, not to second-guess a librarian.
+RELEVANCE_FLOOR = 0.08
 # OpenAlex/Crossref both use "polite pool" routing keyed off a contact address.
 # It is a courtesy header, not authentication, and it gets us the faster pool.
 POLITE = "arthur-local@example.invalid"
@@ -576,6 +703,13 @@ async def gather(
     """
     jobs = []
     wants_web = any(k in kinds for k in ("web", "news", "docs"))
+    # The web index gets the QUESTION; the academic indexes get the KEYWORDS.
+    # Tavily is a semantic search engine and reads a full sentence correctly --
+    # stripping it to bare nouns would actively hurt it. OpenAlex, Crossref,
+    # PubMed and friends are keyword engines and choke on the sentence. Same
+    # intent, two encodings, because they are two different kinds of index.
+    academic_q = keyword_query(query)
+    terms = key_terms(query)
     if wants_web:
         jobs.append(search_web(tavily_key, query, per_provider + 1, include_domains, exclude_domains))
     if "academic" in kinds:
@@ -585,12 +719,12 @@ async def gather(
         # they are ordered best-metadata-first, the surviving record tends to
         # be the one with an abstract and an open-access PDF attached.
         jobs.extend([
-            search_openalex(query, per_provider),
-            search_semanticscholar(query, per_provider),
-            search_europepmc(query, per_provider),
-            search_arxiv(query, per_provider),
-            search_crossref(query, max(2, per_provider - 1)),
-            search_pubmed(query, max(2, per_provider - 1)),
+            search_openalex(academic_q, per_provider),
+            search_semanticscholar(academic_q, per_provider),
+            search_europepmc(academic_q, per_provider),
+            search_arxiv(academic_q, per_provider),
+            search_crossref(academic_q, max(2, per_provider - 1)),
+            search_pubmed(academic_q, max(2, per_provider - 1)),
         ])
 
     if not jobs:
@@ -608,4 +742,28 @@ async def gather(
                 continue
             seen.add(key)
             merged.append(hit)
-    return merged
+
+    # Score, drop the unrelated, and order by relevance.
+    #
+    # WHY the ordering change matters as much as the filter: this list used to
+    # come out in PROVIDER order, so the first four sources of every lane were
+    # whatever OpenAlex happened to return, and everything downstream -- which
+    # passages get read, which sources a section is written from -- takes the
+    # front of this list. Ranking by relevance means the best material is the
+    # material the writer actually sees.
+    #
+    # The filter is skipped when it would empty the list. A thin lane that the
+    # gap pass can still rescue is a better outcome than a lane reported as
+    # blocked because the scorer was too strict about a wording it did not
+    # recognise.
+    scored = [(relevance(h, terms), h) for h in merged]
+    kept = [(s, h) for s, h in scored if s >= RELEVANCE_FLOOR]
+    if not kept:
+        log.info("relevance filter would empty %d hits for %r; keeping all", len(merged), query)
+        kept = scored
+    else:
+        dropped = len(scored) - len(kept)
+        if dropped:
+            log.info("dropped %d of %d off-topic hits for %r", dropped, len(scored), query)
+    kept.sort(key=lambda pair: pair[0], reverse=True)
+    return [h for _, h in kept]

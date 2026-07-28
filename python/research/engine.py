@@ -66,6 +66,20 @@ THIN_BELOW = 2
 
 MAX_PARALLEL_LANES = 2  # more just queues on Ollama and makes the UI lie
 
+# How many sources any one section is written from.
+#
+# Was 8, and that number alone accounted for most of "only 2 of 40 sources got
+# used": a section could not cite what it was never shown. Fourteen is chosen
+# against the context budget rather than plucked -- at ~600 chars of passage
+# each that is roughly 2k tokens of evidence per call, which an 8B model still
+# handles well, and it is enough breadth for a paragraph to genuinely compare
+# several studies instead of paraphrasing one.
+#
+# This only became safe once providers.gather started ranking by relevance. A
+# wider window over an unranked list would have meant MORE off-topic material
+# reaching the writer, not less.
+SOURCES_PER_SECTION = 14
+
 
 # ---------- schemas handed to the model (see OllamaClient.chat_json) ----------
 
@@ -137,6 +151,8 @@ SECTION_SCHEMA = {
             # length control that did nothing.
             "maxItems": 14,
         },
+        # Overridden per call by _section_schema() -- see there for why the
+        # minimum has to move rather than sit at 1.
         # A table, only when the section genuinely compares the same handful of
         # attributes across several things. Optional in the schema on purpose:
         # forcing one would guarantee tables full of invented rows, and a
@@ -180,6 +196,28 @@ SIMPLE_SECTION_SCHEMA = {
 # Rough parameter count below which the simplified path is used. Not a hard
 # science -- it is the point where, in practice, nested-schema compliance
 # starts failing more often than it succeeds.
+def _section_schema(min_paras: int) -> dict:
+    """SECTION_SCHEMA with the paragraph floor moved.
+
+    WHY the floor has to move at all: the schema said minItems 1, so a model
+    that produced a single paragraph was VALID, and a thematic section made of
+    one paragraph is what produced the "why is there a header after every
+    paragraph" complaint -- the paper was structurally a list of headings with
+    a sentence under each, not a paper. A literature review's body sections
+    carry several paragraphs each; saying so in the grammar is more reliable
+    than asking for it in the prompt, because the grammar is enforced and the
+    prompt is a suggestion.
+
+    Intro and conclusion keep a lower floor: they are meant to be short, and
+    demanding three paragraphs of conclusion produces padding.
+    """
+    import copy
+
+    schema = copy.deepcopy(SECTION_SCHEMA)
+    schema["properties"]["paragraphs"]["minItems"] = max(1, min_paras)
+    return schema
+
+
 SMALL_MODEL_B = 8.0
 
 TITLE_ABSTRACT_SCHEMA = {
@@ -720,6 +758,20 @@ class ResearchEngine:
             }
             sections.append(sec)
             await emit(events.RESEARCH_SECTION, sec)
+            # Re-emit every source this section just cited, so the evidence
+            # panel's USED/NOT USED badge is right AS THE PAPER IS WRITTEN.
+            #
+            # It used to update only after the whole paper finished (see the
+            # loop at the end of _finish), which meant the badges were wrong for
+            # the entire write -- and permanently wrong for any run that was
+            # stopped or interrupted, because that loop was never reached. A
+            # source that the paper visibly cites while still displaying
+            # "NOT USED" is the panel contradicting the document.
+            cited_now = {c for p in paragraphs for c in (p.get("citations") or [])}
+            for n in sorted(cited_now):
+                src = by_n.get(n)
+                if src:
+                    await emit(events.RESEARCH_SOURCE, src)
 
         # `_write_section` already swallows failures from the MODEL CALL itself
         # (see its own try/except around chat_json) and falls back to a bare
@@ -735,25 +787,27 @@ class ResearchEngine:
         # ResearchPaper.jsx). Every section is now guaranteed to produce
         # SOMETHING, so the paper this function emits is always complete.
         async def write_or_fallback(
-            *, heading: str, brief: str, sources: list[dict], words: int = 0,
+            *, heading: str, brief: str, sources: list[dict], words: int = 0, min_paras: int = 1,
         ) -> tuple[list[dict], str]:
             try:
                 return await self._write_section(
                     model=model, heading=heading, brief=brief, sources=sources, by_n=by_n,
-                    words=words,
+                    words=words, min_paras=min_paras,
                 )
             except Exception as e:
-                log.warning("section '%s' raised unexpectedly, using a bare fallback: %s", heading, e)
-                if not sources:
-                    return [], ""
-                best = sources[0]
-                by_n[best["n"]]["used"] = True
+                log.warning("section '%s' raised unexpectedly: %s", heading, e)
+                # Same reasoning as the fallback inside _write_section: no
+                # verbatim extract standing in for prose the app did not write.
                 return [{
                     "id": "p1",
-                    "text": (best.get("passage") or "")[:600].strip()
-                    or "No material could be summarised for this section.",
-                    "citations": [best["n"]],
-                    "conf": "thin",
+                    "text": (
+                        "Arthur could not write this section — the writing step failed part way "
+                        "through. Nothing gathered for it has been lost; the sources are still in "
+                        "the panel."
+                    ),
+                    "citations": [],
+                    "conf": "unverified",
+                    "kind": "notice",
                 }], ""
 
         # --- Introduction: framing only, drawn from the question and the plan.
@@ -768,31 +822,51 @@ class ResearchEngine:
                 + "\n\nState what the question is, why it is contested or worth reviewing, and "
                 "what the review will cover. Do not state findings yet."
             ),
-            sources=sources[:4],
+            sources=sources[:SOURCES_PER_SECTION],
             words=budget["intro"],
+            min_paras=2,
         )
         await add_section("Introduction", intro, "intro")
 
         # --- One section per sub-question, each seeing ONLY its own lane's
         # sources. This is the context discipline that makes small models work.
         for idx, sub in enumerate(subs):
-            lane_sources = [s for s in sources if s.get("sub") == idx] or sources[:4]
+            # A lane's OWN sources first, then the best of the rest to fill out
+            # the window. Strict lane isolation was the right call when the
+            # window was eight and models were small, but it also meant a lane
+            # that found three sources could only ever cite three, while
+            # thirty-odd relevant sources sat unused in the panel. Own-lane
+            # material still leads, so the section is still ABOUT its
+            # sub-question -- it just is not starved.
+            lane_sources = [s for s in sources if s.get("sub") == idx]
+            others = [s for s in sources if s.get("sub") != idx]
+            pool = (lane_sources + others)[:SOURCES_PER_SECTION]
             written, proposed = await write_or_fallback(
                 heading=sub,
                 brief=(
                     f"Write one section of a literature review. The overall question is: {question}\n\n"
                     f"This section covers: {sub}\n\n"
                     "Report what the sources actually establish, note where they agree, and say "
-                    "plainly where they disagree. Give the section a short noun-phrase heading "
-                    "(not a question, not the sub-question verbatim)."
+                    "plainly where they disagree. Draw on as many of the passages as genuinely "
+                    "bear on this theme, not just the first few.\n\n"
+                    "Give the section a short noun-phrase heading of at most six words -- a topic, "
+                    "not a sentence. Do not repeat the sub-question."
                 ),
-                sources=lane_sources,
+                sources=pool,
                 words=budget["theme"],
+                # Body sections of a literature review carry several paragraphs.
+                # One paragraph under a heading is what made the paper read as a
+                # list of headings rather than a document.
+                min_paras=3,
             )
             # Thematic sections DO take the model's heading when it gave one:
             # "Licensing and commercial use" reads better than the raw
-            # sub-question it came from. Falls back to the sub-question itself.
-            await add_section(proposed or _title_case(sub), written, "theme")
+            # sub-question it came from. The fallback now SHORTENS the
+            # sub-question instead of printing it whole -- a heading reading
+            # "Differences in attention span and focus maintenance between ADHD
+            # and neurotypical individuals" is a sentence, and a paper whose
+            # headings are sentences does not look like a paper.
+            await add_section(_short_heading(proposed or sub), written, "theme")
 
         # --- Discussion: the only section allowed to reason ACROSS sections,
         # and the natural home for contradictions the pipeline already found.
@@ -806,8 +880,14 @@ class ResearchEngine:
                 + ("Sources disagree on some points -- name those disagreements explicitly "
                    "rather than resolving them." if conflicts else "")
             ),
-            sources=(conflicts or sources)[:8],
+            # Conflicts LEAD the discussion's evidence but no longer replace it.
+            # `conflicts or sources` meant that when the contradiction check
+            # found two disagreeing sources, the entire discussion section was
+            # written from those two and nothing else -- the most interesting
+            # finding crowding out the synthesis it was supposed to sit inside.
+            sources=_lead_with(conflicts, sources)[:SOURCES_PER_SECTION],
             words=budget["discussion"],
+            min_paras=2,
         )
         await add_section("Discussion", discussion, "discussion")
 
@@ -842,7 +922,7 @@ class ResearchEngine:
 
     async def _write_section(
         self, model: str, heading: str, brief: str, sources: list[dict], by_n: dict[int, dict],
-        words: int = 0,
+        words: int = 0, min_paras: int = 1,
     ) -> tuple[list[dict], str]:
         """One section. Returns (paragraphs, heading the model proposed).
 
@@ -861,9 +941,25 @@ class ResearchEngine:
         confidence from a small model is close to noise; this rule is
         arithmetic over citations that actually resolve.
         """
+        # SOURCES_PER_SECTION, not 8.
+        #
+        # The old window was eight, which on a forty-source investigation meant
+        # thirty-two sources could never be cited by anything -- they were
+        # gathered, shown in the evidence panel, and then structurally excluded
+        # from the paper. That is the "only 2 of 40 sources used" complaint, and
+        # most of it was this number rather than the model's behaviour.
+        #
+        # The window can be this wide now because `gather` ranks by relevance
+        # (see providers.gather), so the first fourteen are the fourteen most
+        # on-topic rather than the first fourteen a provider happened to return.
+        # Passages are trimmed harder to pay for the extra breadth: more sources
+        # at 600 chars beats fewer at 900, because a literature review needs to
+        # see what several sources say about one thing in order to synthesise
+        # rather than summarise.
+        window = sources[:SOURCES_PER_SECTION]
         numbered = "\n\n".join(
-            f"[{s['n']}] {s['title']} ({s.get('domain') or s.get('venue')})\n{s.get('passage', '')[:900]}"
-            for s in sources[:8]
+            f"[{s['n']}] {s['title']} ({s.get('domain') or s.get('venue')})\n{s.get('passage', '')[:600]}"
+            for s in window
         )
         # A length instruction in WORDS, and only when the user asked for one.
         #
@@ -876,7 +972,10 @@ class ResearchEngine:
         length_rule = ""
         if words:
             length_rule = (
-                f" Aim for roughly {int(words * 0.85)}-{int(words * 1.15)} words in this section: "
+                # round(), not int(): 400 * 1.15 is 459.99999999999994 in binary
+                # floating point, so int() truncated the upper bound to 459 and
+                # the range silently drifted below what was asked for.
+                f" Aim for roughly {round(words * 0.85)}-{round(words * 1.15)} words in this section: "
                 f"about {max(1, round(words / 110))} full paragraphs. Do not pad to reach the "
                 "length -- if the passages do not support more, write less."
             )
@@ -889,6 +988,26 @@ class ResearchEngine:
                 "source supports, and ALSO list every number used in `citations`. Never state "
                 "anything the passages do not support. Do not describe the search process or "
                 "refer to 'the sources' as objects; write about the subject matter.\n\n"
+                # SYNTHESIS, NOT SUMMARY. This is the difference between a
+                # literature review and an annotated bibliography, and it is
+                # the thing a small model gets wrong by default: handed six
+                # passages it will write six sentences, one per passage, in the
+                # order it received them. Standard guidance for a thematic
+                # review is explicit that body sections must integrate multiple
+                # sources into one discussion and name where they agree,
+                # disagree and fall silent -- so that is stated as a rule here
+                # rather than hoped for.
+                "SYNTHESISE, DO NOT SUMMARISE. Never walk through the sources one at a time. "
+                "Each paragraph should make ONE point about the subject and bring together every "
+                "source that bears on it, so a single sentence often carries two or three "
+                "markers like [2][5]. Say explicitly where sources agree, where they disagree, "
+                "and where the evidence is silent. Never write a paragraph that is about a "
+                "single study.\n\n"
+                "NEVER COPY A PASSAGE. The passages are evidence to write FROM, not text to "
+                "reproduce. Reproducing an abstract verbatim is plagiarism even with a citation "
+                "attached. Write the claim in your own words and cite it.\n\n"
+                "Open the section by connecting it to the overall question, and close it with "
+                "what the evidence in it establishes.\n\n"
                 "Include a `table` ONLY when the passages give you the same few attributes for "
                 "three or more distinct things (models, studies, jurisdictions). A table must "
                 "compare facts that are actually in the passages -- never fill a cell by "
@@ -900,7 +1019,7 @@ class ResearchEngine:
         try:
             data = await self._llm.chat_json(
                 model, msgs,
-                SIMPLE_SECTION_SCHEMA if simple else SECTION_SCHEMA,
+                SIMPLE_SECTION_SCHEMA if simple else _section_schema(min_paras),
                 temperature=0.2,
             )
         except Exception as e:
@@ -949,15 +1068,34 @@ class ResearchEngine:
         # which is what produced the empty "Introduction" bug. Judge the
         # output that survived validation, not the output that arrived.
         if not out and sources:
+            # THE FALLBACK NO LONGER PASTES THE SOURCE'S OWN WORDS.
+            #
+            # It used to drop `passage[:600]` into the paper as body prose. That
+            # is how a review of ADHD ended up opening with the verbatim
+            # executive summary of a global asthma strategy, presented in the
+            # paper's own voice: the reader had no way to tell they were reading
+            # someone else's paragraph. Emitting an unmarked verbatim extract as
+            # if the app had written it is manufacturing plagiarism, and it also
+            # disguised a total model failure as a successful section.
+            #
+            # Saying plainly that the section could not be written is worse
+            # output and a far better answer.
             best = sources[0]
             out = [{
                 "id": "p1",
-                "text": (best.get("passage") or "")[:600].strip(),
-                "citations": [best["n"]],
-                "conf": "thin",
+                "text": (
+                    "Arthur could not write this section. The model returned nothing usable for "
+                    f"it, so no claim is made here. The evidence gathered for this part of the "
+                    f"question is still in the sources panel, starting with “{best.get('title') or 'an untitled source'}”. "
+                    "Rewriting with a larger model, or narrowing this sub-question, usually fixes it."
+                ),
+                "citations": [],
+                "conf": "unverified",
+                # Marks this as an app message rather than written prose, so the
+                # UI and the exporters can treat it differently from a claim.
+                "kind": "notice",
             }]
-            by_n[best["n"]]["used"] = True
-            log.info("section '%s' produced nothing usable; fell back to a cited extract", heading)
+            log.info("section '%s' produced nothing usable; emitted a failure notice", heading)
 
         table = _validate_table((data or {}).get("table"), by_n)
         if table:
@@ -1102,6 +1240,73 @@ def _word_budget(total: int, n_themes: int) -> dict[str, int]:
         "discussion": max(100, round(total * 0.20)),
         "theme": max(100, round(total * theme_share / themes)),
     }
+
+
+def _lead_with(first: list[dict], rest: list[dict]) -> list[dict]:
+    """`first` at the front, then everything in `rest` not already there.
+
+    Keyed on the source `n` rather than on dict equality: two source records
+    can differ by a mutable field like `used` and still be the same source, and
+    `dict in list` would then keep both.
+    """
+    seen = {s["n"] for s in first}
+    return [*first, *(s for s in rest if s["n"] not in seen)]
+
+
+def _short_heading(s: str, max_words: int = 6) -> str:
+    """A section heading, not a sentence.
+
+    Sub-questions are written as full statements of what to find out, which is
+    right for planning and wrong for a heading: "Differences in attention span
+    and focus maintenance between ADHD and neurotypical individuals" is a line
+    of prose sitting where a two-word topic belongs, and a paper whose headings
+    are sentences does not read as a paper.
+
+    The rule is deliberately blunt and deterministic -- drop the leading
+    scaffolding phrases that turn a topic into a question, cut at the first
+    joint ("between", "in relation to"), then cap the length. No model call:
+    this runs on the fallback path, which is reached precisely when the model
+    is already failing.
+    """
+    text = (s or "").strip().rstrip("?.")
+    if not text:
+        return "Untitled section"
+
+    # Leading scaffolding. "Differences in X" is about X.
+    text = re.sub(
+        r"^(?:the\s+)?(?:differences?|comparisons?|relationships?|associations?|effects?|"
+        r"impacts?|influence|role|extent|degree|ways?|evidence|research|studies|literature)\s+"
+        r"(?:in|of|on|between|among|for|to|regarding|concerning|about)\s+",
+        "", text, flags=re.I,
+    )
+    # "How does caffeine affect sleep" -> "caffeine affect sleep". The
+    # auxiliary has to go with the question word; leaving it behind produces
+    # "Does caffeine affect sleep", which is still a question.
+    # NOTE the alternation order and the \b. Python's regex alternation is
+    # first-match-wins, not longest-match-wins, so listing `do` before `does`
+    # made "How does caffeine..." match "How do" and leave behind "es
+    # caffeine...". Longest first, and a word boundary so it cannot happen
+    # again if someone adds a prefix later.
+    text = re.sub(
+        r"^(?:how|what|why|when|whether|which)\s+"
+        r"(?:does|did|do|were|was|is|are|could|should|would|can|will|have|has|had)?\b\s*",
+        "", text, flags=re.I,
+    )
+
+    # Cut at the first joint that introduces a second clause.
+    text = re.split(
+        r"\s+(?:between|among|compared\s+with|compared\s+to|in\s+relation\s+to|"
+        r"with\s+respect\s+to|versus|vs\.?)\s+",
+        text, maxsplit=1, flags=re.I,
+    )[0]
+
+    words = text.split()
+    if len(words) > max_words:
+        words = words[:max_words]
+    out = " ".join(words).strip(" ,;:-")
+    if not out:
+        out = (s or "").strip()[:60]
+    return out[:1].upper() + out[1:]
 
 
 def _title_case(s: str) -> str:

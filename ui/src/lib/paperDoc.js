@@ -84,6 +84,14 @@ export function paperToHtml({ paper, sections, evidence, style }, { forWord = fa
         parts.push(tableHtml(p));
         continue;
       }
+      // A notice carries into the exported file, bracketed and italic. It
+      // would be easy to drop it instead and hand over a tidier document, but
+      // that document would have a silent hole where a section should be --
+      // the reader deserves to know the gap is there.
+      if (p.kind === "notice") {
+        parts.push(`<p class="cap">[${esc(p.text)}]</p>`);
+        continue;
+      }
       parts.push(`<p>${esc(dedupeAdjacent(renderCitations(p.text, byN, style)))}</p>`);
     }
   }
@@ -163,6 +171,8 @@ export function paperToText({ paper, sections, evidence, style }) {
           out.push([...row.slice(0, cols.length), n ? `[${n}]` : ""].join("\t"));
         });
         if (p.caption) out.push(p.caption);
+      } else if (p.kind === "notice") {
+        out.push(`[${p.text}]`);
       } else {
         out.push(dedupeAdjacent(renderCitations(p.text, byN, style)));
       }

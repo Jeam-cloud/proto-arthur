@@ -18,7 +18,8 @@
 // the citations, so there is nothing to regenerate -- see lib/citeFormat.js.
 import React, { useEffect, useRef, useState } from "react";
 import {
-  ClipboardCheck, Copy, Download, FileText, Loader2, PanelRight, Plus, Search, Trash2,
+  AlertCircle, ClipboardCheck, Copy, Download, FileText, Loader2, PanelRight,
+  Plus, Search, Trash2,
 } from "lucide-react";
 import { useResearch } from "../../stores/research";
 import { STYLES, HEADINGS, inTextLabel, isNumericStyle, referenceLine, orderReferences }
@@ -253,6 +254,21 @@ export default function ResearchPaper() {
                   // A table is a paragraph-shaped block with structured data
                   // instead of prose. It still lights up from the sidebar and
                   // still cites: every row carries the source behind it.
+                  // A notice is Arthur telling you it could not write this
+                  // section. It is NOT prose and must never look like prose:
+                  // no confidence rail, no citation pills, no double-click to
+                  // edit. Styling it like a paragraph is how the old
+                  // verbatim-abstract fallback fooled people into reading a
+                  // source's own words as the paper's argument.
+                  if (p.kind === "notice") {
+                    return (
+                      <div key={p.id} className="paper-notice">
+                        <AlertCircle size={14} strokeWidth={1.9} />
+                        <span>{p.text}</span>
+                      </div>
+                    );
+                  }
+
                   if (p.kind === "table") {
                     return (
                       <div
