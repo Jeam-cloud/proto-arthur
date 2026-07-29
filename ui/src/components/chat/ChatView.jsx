@@ -55,7 +55,12 @@ export default function ChatView({ mode, setMode }) {
           mode never has to answer. */}
       {mode === "code" && <WorkspaceBar conversationId={activeId} />}
 
-      <div className={mode === "code" ? "chat-with-files" : undefined}>
+      {/* ALWAYS classed, never a bare div. `.message-list` is `flex: 1`, which
+          only works while it is a flex child of the full-height chat column --
+          wrapping it in an unstyled div collapsed that chain, so the list sized
+          to its content and the composer floated up under the last message
+          instead of sitting at the bottom of the window. */}
+      <div className={`chat-body${mode === "code" ? " with-files" : ""}`}>
       {showSuggestions ? (
         <EmptyChat conversationId={activeId} mode={mode} />
       ) : (

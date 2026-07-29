@@ -18,7 +18,7 @@
 // noise; stating the consequence once, next to the button that spends it, is
 // the thing that actually informs the decision.
 import React, { useMemo, useState } from "react";
-import { ArrowRight, Check, ChevronRight, CornerUpLeft, Loader2, Trash2 } from "lucide-react";
+import { ArrowRight, Check, ChevronRight, Loader2, Trash2 } from "lucide-react";
 import {
   useResearch, recentRows, DEPTHS, SOURCE_KINDS, LENGTHS, MAX_WORDS,
 } from "../../stores/research";
@@ -35,16 +35,6 @@ export default function ResearchHome() {
   // Read through the store so the footer and the request body can never
   // disagree about what the run will do -- see targetWords()/summary().
   const summary = useResearch((s) => s.summary());
-  // Is there an investigation loaded behind this screen to go back to?
-  // Selected as primitives, never as a derived object: a selector that builds
-  // a fresh object every call breaks useSyncExternalStore's stability
-  // requirement and loops until React throws.
-  const resume = useResearch((s) => s.resume);
-  const hasOpen = useResearch((s) => s.sections.length > 0 || s.lanes.length > 0);
-  const openWriting = useResearch((s) => s.writing);
-  const openTitle = useResearch(
-    (s) => (s.paper && s.paper.title) || s.question.slice(0, 60) || "your investigation",
-  );
   // Which recent investigation (if any) is pending a delete confirmation.
   // Deleting can't happen on a single click -- a recents entry may be the
   // only copy of a finished paper (recents live in localStorage, not the
@@ -58,21 +48,10 @@ export default function ResearchHome() {
   return (
     <div className="research-scroll">
       <div className="research-col wide">
-        {/* The other half of the back button. Stepping out of a run has to be
-            reversible or it is just a different way of losing your work, and a
-            run that is still streaming in the background needs somewhere
-            visible to click back into. */}
-        {hasOpen && (
-          <button className="research-resume" onClick={resume}>
-            <CornerUpLeft size={14} strokeWidth={1.9} />
-            <span>
-              Back to <strong>{openTitle}</strong>
-              {openWriting ? " — still writing" : ""}
-            </span>
-            <ChevronRight size={15} strokeWidth={1.8} />
-          </button>
-        )}
-
+        {/* No "Back to …" banner here. The header's back arrow already returns
+            you to the open investigation, and a second, larger control saying
+            the same thing pushed the actual composer down the page. Recents
+            below covers finding it again after a real navigation. */}
         <h1 className="research-title">New investigation</h1>
         <p className="research-lede">
           Ask a question. Arthur breaks it into parts, reads sources on your machine, and writes

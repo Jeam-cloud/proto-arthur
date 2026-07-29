@@ -163,6 +163,22 @@ export default function ModelHub({ onClose }) {
           <span className="hub-header-icon"><Box size={15} strokeWidth={1.8} /></span>
           <h2>Model hub</h2>
           {data && <span className="hub-budget">{data.budget_gb}GB budget</span>}
+          {/* The INSTALLED badges go stale.
+              `/models/catalog` computes them server-side against Ollama's list
+              at request time, but the hub only ever loaded on mount and on a
+              search keystroke -- so a model installed or removed from OUTSIDE
+              Arthur (`ollama pull`/`rm` in a terminal, which is common) kept
+              whatever badge it had when the panel opened. Refresh re-asks both
+              Ollama and the catalog, which is also what makes the count on the
+              Installed tab trustworthy. */}
+          <button
+            className="hub-close"
+            title="Refresh installed models"
+            disabled={refreshing || !!pulling}
+            onClick={refresh}
+          >
+            <RefreshCw size={15} strokeWidth={1.9} className={refreshing ? "spin" : ""} />
+          </button>
           <button className="hub-close" title="Close (Esc)" onClick={onClose}>
             <X size={16} strokeWidth={1.9} />
           </button>
