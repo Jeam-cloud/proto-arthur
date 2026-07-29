@@ -17,6 +17,7 @@ from agent.registry import ToolRegistry
 from byok.router import BYOKRouter
 from core.chat_service import ChatService
 from core.config import Settings
+from core.attachments import AttachmentStore
 from core.conversations import ConversationStore
 from core.db import Database
 from core.ollama_client import OllamaClient
@@ -58,6 +59,7 @@ class AppState:
     memory: MemoryService
     personas: PersonaStore
     conversations: ConversationStore
+    attachments: AttachmentStore
     registry: ToolRegistry
     agent: AgentLoop
     chat: ChatService
@@ -92,6 +94,7 @@ async def build_state(settings: Settings) -> AppState:
     personas = PersonaStore(db)
     await personas.ensure_default()
     conversations = ConversationStore(db)
+    attachment_store = AttachmentStore(db, settings.data_dir)
 
     graph = GraphClient(settings.ms_client_id, settings.data_dir)
     # Email backend picked PER CALL: SMTP/IMAP (app password, zero cloud
@@ -116,7 +119,7 @@ async def build_state(settings: Settings) -> AppState:
                       max_iterations=settings.max_agent_iterations)
     byok = BYOKRouter(vault)
     chat = ChatService(settings, llm, conversations, personas, memory, gateway, agent,
-                       byok_router=byok)
+                       byok_router=byok, attachments=attachment_store)
     # Research mode does NOT go through the agent loop: an investigation is a
     # fixed Python state machine, not a model deciding what to do next. It
     # reuses the same vault/sandbox/embedder/gateway so the trust boundaries are
@@ -127,7 +130,8 @@ async def build_state(settings: Settings) -> AppState:
     return AppState(
         settings=settings, db=db, llm=llm, vault=vault, audit=audit, gateway=gateway,
         approvals=approvals, sandbox=sandbox, memory=memory, personas=personas,
-        conversations=conversations, registry=registry, agent=agent, chat=chat,
+        conversations=conversations, attachments=attachment_store,
+        registry=registry, agent=agent, chat=chat,
         graph=graph, email_router=email_router, transcriber=Transcriber(), byok=byok,
         research=research,
     )

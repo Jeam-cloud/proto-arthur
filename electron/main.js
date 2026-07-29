@@ -228,6 +228,17 @@ function registerIpc() {
   handle("window:showMain", () => showMain());
   handle("window:hideQuick", () => quickWindow && quickWindow.hide());
 
+  handle("dialog:pickFiles", async () => {
+    // multiSelections only — NOT openDirectory. A folder is attached by
+    // dragging it in; offering it here would mean one dialog that sometimes
+    // returns files and sometimes a directory, which the caller then has to
+    // disambiguate for no benefit.
+    const res = await dialog.showOpenDialog(mainWindow, {
+      properties: ["openFile", "multiSelections"],
+    });
+    return res.canceled ? [] : res.filePaths;
+  });
+
   handle("dialog:pickFolder", async () => {
     const res = await dialog.showOpenDialog(mainWindow, { properties: ["openDirectory"] });
     return res.canceled ? null : res.filePaths[0];

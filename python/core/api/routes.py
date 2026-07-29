@@ -24,13 +24,14 @@ from typing import Any
 from fastapi import APIRouter, Depends, Request, Response, UploadFile
 from sse_starlette.sse import EventSourceResponse
 
+from core import attachments as attachments_mod
 from core import events
 from core.api.auth import require_auth
 from core.api.schemas import (
     ApprovalDecision, ArchiveRequest, ChatRequest, MemoryCreate, MemoryUpdate, PersonaBody,
     PullRequest, RenameRequest, ResearchExportRequest, ResearchFindSourcesRequest,
     ResearchPlanRequest, ResearchRunRequest, ResearchSynthesizeRequest, SecretBody, SettingsPatch,
-    WorkspaceRequest,
+    AttachPathsRequest, WorkspaceRequest,
 )
 from research import citations as research_citations
 from research import engine as research_engine
@@ -223,6 +224,20 @@ async def chat_stream(request: Request, body: ChatRequest) -> EventSourceRespons
     async def emit(event: str, data: dict[str, Any]) -> None:
         await queue.put((event, data))
 
+    # Staged attachments are read BEFORE the stream starts and claimed for the
+    # message immediately, so a file dropped in the composer becomes part of the
+    # transcript exactly once. Full rows here (not the wire shape) because the
+    # prompt builder needs `extracted_text` and `stored_path`, which to_dict()
+    # deliberately withholds from the UI.
+    staged = await s.db.fetch_all(
+        "SELECT * FROM attachments WHERE conversation_id=? AND message_id IS NULL ORDER BY created_at",
+        (body.conversation_id,),
+    )
+    # Whether the model can see. Unknown counts as CAN -- refusing to send an
+    # image because Ollama did not answer would be worse than sending it.
+    caps = await s.llm.capabilities(model)
+    can_see = (not caps) or ("vision" in caps)
+
     async def run() -> None:
         try:
             await s.chat.stream_reply(
@@ -232,6 +247,8 @@ async def chat_stream(request: Request, body: ChatRequest) -> EventSourceRespons
                 model=model,
                 emit=emit,
                 provider=body.provider,
+                attachments=staged,
+                vision=can_see,
                 workspace_root=await _conversation_workspace(s, body.conversation_id),
                 scanner_mode=await s.db.get_setting("scanner_mode", "standard"),
             )
@@ -610,6 +627,97 @@ async def set_conversation_workspace(request: Request, cid: str, body: Workspace
     if body.root:
         await s.db.set_setting("workspace_root", body.root)
     return {"root": body.root, "bound": bool(body.root)}
+
+
+# ---------- attachments ----------
+
+@router.get("/models/{model:path}/capabilities")
+async def model_capabilities(request: Request, model: str) -> dict:
+    """What the model can do, so the UI can warn BEFORE a message is sent.
+
+    `known` distinguishes "Ollama says this model cannot see" from "Ollama did
+    not answer". The UI must not warn on the second: a warning about a
+    limitation that may not exist teaches people to dismiss warnings, which
+    costs more than the one it was trying to prevent.
+
+    `{model:path}` because tags contain slashes for namespaced models
+    (`hf.co/user/model:q4`), which a plain path parameter would truncate.
+    """
+    caps = await state(request).llm.capabilities(model)
+    return {
+        "model": model,
+        "capabilities": sorted(caps),
+        "known": bool(caps),
+        "vision": "vision" in caps,
+        "tools": "tools" in caps,
+    }
+
+
+@router.post("/conversations/{cid}/attachments")
+async def upload_attachments(
+    request: Request, cid: str, files: list[UploadFile] | None = None,
+) -> dict:
+    """Files dropped into the composer, uploaded as bytes.
+
+    Partial success is a real outcome and is reported as one: a drop of six
+    files where the fourth is a 4GB video should attach five and say why the
+    sixth did not, rather than failing the whole gesture.
+    """
+    s = state(request)
+    await s.conversations.get(cid)  # 404 for unknown ids
+    added, errors = [], []
+    for upload in files or []:
+        try:
+            added.append(await s.attachments.add_bytes(cid, upload.filename or "file", await upload.read()))
+        except Exception as e:
+            errors.append({"filename": upload.filename, "error": str(e)})
+    return {"attachments": added, "errors": errors}
+
+
+@router.post("/conversations/{cid}/attachments/paths")
+async def attach_paths(request: Request, cid: str, body: AttachPathsRequest) -> dict:
+    """Attach by PATH -- the drag-and-drop route.
+
+    A file dragged from the file manager arrives as a location, not bytes, so
+    reading it here avoids pushing the whole file through the renderer and back
+    over HTTP. Dropping a FOLDER expands it, bounded, skipping build output.
+    """
+    s = state(request)
+    await s.conversations.get(cid)
+    added, errors = [], []
+    truncated_folders: list[str] = []
+
+    for raw in body.paths:
+        p = Path(raw)
+        try:
+            if p.is_dir():
+                files, hit_cap = attachments_mod.expand_folder(p)
+                if hit_cap:
+                    truncated_folders.append(p.name)
+                if not files:
+                    errors.append({"filename": p.name, "error": "No readable files in this folder."})
+                for f in files:
+                    try:
+                        added.append(await s.attachments.add_path(cid, str(f)))
+                    except Exception as e:
+                        errors.append({"filename": f.name, "error": str(e)})
+            else:
+                added.append(await s.attachments.add_path(cid, str(p)))
+        except Exception as e:
+            errors.append({"filename": p.name or raw, "error": str(e)})
+
+    return {"attachments": added, "errors": errors, "truncated_folders": truncated_folders}
+
+
+@router.get("/conversations/{cid}/attachments")
+async def list_staged_attachments(request: Request, cid: str) -> list[dict]:
+    return await state(request).attachments.staged(cid)
+
+
+@router.delete("/attachments/{attachment_id}")
+async def delete_attachment(request: Request, attachment_id: str) -> dict:
+    await state(request).attachments.delete(attachment_id)
+    return {"ok": True}
 
 
 # ---------- workspace ----------

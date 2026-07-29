@@ -11,6 +11,7 @@ import pytest
 
 from agent.loop import AgentLoop
 from agent.registry import ToolRegistry
+from core.attachments import AttachmentStore
 from core.chat_service import ChatService
 from core.config import Settings
 from core.conversations import ConversationStore
@@ -90,13 +91,15 @@ async def app_state(settings, db, fake_llm, embedder, vault) -> AppState:
     personas = PersonaStore(db)
     await personas.ensure_default()
     conversations = ConversationStore(db)
+    attachment_store = AttachmentStore(db, settings.data_dir)
 
     registry = ToolRegistry()
     for tool in (EchoTool(), ConfirmEchoTool(), ExternalTool(), CrashTool()):
         registry.register(tool)
 
     agent = AgentLoop(fake_llm, registry, gateway, approvals, max_iterations=4)
-    chat = ChatService(settings, fake_llm, conversations, personas, memory, gateway, agent)
+    chat = ChatService(settings, fake_llm, conversations, personas, memory, gateway, agent,
+                       attachments=attachment_store)
 
     email_router = EmailRouter(SmtpImapBackend(db, vault), GraphBackend(_NoGraph()))
     sandbox = _NoSandbox()
@@ -104,7 +107,8 @@ async def app_state(settings, db, fake_llm, embedder, vault) -> AppState:
     return AppState(
         settings=settings, db=db, llm=fake_llm, vault=vault, audit=audit, gateway=gateway,
         approvals=approvals, sandbox=sandbox, memory=memory, personas=personas,
-        conversations=conversations, registry=registry, agent=agent, chat=chat,
+        conversations=conversations, attachments=attachment_store,
+        registry=registry, agent=agent, chat=chat,
         graph=_NoGraph(), email_router=email_router, transcriber=None, byok=None,
         research=research,
     )

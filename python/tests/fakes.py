@@ -27,6 +27,10 @@ class FakeLLM:
     def __init__(self, turns: list[dict[str, Any]] | None = None):
         self.turns = list(turns or [])
         self.calls: list[dict] = []  # every request, for assertions
+        # What this fake claims it can do. Default is EMPTY, matching a real
+        # Ollama that could not answer -- and callers must treat unknown as
+        # "capable", so the default exercises the permissive path.
+        self.caps: set[str] = set()
 
     async def chat_stream(self, model, messages, tools=None) -> AsyncIterator[dict]:
         self.calls.append({"model": model, "messages": list(messages), "tools": tools})
@@ -39,6 +43,12 @@ class FakeLLM:
 
     async def is_up(self) -> bool:
         return True
+
+    async def capabilities(self, model: str) -> set[str]:
+        return set(self.caps)
+
+    async def parameter_size_b(self, model: str) -> float | None:
+        return None
 
     async def list_models(self) -> list[dict]:
         return [{"name": "fake-model", "size_bytes": 1, "family": "fake", "parameter_size": "1B"}]

@@ -97,6 +97,40 @@ MIGRATIONS: list[str] = [
     """
     ALTER TABLE conversations ADD COLUMN workspace_root TEXT;
     """,
+    # 3 — file attachments.
+    #
+    # A separate table rather than columns on `messages`: one message can carry
+    # several files, and an attachment exists BEFORE the message does (you drop
+    # files in, then type). `message_id` is therefore nullable -- NULL means
+    # "staged in the composer, not sent yet".
+    #
+    # `extracted_text` is stored rather than re-derived on every send. Parsing a
+    # 300-page PDF once at attach time is the difference between a chat that
+    # feels instant and one that stalls for seconds per message, and it also
+    # means the conversation stays readable years later even if the original
+    # file is deleted or moved.
+    #
+    # ON DELETE SET NULL for messages, CASCADE for conversations: deleting a
+    # message should not silently destroy a file the user attached, but deleting
+    # a whole conversation should take its attachments with it.
+    """
+    CREATE TABLE attachments (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        message_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+        filename TEXT NOT NULL,
+        stored_path TEXT NOT NULL,
+        source_path TEXT,
+        mime TEXT NOT NULL DEFAULT '',
+        kind TEXT NOT NULL DEFAULT 'other',
+        size_bytes INTEGER NOT NULL DEFAULT 0,
+        extracted_text TEXT,
+        extract_error TEXT,
+        created_at REAL NOT NULL
+    );
+    CREATE INDEX idx_attach_conv ON attachments(conversation_id, created_at);
+    CREATE INDEX idx_attach_msg ON attachments(message_id);
+    """,
 ]
 
 

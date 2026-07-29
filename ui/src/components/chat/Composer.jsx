@@ -7,11 +7,14 @@
 // need to show it) -- this component just reads the current mode and shows
 // it as a badge, same as the mockup's composer bar.
 import React, { useEffect, useRef, useState } from "react";
-import { Mic, Send, Square, Loader2 } from "lucide-react";
+import { Mic, Paperclip, Send, Square, Loader2 } from "lucide-react";
 import { useBackend } from "../../stores/backend";
 import { useChat } from "../../stores/chat";
 import { useToasts } from "../../stores/toasts";
 import { useWorkspace } from "../../stores/workspace";
+import { useAttachments } from "../../stores/attachments";
+import { useSettings } from "../../stores/settings";
+import AttachmentTray from "./AttachmentTray";
 import ModelMenu from "./ModelMenu";
 import ModeBadge from "./ModeBadge";
 import { useRecorder } from "./useRecorder";
@@ -34,6 +37,29 @@ export default function Composer({ conversationId, mode, setMode }) {
   const { send, stop } = useChat();
   const streaming = useChat((s) => s.slice(conversationId).streaming);
   const pushToast = useToasts((s) => s.push);
+
+  const attachments = useAttachments((s) => s.items);
+  const uploading = useAttachments((s) => s.uploading);
+  const addFiles = useAttachments((s) => s.addFiles);
+  const addFromPicker = useAttachments((s) => s.addFromPicker);
+  const clearAttachments = useAttachments((s) => s.clear);
+  const loadAttachments = useAttachments((s) => s.load);
+  const loadCaps = useAttachments((s) => s.loadCaps);
+
+  // Staged files belong to a conversation, so switching chats must reload the
+  // tray rather than carrying the previous chat's attachments across.
+  useEffect(() => { loadAttachments(conversationId); }, [conversationId, loadAttachments]);
+
+  // Which model is really in play, resolved the same way the backend does:
+  // per-conversation override first, then the mode assignment, then the global
+  // default. Asking about the wrong model would warn about the wrong thing.
+  const override = useChat((s) => s.modelOverride[conversationId] || "");
+  const settingsValues = useSettings((s) => s.values);
+  const effectiveModel = override
+    || (settingsValues?.mode_models || {})[mode]
+    || settingsValues?.default_model
+    || "";
+  useEffect(() => { loadCaps(effectiveModel); }, [effectiveModel, loadCaps]);
 
   // A file clicked in the Code mode tree lands in the draft here. It appends
   // rather than replaces, and focuses, because the path is the part that was
@@ -96,7 +122,17 @@ export default function Composer({ conversationId, mode, setMode }) {
   }, [text]);
 
   const submit = () => {
-    if (dispatch(text)) setText("");
+    // A message carrying only attachments is a real message -- "here is the
+    // contract" with a PDF and no words is a complete request. So the send
+    // gate is text OR attachments, not text alone.
+    if (!text.trim() && !attachments.length) return;
+    if (dispatch(text)) {
+      setText("");
+      // The backend has bound these to the message that was just sent, so the
+      // composer tray must empty or the next message would appear to carry
+      // them again.
+      clearAttachments();
+    }
   };
 
   const onKeyDown = (e) => {
@@ -106,10 +142,63 @@ export default function Composer({ conversationId, mode, setMode }) {
     }
   };
 
+  // Drag state is counted, not boolean. dragenter/dragleave fire for every
+  // child element the pointer crosses, so a single flag flickers off the moment
+  // the cursor moves from the composer onto the textarea inside it.
+  const dragDepth = useRef(0);
+  const [dragging, setDragging] = useState(false);
+
+  const onDragEnter = (e) => {
+    if (![...(e.dataTransfer?.types || [])].includes("Files")) return;
+    dragDepth.current += 1;
+    setDragging(true);
+  };
+  const onDragLeave = () => {
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragging(false);
+  };
+  const onDrop = (e) => {
+    e.preventDefault();
+    dragDepth.current = 0;
+    setDragging(false);
+    const files = e.dataTransfer?.files;
+    if (files?.length) addFiles(files);
+  };
+  // A paste carrying files (a screenshot from the clipboard) attaches them; a
+  // paste carrying text must fall through to the textarea untouched.
+  const onPaste = (e) => {
+    const files = [...(e.clipboardData?.files || [])];
+    if (files.length) {
+      e.preventDefault();
+      addFiles(files);
+    }
+  };
+
   return (
-    <div className="composer-wrap">
+    <div
+      className={`composer-wrap${dragging ? " dropping" : ""}`}
+      onDragEnter={onDragEnter}
+      onDragOver={(e) => e.preventDefault()}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      <AttachmentTray />
+      {dragging && (
+        <div className="composer-dropzone">
+          <Paperclip size={15} strokeWidth={1.9} />
+          <span>Drop files or folders to attach them</span>
+        </div>
+      )}
       <div className="composer">
         <ModeBadge mode={mode} />
+        <button
+          className="icon-btn"
+          title="Attach files"
+          disabled={uploading}
+          onClick={addFromPicker}
+        >
+          {uploading ? <Loader2 size={16} className="spin" /> : <Paperclip size={16} />}
+        </button>
         <textarea
           ref={textareaRef}
           rows={1}
@@ -121,6 +210,7 @@ export default function Composer({ conversationId, mode, setMode }) {
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={onKeyDown}
+          onPaste={onPaste}
         />
         <ModelMenu conversationId={conversationId} mode={mode} />
         <button
@@ -137,7 +227,12 @@ export default function Composer({ conversationId, mode, setMode }) {
             <Square size={14} />
           </button>
         ) : (
-          <button className="icon-btn primary" disabled={!text.trim()} title="Send" onClick={submit}>
+          <button
+            className="icon-btn primary"
+            disabled={!text.trim() && !attachments.length}
+            title="Send"
+            onClick={submit}
+          >
             <Send size={15} />
           </button>
         )}

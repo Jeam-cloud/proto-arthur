@@ -60,6 +60,7 @@ class OllamaClient:
         self._keep_alive = keep_alive
         self._num_ctx = max(2048, int(num_ctx or DEFAULT_NUM_CTX))
         self._size_cache: dict[str, float | None] = {}
+        self._caps_cache: dict[str, set[str]] = {}
 
     def _options(self, **extra: Any) -> dict[str, Any]:
         """Options every generation call shares. num_ctx belongs here rather
@@ -88,6 +89,32 @@ class OllamaClient:
             }
             for m in res.models
         ]
+
+    async def capabilities(self, model: str) -> set[str]:
+        """What this model can actually do, per Ollama: e.g. {"completion",
+        "tools", "vision", "thinking"}.
+
+        WHY ask instead of infer from the name: the app needs to warn a user
+        that the model they picked cannot see an image they just attached, and
+        getting that wrong is worse than not warning. Guessing from names is
+        exactly how `gemma4:latest` got misclassified as a large model -- the
+        name is a marketing string, the capability list is a fact.
+
+        Returns an empty set when Ollama cannot say. Callers must treat that as
+        "unknown", NOT as "cannot" -- warning about a limitation that may not
+        exist trains people to ignore warnings.
+        """
+        if model in self._caps_cache:
+            return self._caps_cache[model]
+        caps: set[str] = set()
+        try:
+            res = await self._client.show(model)
+            raw = getattr(res, "capabilities", None) or []
+            caps = {str(c).lower() for c in raw}
+        except Exception as e:
+            log.info("could not read capabilities for %s: %s", model, e)
+        self._caps_cache[model] = caps
+        return caps
 
     async def parameter_size_b(self, model: str) -> float | None:
         """How many billion parameters this model actually has, per Ollama.

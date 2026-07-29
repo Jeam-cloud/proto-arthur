@@ -102,6 +102,16 @@ class ArchiveRequest(BaseModel):
     archived: bool = True
 
 
+class AttachPathsRequest(BaseModel):
+    """Absolute paths of dropped files or folders.
+
+    Capped at 20 ENTRIES, not 20 files: one of those entries can be a folder
+    that expands to many (bounded separately by MAX_FOLDER_FILES). The cap here
+    is only to stop a pathological drop from arriving as one enormous request.
+    """
+    paths: list[str] = Field(min_length=1, max_length=20)
+
+
 class WorkspaceRequest(BaseModel):
     """The folder a conversation may read and write.
 
