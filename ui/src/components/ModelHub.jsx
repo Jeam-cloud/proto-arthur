@@ -22,7 +22,9 @@
 // reasoning is why "Score" is described in-page as a fit calculation rather
 // than a benchmark.
 import React, { useEffect, useState } from "react";
-import { Download, Loader2, Search, X, Play, Trash2, Box, HardDrive } from "lucide-react";
+import {
+  Download, Loader2, RefreshCw, Search, X, Play, Trash2, Box, HardDrive,
+} from "lucide-react";
 import { api } from "../api/client";
 import { pullModel, deleteModel } from "../api/models";
 import { useBackend } from "../stores/backend";
@@ -87,6 +89,19 @@ export default function ModelHub({ onClose }) {
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, [onClose, pulling]);
+
+  // Re-reads what is actually installed, then re-scores the catalog against it.
+  // Separate from `rescan`, which re-detects HARDWARE -- a different and much
+  // slower question that a stale badge does not need answered.
+  const [refreshing, setRefreshing] = useState(false);
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([refreshStatus(), load()]);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const rescan = async () => {
     setScanning(true);

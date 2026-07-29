@@ -638,6 +638,12 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
 .model-picker {
   border: 1px solid var(--border); border-radius: 9px; padding: 7px 30px 7px 11px;
   font-size: 12.5px; outline: none; max-width: 220px;
+  /* Both of these fix the same bug. In a flex row next to something with
+     `flex: 1` (the hub's search field), a select with default `flex-shrink: 1`
+     gets squeezed below its own content width -- the label then slides under
+     the native dropdown arrow, which is why "Embedding" appeared to collide
+     with its own chevron. The min-width holds the longest option. */
+  flex-shrink: 0; min-width: 132px;
 }
 .model-picker:hover, .model-picker:focus { border-color: rgba(255, 255, 255, 0.25); color: var(--text); }
 .field select { padding-right: 34px; }
@@ -928,6 +934,7 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
   font-size: 12.5px; color: var(--tmut);
 }
 .ws-bar code { font-family: var(--mono); font-size: 12px; color: var(--text); }
+.ws-bar > svg, .ws-bar > .btn { flex-shrink: 0; }
 .ws-bar-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ws-bar-note {
   margin-left: 8px; font-size: 11px; padding: 2px 7px; border-radius: 6px;
@@ -1366,9 +1373,18 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
   display: flex; align-items: center; gap: 9px; padding: 12px 24px;
   border-bottom: 1px solid var(--border); flex-shrink: 0;
 }
+/* This row grew from three controls to six (Stop, Find more, Copy, Export,
+   Sources, plus the style picker). Flex children shrink by default, so at a
+   narrow window they were all squashing together and their labels clipping.
+   Pin every control to its natural width and let the STATUS TEXT be the one
+   thing that gives -- it is the only item here that reads fine truncated. */
+.research-doc-bar > .btn,
+.research-doc-bar > .paper-export,
+.research-doc-bar > .paper-style-picker { flex-shrink: 0; }
 .research-doc-status {
-  font-size: 11.5px; color: var(--tmut); flex: 1;
+  font-size: 11.5px; color: var(--tmut); flex: 1; min-width: 0;
   display: flex; align-items: center; gap: 6px;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
 }
 /* ---- the paper ----
    Serif body copy at a wider measure than the rest of the app. This is the one
@@ -1540,7 +1556,11 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
 .paper-struggling-body { flex: 1; min-width: 0; }
 .paper-struggling-title { font-size: 13px; font-weight: 600; color: var(--text); }
 .paper-struggling-why { font-size: 12.5px; color: var(--tmut); line-height: 1.55; margin-top: 3px; }
-.paper-struggling .model-menu { flex-shrink: 0; }
+/* Trailing controls in a one-line banner never shrink; the prose beside them
+   does. Same rule as .research-doc-bar, same reason. */
+.paper-struggling .model-menu,
+.paper-struggling > .btn,
+.paper-new-sources > .btn { flex-shrink: 0; }
 .paper-struggling .model-chip {
   border: 1px solid var(--border); border-radius: 9px; background: var(--muted);
 }
