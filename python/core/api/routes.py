@@ -26,6 +26,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from core import attachments as attachments_mod
 from core import events
+from core import model_kind
 from core.api.auth import require_auth
 from core.api.schemas import (
     ApprovalDecision, ArchiveRequest, ChatRequest, MemoryCreate, MemoryUpdate, PersonaBody,
@@ -65,6 +66,12 @@ async def system_status(request: Request) -> dict:
     if ollama_up:
         try:
             models = await s.llm.list_models()
+            # Every consumer of this list -- the model menu, the hub's Installed
+            # tab, the sidebar footer -- needs to distinguish a model running
+            # HERE from one running on Ollama's servers. Tagging once, at the
+            # source, means no caller has to remember to check the name.
+            for m in models:
+                m["cloud"] = model_kind.is_cloud_model(m.get("name", ""))
         except ArthurError:
             ollama_up = False
     return {
@@ -79,6 +86,11 @@ async def system_status(request: Request) -> dict:
         "default_model": await s.db.get_setting("default_model", ""),
         "onboarded": bool(await s.db.get_setting("onboarded", False)),
         "workspace_root": await s.db.get_setting("workspace_root", None),
+        # Optional parsers that are absent. Reported HERE, once, rather than
+        # discovered one attachment at a time: a user who drops six PDFs into a
+        # build without pypdf otherwise gets six identical errors that look like
+        # a problem with their files.
+        "missing_parsers": attachments_mod.missing_parsers(),
     }
 
 

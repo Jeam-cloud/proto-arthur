@@ -11,7 +11,8 @@
 // Recommendations come from /models/recommendations (hardware-ranked, cached
 // here for 5 min — hardware doesn't change mid-session, installs refresh it).
 import React, { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, Cpu, Download, Loader2 } from "lucide-react";
+import { Check, ChevronDown, Cloud, Cpu, Download, Loader2 } from "lucide-react";
+import { isCloudModel } from "../../lib/modelKind";
 import { api } from "../../api/client";
 import { pullModel } from "../../api/models";
 import { useBackend } from "../../stores/backend";
@@ -74,6 +75,9 @@ export default function ModelMenu({ conversationId, mode, value, onChange, place
   const otherInstalled = installed.filter((m) => !recNames.has(m.name.split("-")[0]));
   const autoLabel = (settingsValues?.mode_models || {})[mode]
     || settingsValues?.default_model || "auto";
+  // The model that will ACTUALLY be used, which is what the cloud badge must
+  // reflect -- an empty override means the auto-resolved one is in play.
+  const effective = override || autoLabel;
 
   const choose = (model) => {
     setOverride(conversationId, model);
@@ -98,7 +102,18 @@ export default function ModelMenu({ conversationId, mode, value, onChange, place
 
   return (
     <div className="model-menu" ref={panelRef}>
-      <button className="model-chip" title="Model for this conversation" onClick={() => setOpen(!open)}>
+      {/* The chip is where a user checks what they are talking to, so it is
+          where a cloud model has to announce itself. Without this, a `:cloud`
+          tag is indistinguishable from a local one at a glance -- same chip,
+          same styling -- while every prompt goes to a third party. */}
+      <button
+        className={`model-chip${isCloudModel(effective) ? " cloud" : ""}`}
+        title={isCloudModel(effective)
+          ? `${effective} runs on Ollama's servers, not on this computer`
+          : "Model for this conversation"}
+        onClick={() => setOpen(!open)}
+      >
+        {isCloudModel(effective) && <Cloud size={12} strokeWidth={2} />}
         {override || `Auto · ${autoLabel}`} <ChevronDown size={12} />
       </button>
 
@@ -141,7 +156,19 @@ export default function ModelMenu({ conversationId, mode, value, onChange, place
           {otherInstalled.length > 0 && <div className="model-panel-head">Installed</div>}
           {otherInstalled.map((m) => (
             <div key={m.name} className="model-row">
-              <div className="grow"><div className="model-name">{m.name}{override === m.name && <Check size={12} />}</div></div>
+              <div className="grow">
+                <div className="model-name">
+                  {m.name}
+                  {isCloudModel(m.name) && <span className="model-cloud-tag">CLOUD</span>}
+                  {override === m.name && <Check size={12} />}
+                </div>
+                {/* Spelled out in the list too, not just as a badge. A three
+                    letter tag is a reminder for someone who already knows; this
+                    is for someone who does not. */}
+                {isCloudModel(m.name) && (
+                  <div className="model-note">Runs on Ollama's servers — your messages leave this computer</div>
+                )}
+              </div>
               <button className="btn model-use" onClick={() => choose(m.name)}>Use</button>
             </div>
           ))}

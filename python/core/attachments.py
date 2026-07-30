@@ -87,6 +87,46 @@ def classify(filename: str, mime: str = "") -> str:
     return "other"
 
 
+# Optional parsers, and what to do when one is absent.
+#
+# WHY this table exists: a missing library surfaced as the raw exception string
+# -- "Couldn't read this file: No module named 'pypdf'" -- printed once per
+# attachment. That tells the user nothing they can act on, and it reads like a
+# problem with their FILE or their MODEL rather than with the installation. (It
+# is neither: PDF parsing never touches the language model at all.) Naming the
+# package and the command turns a dead end into a one-line fix.
+MISSING_PARSER = {
+    "pypdf": "Reading PDFs needs the pypdf package. Install it with: pip install pypdf",
+    "docx": "Reading Word files needs python-docx. Install it with: pip install python-docx",
+}
+
+
+def _missing_module_message(exc: Exception) -> str | None:
+    """Turn a ModuleNotFoundError into an instruction, or return None."""
+    if not isinstance(exc, ModuleNotFoundError):
+        return None
+    return MISSING_PARSER.get(exc.name or "", (
+        f"A library Arthur needs to read this file isn't installed ({exc.name}). "
+        "Run pip install -r requirements.txt in the python folder."
+    ))
+
+
+def missing_parsers() -> list[str]:
+    """Which optional parsers are absent right now.
+
+    Reported once via /status rather than discovered one attachment at a time,
+    so the user learns their install is incomplete BEFORE dropping six PDFs and
+    getting six identical errors.
+    """
+    absent = []
+    for module, package in (("pypdf", "pypdf"), ("docx", "python-docx")):
+        try:
+            __import__(module)
+        except ModuleNotFoundError:
+            absent.append(package)
+    return absent
+
+
 def extract_text(path: Path, kind: str) -> tuple[str, str]:
     """Returns (text, error). Never raises.
 
@@ -114,6 +154,12 @@ def extract_text(path: Path, kind: str) -> tuple[str, str]:
         if kind == "image":
             return "", ""  # images are passed to the model as images, not text
     except Exception as e:
+        # A missing parser is an INSTALLATION problem, not a problem with this
+        # file, and it must not be reported as one.
+        instruction = _missing_module_message(e)
+        if instruction:
+            log.warning("cannot read %s: %s", path.name, e)
+            return "", instruction
         log.info("extraction failed for %s: %s", path.name, e)
         return "", f"Couldn't read this file: {e}"
     return "", "Arthur doesn't know how to read this file type."

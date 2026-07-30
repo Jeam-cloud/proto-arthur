@@ -27,6 +27,7 @@ from agent.loop import AgentLoop
 from core import events
 from core.config import Settings
 from core.conversations import ConversationStore
+from core import model_kind
 from core.errors import ArthurError
 from core.ollama_client import OllamaClient
 from core.personas import PersonaStore
@@ -165,8 +166,14 @@ class ChatService:
 
         # 6. sanitize + persist assistant turn
         final_text = await self._gateway.scan_model_output(final_text)
+        # An Ollama `:cloud` model is served from Ollama's infrastructure, not
+        # this machine. Recording it as "local" -- which is what happened, since
+        # every Ollama call defaults to local -- would make the transcript claim
+        # a conversation stayed private when it did not, and would suppress the
+        # `cloud · provider` badge the UI shows for exactly this case.
+        stored_provider = model_kind.provider_for(model) if provider == "local" else provider
         message_id = await self._conversations.add_message(
-            conversation_id, "assistant", final_text, model=model, provider=provider
+            conversation_id, "assistant", final_text, model=model, provider=stored_provider
         )
         await emit(events.DONE, {"message_id": message_id, "conversation_id": conversation_id})
 

@@ -18,6 +18,7 @@ import {
   planInvestigation, runInvestigation, synthesizeInvestigation,
   findMoreSources, exportPaper,
 } from "../api/research";
+import { localityNote } from "../lib/modelKind";
 import { useToasts } from "./toasts";
 
 const STYLE_KEY = "arthur.research.style";
@@ -259,7 +260,12 @@ export const useResearch = create((set, get) => ({
       : "write a paper";
     const pages = Number(s.maxPages || 0);
     const cap = pages ? `, capped at ${pages} page${pages === 1 ? "" : "s"}` : "";
-    return `Arthur will read about ${srcs} sources and ${length}${cap}. Nothing leaves this computer.`;
+    // The locality sentence is DERIVED, never hardcoded. "Nothing leaves this
+    // computer" was printed unconditionally, which made it a lie the moment an
+    // Ollama `:cloud` model was selected — and a privacy claim that is
+    // sometimes false is worse than none, because it is the one people stop
+    // checking. See lib/modelKind.js.
+    return `Arthur will read about ${srcs} sources and ${length}${cap}. ${localityNote(s.model)}`;
   },
 
   // ---------- plan ----------

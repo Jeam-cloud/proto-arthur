@@ -13,14 +13,17 @@
 import React from "react";
 import { AlertTriangle, FileText, Image, Loader2, X } from "lucide-react";
 import { useAttachments } from "../../stores/attachments";
+import { useBackend } from "../../stores/backend";
 
 export default function AttachmentTray() {
   const items = useAttachments((s) => s.items);
   const uploading = useAttachments((s) => s.uploading);
   const remove = useAttachments((s) => s.remove);
   const caps = useAttachments((s) => s.caps);
+  // Reported by /system/status once, not rediscovered per file.
+  const missing = useBackend((s) => s.status?.missing_parsers) || [];
 
-  if (!items.length && !uploading) return null;
+  if (!items.length && !uploading && !missing.length) return null;
 
   // Only warn when Ollama actually told us the model cannot see. `known:false`
   // means we asked and got nothing, and guessing would produce a warning the
@@ -29,6 +32,21 @@ export default function AttachmentTray() {
 
   return (
     <div className="attach-tray">
+      {/* An incomplete INSTALL, stated once and up front. Before this it
+          surfaced as an identical "Couldn't read this file: No module named
+          'pypdf'" on every chip -- which reads as a problem with the files, or
+          with the model, and is neither. PDF parsing never touches the model. */}
+      {missing.length > 0 && (
+        <div className="attach-warning">
+          <AlertTriangle size={14} strokeWidth={1.9} />
+          <span>
+            Some file types can&apos;t be read yet — {missing.join(" and ")} {missing.length === 1 ? "is" : "are"} not
+            installed. Run <code>pip install {missing.join(" ")}</code> in the{" "}
+            <code>python</code> folder and restart Arthur.
+          </span>
+        </div>
+      )}
+
       {blind.length > 0 && (
         <div className="attach-warning">
           <AlertTriangle size={14} strokeWidth={1.9} />

@@ -543,6 +543,17 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
   background: var(--emph); color: var(--tmut); letter-spacing: 0.05em; flex-shrink: 0;
 }
 .hub-tag.installed { background: rgba(110, 231, 183, 0.12); color: var(--green); }
+/* REMOTE, not a neutral badge. This is the one row property that changes where
+   the user's data goes, so it gets the warning colour rather than the same grey
+   as "MoE". */
+.hub-tag.cloud { background: rgba(252, 211, 77, 0.14); color: var(--yellow); }
+/* Same idea on the composer's model chip and in the model list. */
+.model-chip.cloud { color: var(--yellow); }
+.model-cloud-tag {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.05em; padding: 2px 5px;
+  border-radius: 4px; background: rgba(252, 211, 77, 0.14); color: var(--yellow);
+  flex-shrink: 0;
+}
 .hub-cell { flex-shrink: 0; color: var(--tmut); font-family: var(--mono); }
 .hub-score { font-family: var(--mono); font-size: 13px; font-weight: 600; width: 44px; text-align: right; flex-shrink: 0; }
 .hub-detail {

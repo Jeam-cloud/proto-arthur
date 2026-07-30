@@ -22,6 +22,8 @@ the verified-tags rule.
 
 from __future__ import annotations
 
+from core.model_kind import is_cloud_model
+
 # real download sizes (GB) from ollama.com/library — also the ~RAM needed
 MODEL_SIZES_GB: dict[str, float] = {
     "qwen3:4b": 2.5,
@@ -180,32 +182,48 @@ def catalog_search(
         ).lower()
         if q and q not in haystack:
             continue
-        need = entry["size_gb"] * 1.15
-        ratio = need / budget_gb if budget_gb > 0 else 99
-        if ratio <= 1:
-            score = round(60 + (1 - ratio) * 40)
+        cloud = is_cloud_model(entry["model"])
+        if cloud:
+            # A cloud model consumes NONE of this machine's memory, so scoring
+            # it against the local budget is meaningless -- and actively
+            # harmful. `size_gb` for a cloud tag is 0, which the formula below
+            # would turn into a perfect 100/OPTIMAL: the most enticing row in
+            # the table would be the one thing in it that is not local at all.
+            #
+            # Given its own label instead. CLOUD is not a point on the
+            # hardware-fit scale, it is a different axis entirely.
+            score, fit, ratio = 0, "CLOUD", 0.0
         else:
-            score = max(5, round(60 - (ratio - 1) * 80))
-        if score >= 88:
-            fit = "OPTIMAL"
-        elif score >= 70:
-            fit = "SUITABLE"
-        elif score >= 45:
-            fit = "MARGINAL"
-        else:
-            fit = "UNSUITABLE"
+            need = entry["size_gb"] * 1.15
+            ratio = need / budget_gb if budget_gb > 0 else 99
+            if ratio <= 1:
+                score = round(60 + (1 - ratio) * 40)
+            else:
+                score = max(5, round(60 - (ratio - 1) * 80))
+            if score >= 88:
+                fit = "OPTIMAL"
+            elif score >= 70:
+                fit = "SUITABLE"
+            elif score >= 45:
+                fit = "MARGINAL"
+            else:
+                fit = "UNSUITABLE"
         rows.append({
             **entry,
             "moe": entry.get("moe", False),
+            "cloud": cloud,
             "installed": _base(entry["model"]) in installed,
-            "fits": ratio <= 1,
+            "fits": cloud or ratio <= 1,
             # "runs" = where the weights actually land. Over budget means part
             # of the model spills out of VRAM into system RAM.
-            "runs": "gpu" if ratio <= 1 else "cpu+gpu",
+            "runs": "remote" if cloud else ("gpu" if ratio <= 1 else "cpu+gpu"),
             "score": score,
             "fit": fit,
         })
-    rows.sort(key=lambda r: r["score"], reverse=True)
+    # Cloud rows sink to the bottom regardless of score. They are not competing
+    # on hardware fit, and putting them at the top of a local-first app's model
+    # table would be the wrong default even though they would "run" fastest.
+    rows.sort(key=lambda r: (not r["cloud"], r["score"]), reverse=True)
     return rows
 
 

@@ -47,6 +47,10 @@ const FIT_COLOR = {
   SUITABLE: "#a7d8a0",
   MARGINAL: "var(--yellow)",
   UNSUITABLE: "var(--red)",
+  // Yellow, not green. A cloud model always "works", which is exactly why it
+  // must not be coloured like the best option in a local-first app -- the
+  // colour has to read as "look at this", not "pick this".
+  CLOUD: "var(--yellow)",
 };
 
 export default function ModelHub({ onClose }) {
@@ -286,7 +290,10 @@ export default function ModelHub({ onClose }) {
                 )}
 
                 <div className="hub-thead">
-                  <span style={{ width: 56, flexShrink: 0 }}>Fit</span>
+                  {/* 78 to match .hub-fit. These two widths are one column and
+                      must move together -- widening the cell alone left the
+                      header label sitting over the wrong boundary. */}
+                  <span style={{ width: 78, flexShrink: 0 }}>Fit</span>
                   <span style={{ flex: 1, minWidth: 0 }}>Model</span>
                   <span style={{ width: 48, flexShrink: 0 }}>Param</span>
                   <span style={{ width: 52, flexShrink: 0 }}>Size</span>
@@ -313,12 +320,23 @@ export default function ModelHub({ onClose }) {
                         <span className="hub-name">
                           <span className="hub-name-text">{r.model}</span>
                           {r.moe && <span className="hub-tag">MoE</span>}
+                          {r.cloud && <span className="hub-tag cloud">REMOTE</span>}
                           {r.installed && <span className="hub-tag installed">INSTALLED</span>}
                         </span>
-                        <span className="hub-cell" style={{ width: 48 }}>{r.params_b}B</span>
-                        <span className="hub-cell" style={{ width: 52 }}>{r.size_gb}G</span>
+                        {/* Params and size are meaningless for a cloud model --
+                            nothing is downloaded and nothing occupies local
+                            memory. Printing "0G" would imply it is free; a dash
+                            says the number does not apply. */}
+                        <span className="hub-cell" style={{ width: 48 }}>
+                          {r.cloud ? "—" : `${r.params_b}B`}
+                        </span>
+                        <span className="hub-cell" style={{ width: 52 }}>
+                          {r.cloud ? "—" : `${r.size_gb}G`}
+                        </span>
                         <span className="hub-cell" style={{ width: 48 }}>{r.ctx}</span>
-                        <span className="hub-score" style={{ color: FIT_COLOR[r.fit] }}>{r.score}</span>
+                        <span className="hub-score" style={{ color: FIT_COLOR[r.fit] }}>
+                          {r.cloud ? "—" : r.score}
+                        </span>
                       </div>
 
                       {isOpen && (
