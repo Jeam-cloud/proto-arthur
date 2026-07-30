@@ -47,3 +47,6 @@ pillow>=10                  # image resize for screenshots (imported directly in
 # does NOT build on Windows — so it's excluded there and run_python falls back
 # to the regex heuristics + the Docker sandbox (the actual containment layer).
 codeshield>=1.0; sys_platform != "win32"
+
+pypdf
+python-docx
