@@ -124,6 +124,35 @@ class ConversationStore:
         for r in rows:
             if r["tool_calls"]:
                 r["tool_calls"] = json.loads(r["tool_calls"])
+
+        # Attachments come back WITH their message.
+        #
+        # They were stored against the message from the start but never read
+        # back, so scrolling up showed a question with no sign of the file it was
+        # about -- and an attachment-only message (a dropped screenshot with no
+        # words) rendered as a completely empty bubble.
+        #
+        # One query for the whole conversation, grouped in Python, rather than
+        # one per message: a 200-turn chat would otherwise issue 200 queries to
+        # populate a detail almost every message does not have.
+        attach_rows = await self._db.fetch_all(
+            "SELECT id, message_id, filename, kind, mime, size_bytes, extract_error "
+            "FROM attachments WHERE conversation_id=? AND message_id IS NOT NULL "
+            "ORDER BY created_at",
+            (cid,),
+        )
+        by_message: dict[str, list[dict]] = {}
+        for a in attach_rows:
+            by_message.setdefault(a["message_id"], []).append({
+                "id": a["id"],
+                "filename": a["filename"],
+                "kind": a["kind"],
+                "mime": a.get("mime") or "",
+                "size_bytes": a.get("size_bytes") or 0,
+                "error": a.get("extract_error"),
+            })
+        for r in rows:
+            r["attachments"] = by_message.get(r["id"], [])
         return rows
 
     async def history_for_model(self, cid: str, char_budget: int = 24_000) -> list[dict]:

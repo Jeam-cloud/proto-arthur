@@ -10,7 +10,15 @@ from tools.base import TaskMode
 
 class ChatRequest(BaseModel):
     conversation_id: str = Field(min_length=8, max_length=64)
-    message: str = Field(min_length=1, max_length=32_000)
+    # Empty is ALLOWED, because a message can be carried entirely by its
+    # attachments -- dropping a screenshot and pressing send with no words is a
+    # complete request. `min_length=1` here rejected that with a 422 the UI
+    # could only report as "Stream failed (422)".
+    #
+    # Emptiness is not unchecked, it has just moved: the route refuses a request
+    # with neither text NOR attachments, which is the condition that actually
+    # matters and which a schema cannot see.
+    message: str = Field(default="", max_length=32_000)
     mode: TaskMode = TaskMode.GENERAL
     model: str = Field(default="", max_length=100)     # empty -> server default
     provider: str = Field(default="local", pattern="^(local|openai|anthropic)$")

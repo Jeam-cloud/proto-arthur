@@ -245,6 +245,13 @@ async def chat_stream(request: Request, body: ChatRequest) -> EventSourceRespons
         "SELECT * FROM attachments WHERE conversation_id=? AND message_id IS NULL ORDER BY created_at",
         (body.conversation_id,),
     )
+    # The emptiness check the schema cannot do: a message needs SOMETHING in it,
+    # but attachments count. Raised as an ArthurError so it arrives as a
+    # readable error event rather than a bare 422 the UI reports as
+    # "Stream failed (422)".
+    if not body.message.strip() and not staged:
+        raise ArthurError("Type a message or attach a file first.", detail={})
+
     # Whether the model can see. Unknown counts as CAN -- refusing to send an
     # image because Ollama did not answer would be worse than sending it.
     caps = await s.llm.capabilities(model)

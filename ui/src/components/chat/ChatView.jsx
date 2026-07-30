@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from "react";
-import { BrainCircuit, Compass } from "lucide-react";
+import { BrainCircuit, Compass, FileText, Image as ImageIcon } from "lucide-react";
 import { useChat } from "../../stores/chat";
 import { useConversations } from "../../stores/conversations";
 import Composer from "./Composer";
@@ -115,6 +115,23 @@ function Message({ message }) {
           <span className="provider-badge">cloud · {message.provider}</span>
         )}
         {message.activity && <ActivityFeed items={message.activity} />}
+        {/* Attachments, on the message they were sent with.
+            They were bound to the message in the database from the start but
+            never read back, so scrolling up showed the question with no sign of
+            the file it was about -- and a message carrying ONLY a screenshot
+            rendered as an empty bubble. */}
+        {message.attachments?.length > 0 && (
+          <div className="msg-attachments">
+            {message.attachments.map((a) => (
+              <span key={a.id} className={`msg-attachment${a.error ? " bad" : ""}`} title={a.error || a.filename}>
+                {a.kind === "image"
+                  ? <ImageIcon size={12} strokeWidth={1.8} />
+                  : <FileText size={12} strokeWidth={1.8} />}
+                {a.filename}
+              </span>
+            ))}
+          </div>
+        )}
         {message.role === "assistant"
           ? <Markdown>{message.content}</Markdown>
           : message.content}
