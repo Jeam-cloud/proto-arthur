@@ -155,17 +155,32 @@ class ConversationStore:
             r["attachments"] = by_message.get(r["id"], [])
         return rows
 
-    async def history_for_model(self, cid: str, char_budget: int = 24_000) -> list[dict]:
+    async def history_for_model(
+        self, cid: str, char_budget: int = 24_000, exclude_id: str | None = None,
+    ) -> list[dict]:
         """Most recent turns that fit a rough character budget (~6k tokens).
         WHY chars not tokens: an exact tokenizer per local model isn't worth
         the dependency — the budget only guards against blowing the context
         window, and 4 chars/token is a safe planning number. Tool messages are
-        excluded: they were transient working data for a past answer."""
+        excluded: they were transient working data for a past answer.
+
+        `exclude_id` leaves out ONE message — always the turn being sent right
+        now. The user message is persisted before the prompt is assembled (so a
+        crash cannot lose it), which meant history already ended with the very
+        message the caller then appended: the model received every question
+        TWICE, back to back.
+
+        That was wasteful for text and actively broken for attachments. Only the
+        appended copy carries images, and two consecutive user messages is the
+        shape a chat template is most likely to collapse or skip — taking the
+        images with it, so the model answers "no image was attached" about a
+        request that had one.
+        """
         rows = await self._db.fetch_all(
-            "SELECT role, content FROM messages "
-            "WHERE conversation_id=? AND role IN ('user','assistant') "
+            "SELECT id, role, content FROM messages "
+            "WHERE conversation_id=? AND role IN ('user','assistant') AND id IS NOT ? "
             "ORDER BY created_at DESC LIMIT 60",
-            (cid,),
+            (cid, exclude_id),
         )
         picked: list[dict] = []
         used = 0

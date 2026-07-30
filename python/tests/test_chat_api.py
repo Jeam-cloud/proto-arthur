@@ -129,6 +129,44 @@ class TestAttachmentOnlyMessages:
         assert with_images, "no message carried images to the model"
         assert base64.b64decode(with_images[0]["images"][0]) == png
 
+    async def test_the_user_turn_is_not_sent_twice(self, client, fake_llm):
+        """`history_for_model` reads the messages table, and the user turn is
+        persisted BEFORE the prompt is assembled -- so history already ended
+        with the message that then got appended again. The model saw the same
+        question twice, back to back, and only the second copy carried images.
+
+        Two consecutive user messages is also the shape most likely to be
+        collapsed or skipped by a chat template, which is how an attached image
+        can vanish between Arthur and the model.
+        """
+        fake_llm.turns = [{"tokens": ["ok"]}]
+        conv = (await client.post("/conversations")).json()
+        await client.post("/chat/stream", json={
+            "conversation_id": conv["id"], "message": "unique question here",
+            "mode": "general", "model": "fake-model",
+        })
+
+        sent = fake_llm.calls[0]["messages"]
+        copies = [m for m in sent if (m.get("content") or "").startswith("unique question here")]
+        assert len(copies) == 1, f"user turn appeared {len(copies)} times"
+
+    async def test_an_attachment_only_turn_is_never_empty(self, client, fake_llm, app_state):
+        # An empty-content message carrying images is the exact shape a template
+        # drops. It must always have something renderable in it.
+        fake_llm.turns = [{"tokens": ["ok"]}]
+        fake_llm.caps = {"completion", "vision"}
+        conv = (await client.post("/conversations")).json()
+        await app_state.attachments.add_bytes(conv["id"], "shot.png", b"\x89PNG")
+
+        await client.post("/chat/stream", json={
+            "conversation_id": conv["id"], "message": "", "mode": "general",
+            "model": "fake-model",
+        })
+
+        sent = fake_llm.calls[0]["messages"]
+        [with_images] = [m for m in sent if m.get("images")]
+        assert with_images["content"].strip(), "a message with images must not be empty"
+
     async def test_a_blind_model_gets_told_instead_of_the_bytes(self, client, fake_llm, app_state):
         fake_llm.turns = [{"tokens": ["ok"]}]
         fake_llm.caps = {"completion"}  # no vision

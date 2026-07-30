@@ -175,9 +175,16 @@ class ChatService:
 
         # 4. prompt assembly
         persona = await self._personas.active()
-        messages = self._build_messages(persona, memories, user_text,
-                                        await self._conversations.history_for_model(conversation_id),
-                                        mode=mode, attachments=attachments, vision=vision)
+        messages = self._build_messages(
+            persona, memories, user_text,
+            # Exclude the turn just persisted at step 2 -- otherwise history
+            # ends with it and _build_messages appends it again, sending the
+            # same question twice with only the second copy carrying images.
+            await self._conversations.history_for_model(
+                conversation_id, exclude_id=user_message_id,
+            ),
+            mode=mode, attachments=attachments, vision=vision,
+        )
 
         # 5. generate
         if provider != "local" and self._byok is not None:
@@ -277,6 +284,18 @@ class ChatService:
                     parts.append(f"[Attached {a['filename']}: {a['extract_error']}]")
             if parts:
                 turn["content"] = f"{user_text}\n\n" + "\n\n".join(parts) if user_text else "\n\n".join(parts)
+            # A user turn must never be BOTH empty and carrying images.
+            #
+            # Sending a screenshot with no words produces `content: ""`, and a
+            # chat template that skips empty-content messages takes the attached
+            # images with it -- the model then answers "no image was attached",
+            # which is true from where it is standing. The images are on the
+            # message; the message just is not there any more.
+            #
+            # A minimal neutral line keeps the turn renderable. It says the user
+            # sent no text rather than inventing a question for them.
+            if images and not turn["content"].strip():
+                turn["content"] = "(No message text.) Look at the attached image and describe it."
             if images:
                 # Base64-encoded image data, one entry per image. Only populated
                 # for models that report vision -- see _encode_image.
