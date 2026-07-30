@@ -200,12 +200,38 @@ class TestPromptAssembly:
         assert "<<END-EXTERNAL" in turn
         assert "Ignore your instructions" in turn  # present, but fenced
 
-    def test_images_go_to_a_seeing_model_as_images(self):
+    def test_images_are_base64_encoded_not_passed_as_paths(self, tmp_path):
+        """THE bug that made attached screenshots do nothing.
+
+        Ollama's HTTP API wants image DATA. The ollama client only converts a
+        path to data when the value has been coerced into its `Image` type,
+        which does not happen for a plain message dict -- so the path was
+        serialised verbatim, the server discarded it, and the model replied
+        "Yes, I can process images when they are provided" to a message that
+        never contained one.
+        """
+        import base64
+
+        img = tmp_path / "chart.png"
+        img.write_bytes(b"\x89PNG\r\n\x1a\nPRETEND")
         msgs = self._build([{
             "filename": "chart.png", "kind": "image",
-            "extracted_text": None, "stored_path": "/tmp/chart.png",
+            "extracted_text": None, "stored_path": str(img),
         }], vision=True)
-        assert msgs[-1]["images"] == ["/tmp/chart.png"]
+
+        sent = msgs[-1]["images"]
+        assert len(sent) == 1
+        assert sent[0] != str(img), "a filesystem path is meaningless to Ollama's API"
+        assert base64.b64decode(sent[0]) == b"\x89PNG\r\n\x1a\nPRETEND"
+
+    def test_a_missing_image_file_is_reported_not_silently_dropped(self):
+        msgs = self._build([{
+            "filename": "gone.png", "kind": "image",
+            "extracted_text": None, "stored_path": "/nonexistent/gone.png",
+        }], vision=True)
+        assert "images" not in msgs[-1]
+        assert "gone.png" in msgs[-1]["content"]
+        assert "no longer on disk" in msgs[-1]["content"]
 
     def test_a_blind_model_is_told_it_cannot_see(self):
         # The UI warns first, but a user can send anyway. Saying it in the

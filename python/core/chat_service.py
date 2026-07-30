@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 from agent.loop import AgentLoop
@@ -82,6 +83,28 @@ MODE_GUIDANCE = {
         "Data is ~15min delayed; say so when precision matters."
     ),
 }
+
+
+def _encode_image(path: str) -> tuple[str, str]:
+    """Image file -> base64 string. Returns ("", reason) on failure.
+
+    WHY encode here rather than let the client do it: the ollama client's path
+    handling only applies to values it has coerced into its `Image` type, which
+    does not happen for a plain message dict. Doing it ourselves removes the
+    dependency on that behaviour entirely -- and it means a missing or
+    unreadable file is caught HERE, where we can tell the user, instead of
+    silently becoming a string the server discards.
+    """
+    import base64
+
+    try:
+        p = Path(path)
+        if not p.is_file():
+            return "", "the file is no longer on disk"
+        return base64.b64encode(p.read_bytes()).decode("ascii"), ""
+    except Exception as e:  # unreadable, locked, permission denied
+        log.warning("could not encode image %s: %s", path, e)
+        return "", str(e)
 
 
 class ChatService:
@@ -213,7 +236,22 @@ class ChatService:
                     # found inside them.
                     parts.append(spotlight(f"file {a['filename']}", text))
                 elif a.get("kind") == "image" and vision and a.get("stored_path"):
-                    images.append(a["stored_path"])
+                    # BASE64, not the path.
+                    #
+                    # This is why attached screenshots silently did nothing. The
+                    # ollama client only converts a path to image data when the
+                    # value is a typed `Image`; from a plain message dict the
+                    # `images` list stays `list[str]` and the path is serialised
+                    # verbatim into the HTTP request. Ollama's API expects
+                    # encoded image DATA, so the server received a meaningless
+                    # string, silently ignored it, and the model answered as
+                    # though no image had been sent -- "Yes, I can process
+                    # images when they are provided".
+                    encoded, err = _encode_image(a["stored_path"])
+                    if encoded:
+                        images.append(encoded)
+                    else:
+                        parts.append(f"[Attached image {a['filename']} could not be read: {err}]")
                 elif a.get("kind") == "image" and not vision:
                     # The UI warns before sending, but a user can send anyway.
                     # Saying it in the prompt too stops the model inventing a
@@ -227,8 +265,8 @@ class ChatService:
             if parts:
                 turn["content"] = f"{user_text}\n\n" + "\n\n".join(parts) if user_text else "\n\n".join(parts)
             if images:
-                # Ollama takes image PATHS on the message; the client reads and
-                # base64s them. Only sent to models that report vision.
+                # Base64-encoded image data, one entry per image. Only populated
+                # for models that report vision -- see _encode_image.
                 turn["images"] = images
         messages.append(turn)
         return messages

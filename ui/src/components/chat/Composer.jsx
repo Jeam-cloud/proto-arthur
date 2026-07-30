@@ -77,7 +77,11 @@ export default function Composer({ conversationId, mode, setMode }) {
   // and model resolution behave identically either way.
   const dispatch = (raw) => {
     const trimmed = raw.trim();
-    if (!trimmed || streaming) return false;
+    // Attachments count as content. Dropping a screenshot and pressing send
+    // with no words is a complete request -- "look at this" is implied -- but
+    // the empty-text guard refused it and returned false, so the send button
+    // appeared enabled and did nothing at all.
+    if ((!trimmed && !useAttachments.getState().items.length) || streaming) return false;
 
     let sendMode = mode;
     if (mode === "general" && EMAIL_INTENT.test(trimmed)) {
