@@ -256,6 +256,19 @@ class ChatService:
                     # The UI warns before sending, but a user can send anyway.
                     # Saying it in the prompt too stops the model inventing a
                     # description of an image it cannot see.
+                    #
+                    # LOGGED LOUDLY, because this branch is indistinguishable
+                    # from the model's own refusal once it replies. "I'm unable
+                    # to view images" is what a blind model says AND what a
+                    # seeing model says when this text is in its prompt -- so if
+                    # the capability check is wrong, the symptom looks identical
+                    # to the thing it was trying to prevent. The log is the only
+                    # way to tell the two apart after the fact.
+                    log.warning(
+                        "stripped image %s: Ollama did not report 'vision' for this model. "
+                        "If it can in fact see, check `ollama show <model>` capabilities.",
+                        a["filename"],
+                    )
                     parts.append(
                         f"[The user attached an image, {a['filename']}, but this model cannot "
                         "see images. Say so rather than guessing at its contents.]"

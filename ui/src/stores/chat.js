@@ -64,12 +64,24 @@ export const useChat = create((set, get) => ({
     get()._patch(cid, { messages, loaded: true });
   },
 
-  async send(cid, text, { mode, model, provider } = {}) {
+  async send(cid, text, { mode, model, provider, attachments } = {}) {
     const g = get();
     const s = g.slice(cid);
     if (s.streaming) return;
 
-    const userMsg = { id: `local-${Date.now()}`, role: "user", content: text };
+    // The optimistic user message carries its attachments.
+    //
+    // Without this, a sent message shows its files only after the conversation
+    // is refetched -- so during the send that matters they are invisible, and a
+    // message carrying ONLY an image renders as an empty bubble. That made the
+    // whole feature undebuggable: there was no way to see which message a
+    // dropped file had actually gone with.
+    const userMsg = {
+      id: `local-${Date.now()}`,
+      role: "user",
+      content: text,
+      attachments: attachments || [],
+    };
     g._patch(cid, {
       messages: [...s.messages, userMsg],
       draft: { role: "assistant", content: "", provider: provider || "local" },

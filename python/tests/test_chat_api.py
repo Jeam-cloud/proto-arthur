@@ -104,6 +104,46 @@ class TestAttachmentOnlyMessages:
         })
         assert "attach a file" in resp.json()["error"]["message"]
 
+    async def test_an_attached_image_actually_reaches_the_model(self, client, fake_llm, app_state):
+        """END TO END through the route, not just _build_messages.
+
+        Unit-testing the prompt builder proved the images key was set; it did
+        NOT prove the key survives the route, stream_reply, and the agent loop
+        to arrive at the client. That gap is where the bug kept hiding.
+        """
+        import base64
+
+        fake_llm.turns = [{"tokens": ["ok"]}]
+        fake_llm.caps = {"completion", "vision"}
+        conv = (await client.post("/conversations")).json()
+        png = b"\x89PNG\r\n\x1a\nREALBYTES"
+        await app_state.attachments.add_bytes(conv["id"], "flower.png", png)
+
+        await client.post("/chat/stream", json={
+            "conversation_id": conv["id"], "message": "do you see this image",
+            "mode": "general", "model": "fake-model",
+        })
+
+        sent = fake_llm.calls[0]["messages"]
+        with_images = [m for m in sent if m.get("images")]
+        assert with_images, "no message carried images to the model"
+        assert base64.b64decode(with_images[0]["images"][0]) == png
+
+    async def test_a_blind_model_gets_told_instead_of_the_bytes(self, client, fake_llm, app_state):
+        fake_llm.turns = [{"tokens": ["ok"]}]
+        fake_llm.caps = {"completion"}  # no vision
+        conv = (await client.post("/conversations")).json()
+        await app_state.attachments.add_bytes(conv["id"], "flower.png", b"\x89PNG")
+
+        await client.post("/chat/stream", json={
+            "conversation_id": conv["id"], "message": "see this?",
+            "mode": "general", "model": "fake-model",
+        })
+
+        sent = fake_llm.calls[0]["messages"]
+        assert not any(m.get("images") for m in sent)
+        assert any("cannot see images" in (m.get("content") or "") for m in sent)
+
     async def test_empty_text_with_an_attachment_is_accepted(self, client, fake_llm, app_state):
         fake_llm.turns = [{"tokens": ["I", " see", " it"]}]
         conv = (await client.post("/conversations")).json()

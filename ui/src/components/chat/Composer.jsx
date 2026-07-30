@@ -99,6 +99,10 @@ export default function Composer({ conversationId, mode, setMode }) {
       // "" lets the backend resolve: chip override > mode's model > default
       model: useChat.getState().modelOverride[conversationId] || "",
       provider: "local",
+      // Read from the store, not the render closure: dispatch is also called
+      // from the voice recorder's callback, which outlives the render that
+      // created it and would capture a stale list.
+      attachments: useAttachments.getState().items,
     });
     return true;
   };
