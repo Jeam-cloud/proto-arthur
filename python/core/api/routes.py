@@ -216,6 +216,23 @@ async def delete_model(request: Request, name: str) -> dict:
 @router.post("/chat/stream")
 async def chat_stream(request: Request, body: ChatRequest) -> EventSourceResponse:
     s = state(request)
+
+    # Is there anything to send? Checked FIRST, before model resolution.
+    #
+    # `ChatRequest.message` no longer requires text, because a message can be
+    # carried entirely by its attachments. That check has to live here rather
+    # than in the schema, since only the database knows what is staged.
+    #
+    # Ordering matters: pressing send on an empty composer with no model
+    # configured used to answer "No model selected", which is true but not the
+    # problem the user has. Say the nearer thing first.
+    staged = await s.db.fetch_all(
+        "SELECT * FROM attachments WHERE conversation_id=? AND message_id IS NULL ORDER BY created_at",
+        (body.conversation_id,),
+    )
+    if not body.message.strip() and not staged:
+        raise ArthurError("Type a message or attach a file first.", detail={})
+
     # Model resolution, most specific wins:
     #   1. explicit per-message override (the chat-header picker)
     #   2. the mode's assigned model (Settings → Models, e.g. finance -> qwen3:14b)
@@ -236,22 +253,13 @@ async def chat_stream(request: Request, body: ChatRequest) -> EventSourceRespons
     async def emit(event: str, data: dict[str, Any]) -> None:
         await queue.put((event, data))
 
-    # Staged attachments are read BEFORE the stream starts and claimed for the
-    # message immediately, so a file dropped in the composer becomes part of the
-    # transcript exactly once. Full rows here (not the wire shape) because the
-    # prompt builder needs `extracted_text` and `stored_path`, which to_dict()
-    # deliberately withholds from the UI.
-    staged = await s.db.fetch_all(
-        "SELECT * FROM attachments WHERE conversation_id=? AND message_id IS NULL ORDER BY created_at",
-        (body.conversation_id,),
-    )
-    # The emptiness check the schema cannot do: a message needs SOMETHING in it,
-    # but attachments count. Raised as an ArthurError so it arrives as a
-    # readable error event rather than a bare 422 the UI reports as
-    # "Stream failed (422)".
-    if not body.message.strip() and not staged:
-        raise ArthurError("Type a message or attach a file first.", detail={})
-
+    # `staged` was read at the top of this function, before model resolution,
+    # and is used unchanged here: full rows rather than the wire shape, because
+    # the prompt builder needs `extracted_text` and `stored_path`, which
+    # to_dict() deliberately withholds from the UI. They are claimed for the
+    # message inside stream_reply, so a file dropped in the composer becomes
+    # part of the transcript exactly once.
+    #
     # Whether the model can see. Unknown counts as CAN -- refusing to send an
     # image because Ollama did not answer would be worse than sending it.
     caps = await s.llm.capabilities(model)

@@ -144,6 +144,43 @@ class TestStore:
         rows = await db.fetch_all("SELECT * FROM attachments WHERE conversation_id=?", (cid,))
         assert rows == []
 
+    async def test_messages_come_back_with_their_attachments(self, store, db):
+        # They were bound to the message from the start but never READ BACK, so
+        # scrolling up showed a question with no sign of the file it was about --
+        # and a message carrying only a screenshot was an empty bubble.
+        from core.conversations import ConversationStore
+        s, cid = store
+        convos = ConversationStore(db)
+        mid = await convos.add_message(cid, "user", "what does this say?")
+        await s.add_bytes(cid, "a.pdf", b"%PDF-1.4")
+        await s.add_bytes(cid, "b.png", b"\x89PNG")
+        await s.attach_to_message(cid, mid)
+
+        [msg] = [m for m in await convos.messages(cid) if m["id"] == mid]
+        names = sorted(a["filename"] for a in msg["attachments"])
+        assert names == ["a.pdf", "b.png"]
+
+    async def test_a_message_without_attachments_gets_an_empty_list(self, store, db):
+        # An absent key would make every consumer write `?.length` defensively.
+        from core.conversations import ConversationStore
+        s, cid = store
+        convos = ConversationStore(db)
+        await convos.add_message(cid, "user", "just words")
+        [msg] = await convos.messages(cid)
+        assert msg["attachments"] == []
+
+    async def test_staged_attachments_never_leak_into_the_transcript(self, store, db):
+        # message_id IS NULL means "still in the composer". Those must not
+        # appear against some unrelated message.
+        from core.conversations import ConversationStore
+        s, cid = store
+        convos = ConversationStore(db)
+        await convos.add_message(cid, "user", "sent earlier")
+        await s.add_bytes(cid, "staged.txt", b"not sent yet")
+
+        msgs = await convos.messages(cid)
+        assert all(m["attachments"] == [] for m in msgs)
+
     async def test_deleting_a_message_keeps_the_attachment(self, store, db):
         from core.conversations import ConversationStore
         s, cid = store

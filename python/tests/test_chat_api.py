@@ -76,6 +76,53 @@ class TestConversations:
         assert resp.json()["error"]["code"] == "not_found"
 
 
+class TestAttachmentOnlyMessages:
+    """A message can be carried entirely by its attachments.
+
+    `ChatRequest.message` had `min_length=1`, so dropping a screenshot and
+    pressing send with no words was rejected by Pydantic -- which the UI could
+    only report as "Stream failed (422)". The emptiness check still exists, it
+    just moved to where it can see the attachments.
+    """
+
+    async def test_empty_text_with_no_attachments_is_refused_readably(self, client, fake_llm):
+        conv = (await client.post("/conversations")).json()
+        resp = await client.post("/chat/stream", json={
+            "conversation_id": conv["id"], "message": "   ", "mode": "general",
+            "model": "fake-model",
+        })
+        # A named error, not a bare 422.
+        assert resp.status_code != 422
+        assert "attach a file" in resp.json()["error"]["message"]
+
+    async def test_the_nearer_problem_is_reported_first(self, client, fake_llm):
+        # No model configured AND an empty composer. "No model selected" is true
+        # but it is not the problem the user has in front of them.
+        conv = (await client.post("/conversations")).json()
+        resp = await client.post("/chat/stream", json={
+            "conversation_id": conv["id"], "message": "", "mode": "general",
+        })
+        assert "attach a file" in resp.json()["error"]["message"]
+
+    async def test_empty_text_with_an_attachment_is_accepted(self, client, fake_llm, app_state):
+        fake_llm.turns = [{"tokens": ["I", " see", " it"]}]
+        conv = (await client.post("/conversations")).json()
+        await app_state.attachments.add_bytes(conv["id"], "shot.png", b"\x89PNG\r\n\x1a\n")
+
+        resp = await client.post("/chat/stream", json={
+            "conversation_id": conv["id"], "message": "", "mode": "general",
+            "model": "fake-model",
+        })
+        assert resp.status_code == 200
+        assert "I" in resp.text
+
+        # ...and the file is bound to the message that was just sent, so the
+        # transcript shows what was asked about.
+        msgs = (await client.get(f"/conversations/{conv['id']}/messages")).json()
+        user = [m for m in msgs if m["role"] == "user"][0]
+        assert [a["filename"] for a in user["attachments"]] == ["shot.png"]
+
+
 class TestConversationWorkspace:
     """A folder per conversation, inherited on first use.
 
