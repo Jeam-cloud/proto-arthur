@@ -166,9 +166,9 @@ export default function Composer({ conversationId, mode, setMode }) {
     }
   };
 
+  // Still a drop target itself, so dropping ON the composer works even though
+  // the whole conversation now accepts files too.
   return (
-    {/* Still a drop target itself, so dropping ON the composer works even
-        though the whole conversation now accepts files too. */}
     <div className={`composer-wrap${dragging ? " dropping" : ""}`} {...dropHandlers}>
       <AttachmentTray />
       {dragging && (
