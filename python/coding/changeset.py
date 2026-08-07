@@ -87,9 +87,17 @@ class PendingChange:
                 dels += 1
         return adds, dels
 
+    # Set when an apply was refused because the file changed on disk. Lives on
+    # the change rather than in a one-shot API response so the REVIEW PANEL can
+    # show it on the file's own card. A conflict reported once, in a toast that
+    # fades, leaves the offending file sitting in the list looking exactly like
+    # the ones that succeeded — which is how it gets applied by mistake later.
+    conflict: bool = False
+
     def to_dict(self, include_diff: bool = True) -> dict:
         adds, dels = self.stats()
-        out = {"path": self.path, "kind": self.kind, "additions": adds, "deletions": dels}
+        out = {"path": self.path, "kind": self.kind, "additions": adds,
+               "deletions": dels, "conflict": self.conflict}
         if include_diff:
             out["diff"] = self.diff()
         return out
@@ -141,6 +149,9 @@ class ChangeSet:
     def stage_write(self, relative: str, content: str) -> PendingChange:
         p = safe_path(self.root, relative)
         key = self._key(p)
+        # `before` is re-read from disk here, which is what clears a conflict:
+        # the agent re-reading and redoing its edit picks up the user's version
+        # as the new baseline, so the next apply has nothing to collide with.
         change = PendingChange(path=key, before=self._original(key, p), after=content)
         self._store(key, change)
         return change
@@ -160,8 +171,13 @@ class ChangeSet:
         three times produces a diff against edit #2 — the user reviews the last
         hop instead of the whole journey, which is exactly the thing they need
         to see.
+
+        The ONE exception is a conflicted file. Its remembered `before` is the
+        version the user has since replaced, so keeping it would guarantee the
+        same conflict forever. Re-reading disk is exactly what "re-read and
+        retry" means, and it adopts the user's edit as the new baseline.
         """
-        if key in self._pending:
+        if key in self._pending and not self._pending[key].conflict:
             return self._pending[key].before
         if not p.is_file():
             return None
@@ -182,6 +198,7 @@ class ChangeSet:
         if change.before == change.after:
             self._pending.pop(key, None)
             return
+        change.conflict = False  # a freshly staged edit has not collided with anything
         self._pending[key] = change
 
     def _key(self, p: Path) -> str:
@@ -247,6 +264,7 @@ class ChangeSet:
             try:
                 p = safe_path(self.root, key)  # re-validated: never trust a stored path
                 if self._on_disk(p) != change.before:
+                    change.conflict = True   # sticks to the card until the edit is redone
                     conflicts.append(key)
                     continue
                 if change.after is None:

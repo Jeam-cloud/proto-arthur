@@ -302,6 +302,7 @@ class AgentLoop:
         await emit(events.STATUS, {
             "text": f"Stopped: reached the tool-use limit for one message.{note}",
         })
+        await emit(events.TOOL_LIMIT, {"mode": mode.value})
         return "".join(final_text_parts)
 
     async def _execute_one(

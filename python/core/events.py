@@ -23,6 +23,11 @@ DONE = "done"                      # {message_id, conversation_id}
 # stream, because a multi-file diff is far too big to belong in an SSE frame
 # and the user may never open the panel.
 CHANGES_UPDATED = "changes_updated"  # {files, additions, deletions}
+# The turn stopped because it ran out of tool calls, not because it finished.
+# Its own event rather than a `status` line the UI would have to string-match:
+# in Code mode this means the changeset on screen is PARTIAL, and a review panel
+# that cannot tell the difference will happily apply half a change.
+TOOL_LIMIT = "tool_limit"          # {mode}
 
 # ---- research mode ----
 # An investigation is not a token stream, so it needs its own vocabulary. Each
