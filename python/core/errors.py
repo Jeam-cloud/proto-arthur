@@ -5,6 +5,12 @@ WHY: FastAPI turns any ArthurError into a consistent JSON body
 The UI switches on `code` to show the right recovery action ("Start Ollama",
 "Install Docker", ...) instead of parsing prose. Adding an error means adding
 a subclass — not another try/except at every call site.
+
+Removed as never-raised: OfflineError (network failures already surface as
+OllamaUnavailableError or a provider's own error) and ToolNotAvailableError
+(the agent loop refuses out-of-mode tools by returning a tool RESULT, not by
+raising — see AgentLoop.run). An error class nobody raises is a promise the
+UI cannot rely on.
 """
 
 from __future__ import annotations
@@ -100,25 +106,11 @@ class PathTraversalError(ArthurError):
     http_status = 400
 
 
-class ToolNotAvailableError(ArthurError):
-    """This tool is not granted for the current task mode."""
-
-    code = "tool_not_available"
-    http_status = 403
-
-
 class IntegrationNotConfiguredError(ArthurError):
     """The integration needs to be connected in Settings first."""
 
     code = "integration_not_configured"
     http_status = 400
-
-
-class OfflineError(ArthurError):
-    """No internet connection available for this feature."""
-
-    code = "offline"
-    http_status = 503
 
 
 class VoiceError(ArthurError):

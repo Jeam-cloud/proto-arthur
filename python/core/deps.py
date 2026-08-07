@@ -34,10 +34,9 @@ from security.scanners import build_scanner
 from security.vault import SecretsVault
 from tools.coding import ListDirTool, ReadFileTool, RunPythonTool, WriteFileTool
 from tools.computer import ClickTool, OpenAppTool, PressKeysTool, ScreenshotTool, TypeTextTool
-from tools.email_calendar import CreateEventTool, GraphClient, ListEventsTool
 from tools.email_service import (
     EmailListTool, EmailRouter, EmailSearchTool, EmailSendTool,
-    GraphBackend, SmtpImapBackend,
+    SmtpImapBackend,
 )
 from tools.finance import StockHistoryTool, StockQuoteTool
 from tools.research import QuickSearchTool, WebResearchTool
@@ -63,7 +62,6 @@ class AppState:
     registry: ToolRegistry
     agent: AgentLoop
     chat: ChatService
-    graph: GraphClient
     email_router: EmailRouter
     transcriber: Transcriber
     byok: BYOKRouter
@@ -96,10 +94,9 @@ async def build_state(settings: Settings) -> AppState:
     conversations = ConversationStore(db)
     attachment_store = AttachmentStore(db, settings.data_dir)
 
-    graph = GraphClient(settings.ms_client_id, settings.data_dir)
-    # Email backend picked PER CALL: SMTP/IMAP (app password, zero cloud
-    # registration) first, MS Graph as fallback — see tools/email_service.py.
-    email_router = EmailRouter(SmtpImapBackend(db, vault), GraphBackend(graph))
+    # One backend: SMTP/IMAP with an app password. MS Graph was removed --
+    # see the module docstring in tools/email_service.py for why.
+    email_router = EmailRouter(SmtpImapBackend(db, vault))
     allow_unsandboxed = bool(await db.get_setting("allow_unsandboxed_network_tools", False))
 
     registry = ToolRegistry()
@@ -111,7 +108,6 @@ async def build_state(settings: Settings) -> AppState:
         ReadFileTool(), ListDirTool(), WriteFileTool(), RunPythonTool(sandbox),
         OpenAppTool(), ScreenshotTool(), ClickTool(), TypeTextTool(), PressKeysTool(),
         EmailSendTool(email_router), EmailListTool(email_router), EmailSearchTool(email_router),
-        ListEventsTool(graph), CreateEventTool(graph),  # calendar stays Graph-only (IMAP has no calendar)
     ):
         registry.register(tool)
 
@@ -132,6 +128,6 @@ async def build_state(settings: Settings) -> AppState:
         approvals=approvals, sandbox=sandbox, memory=memory, personas=personas,
         conversations=conversations, attachments=attachment_store,
         registry=registry, agent=agent, chat=chat,
-        graph=graph, email_router=email_router, transcriber=Transcriber(), byok=byok,
+        email_router=email_router, transcriber=Transcriber(), byok=byok,
         research=research,
     )

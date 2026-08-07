@@ -9,26 +9,12 @@ import { useToasts } from "../../stores/toasts";
 
 export default function IntegrationsTab() {
   const { status, refreshStatus } = useBackend();
-  const pushToast = useToasts((s) => s.push);
-  const [busy, setBusy] = useState(false);
-
   const secrets = status?.secrets || {};
 
-  const msLogin = async () => {
-    setBusy(true);
-    try {
-      const res = await api.post("/integrations/ms/login");
-      pushToast(`Connected as ${res.username}`, "success");
-      refreshStatus();
-    } catch (e) {
-      pushToast(e.message, "error");
-    } finally { setBusy(false); }
-  };
-
-  const msLogout = async () => {
-    await api.post("/integrations/ms/logout");
-    refreshStatus();
-  };
+  // (Microsoft 365 OAuth removed along with MS Graph — it needed an Azure app
+  // registration that was never completed, so the button could not succeed.
+  // `busy`, `pushToast` and the `api` import went with it: they existed only
+  // to drive that button.)
 
   return (
     <>
@@ -39,20 +25,6 @@ export default function IntegrationsTab() {
       </div>
 
       <EmailCard configured={!!secrets.email_password} onSaved={refreshStatus} />
-
-      <div className="card card-row">
-        <div className="grow">
-          <div className="card-title">Microsoft 365, email & calendar (OAuth)</div>
-          <div className="card-sub">
-            Alternative to the app-password setup above; also enables calendar tools.
-            Note: personal Outlook accounts often require this route, Microsoft is
-            phasing out app passwords for them.
-          </div>
-        </div>
-        {status?.ms_connected
-          ? <><span className="pill ok">connected</span><button className="btn" onClick={msLogout}>Disconnect</button></>
-          : <button className="btn primary" disabled={busy} onClick={msLogin}>{busy ? "Waiting for browser…" : "Connect"}</button>}
-      </div>
 
       <KeyCard
         title="Tavily, web research"

@@ -4,31 +4,22 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from tests.conftest import FakeVault
 from tools.base import ToolContext
 from tools.email_service import (
-    EmailRouter, EmailSendTool, GraphBackend, SendArgs, SmtpImapBackend,
+    EmailRouter, EmailSendTool, SendArgs, SmtpImapBackend,
 )
 
 CTX = ToolContext(conversation_id="c1")
 
 
-class _Graph:
-    def __init__(self, connected=False):
-        self.connected = connected
-
-    def is_connected(self):
-        return self.connected
-
-
 async def test_unconfigured_router_has_no_backend(db, vault):
-    router = EmailRouter(SmtpImapBackend(db, vault), GraphBackend(_Graph(False)))
+    router = EmailRouter(SmtpImapBackend(db, vault))
     assert await router.backend() is None
     assert await router.is_configured() is False
 
 
 async def test_send_tool_reports_not_configured_gracefully(db, vault):
-    router = EmailRouter(SmtpImapBackend(db, vault), GraphBackend(_Graph(False)))
+    router = EmailRouter(SmtpImapBackend(db, vault))
     tool = EmailSendTool(router)
     result = await tool.execute(
         SendArgs(to=["a@b.com"], subject="hi", body="test"), CTX
@@ -42,25 +33,10 @@ async def test_smtp_configured_via_gmail_preset(db, vault):
     await db.set_setting("email_address", "rian@gmail.com")
     vault.set("email_password", "app-password-123")
     smtp = SmtpImapBackend(db, vault)
-    router = EmailRouter(smtp, GraphBackend(_Graph(False)))
+    router = EmailRouter(smtp)
     assert await router.backend() is smtp
     cfg = await smtp._config()
     assert cfg["smtp_host"] == "smtp.gmail.com" and cfg["imap_host"] == "imap.gmail.com"
-
-
-async def test_graph_fallback_when_smtp_unconfigured(db, vault):
-    graph = GraphBackend(_Graph(True))
-    router = EmailRouter(SmtpImapBackend(db, vault), graph)
-    assert await router.backend() is graph
-
-
-async def test_smtp_preferred_over_graph(db, vault):
-    """User's explicit app-password setup wins over a lingering MS connection."""
-    await db.set_setting("email_address", "rian@gmail.com")
-    vault.set("email_password", "app-password-123")
-    smtp = SmtpImapBackend(db, vault)
-    router = EmailRouter(smtp, GraphBackend(_Graph(True)))
-    assert await router.backend() is smtp
 
 
 async def test_send_builds_proper_message(db, vault, monkeypatch):

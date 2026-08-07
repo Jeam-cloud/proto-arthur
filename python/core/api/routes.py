@@ -80,7 +80,6 @@ async def system_status(request: Request) -> dict:
         "docker_up": await s.sandbox.is_available(),
         "scanner_backend": s.gateway.backend_name,
         "memory_available": s.memory.available,
-        "ms_connected": s.graph.is_connected(),
         "email_configured": await s.email_router.is_configured(),
         "secrets": s.vault.status(),
         "default_model": await s.db.get_setting("default_model", ""),
@@ -991,17 +990,7 @@ async def disconnect_email(request: Request) -> dict:
     return {"ok": True}
 
 
-@router.post("/integrations/ms/login")
-async def ms_login(request: Request) -> dict:
-    result = await state(request).graph.login_interactive()
-    await state(request).audit.record("ms_connected", "info", username=result["username"])
-    return result
-
-
-@router.post("/integrations/ms/logout")
-async def ms_logout(request: Request) -> dict:
-    state(request).graph.logout()
-    return {"ok": True}
+# (/integrations/ms/login and /logout removed with MS Graph.)
 
 
 # ---------- voice ----------

@@ -21,8 +21,6 @@ keyring>=25                 # OS credential vault (Windows Credential Locker / m
 docker>=7                   # sandbox orchestration for risky tools
 
 # Integrations
-msal>=1.28                  # Microsoft OAuth2 (auth-code + PKCE via system browser)
-msal-extensions>=1.1        # encrypted token cache (DPAPI on Windows) — tokens too big for Credential Locker
 tavily-python>=0.5
 yfinance>=0.2.40            # unofficial Yahoo API — wrapped in cache + circuit breaker, expect breakage
 

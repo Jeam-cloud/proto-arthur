@@ -84,7 +84,9 @@ export const LENGTHS = [
 // Hard ceiling on the custom word box. Past this a local model pads rather
 // than writes, and the run time stops buying anything.
 export const MAX_WORDS = 6000;
-export const MAX_PAGES = 40;
+// Not exported: used only by setMaxPages below. It was exported for a
+// composer field that now shows "No limit" as its placeholder instead.
+const MAX_PAGES = 40;
 
 const RECENTS_KEY = "arthur.research.recents";
 
@@ -604,7 +606,6 @@ export const useResearch = create((set, get) => ({
     const s = get();
     if (s.finding || !query.trim()) return;
     const controller = new AbortController();
-    findAbort = controller;
     set({ finding: true, statusText: "" });
     const before = s.evidence.length;
     try {
@@ -953,9 +954,6 @@ export function recentRows(recents) {
 // interval id are not state, and putting them in the store would make every
 // subscriber re-render when a run starts.
 let abort = null;
-// Find-more runs on its own controller: it can be fired while a paper is
-// already on screen, and cancelling it must not cancel anything else.
-let findAbort = null;
 let timer = null;
 
 function stopTimer() {
@@ -963,7 +961,7 @@ function stopTimer() {
   timer = null;
 }
 
-export function cancelFindMore() {
-  if (findAbort) findAbort.abort();
-  findAbort = null;
-}
+// (cancelFindMore removed — it was exported and never called from anywhere,
+// so `findAbort` was assigned on every find-more search and never read. A
+// find-more search is short and bounded; if it ever needs cancelling, wire it
+// to a button rather than leaving an unreachable function behind.)

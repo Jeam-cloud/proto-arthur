@@ -1,17 +1,21 @@
 """Email that works from chat/voice with zero cloud-app registration.
 
-WHY the rework (validated against how Odysseus and OpenClaw ship email):
-plain IMAP/SMTP with an app password is the lowest-friction path — Gmail and
-Outlook both issue app passwords in two clicks, and there is no Azure
-registration ceremony. MS Graph remains as a fallback backend for users who
-already connected it.
+WHY IMAP/SMTP (validated against how Odysseus and OpenClaw ship email):
+an app password is the lowest-friction path — Gmail and Outlook both issue one
+in two clicks, and there is no Azure registration ceremony.
 
-Architecture: one EmailRouter picks a backend PER CALL —
+MS Graph WAS a second backend and has been removed. It required an Azure app
+registration that could not be completed in this environment, so
+`ms_client_id` never left its placeholder value and the Graph path was
+unreachable in practice. A fallback nobody can reach is not a fallback, it is a
+second code path to keep correct for no benefit.
+
+Architecture: one EmailRouter resolves the backend PER CALL —
     SMTP configured (address + password in vault)  -> SmtpImapBackend
-    else Microsoft connected                       -> GraphBackend
     else                                           -> "not configured" guidance
-The chat tools (email_send / email_list / email_search) only know the router,
-so the model's view never changes when the user switches providers.
+The router indirection is kept even with a single backend: the chat tools
+(email_send / email_list / email_search) only know the router, so adding a
+second provider later changes one file rather than every call site.
 
 The user flow you asked for is preserved end-to-end: say or type
 "email jane@x.com that I'm running late" -> model drafts -> approval dialog
@@ -78,7 +82,6 @@ class EmailBackend(Protocol):
 # sees exactly what leaves the machine; (3) size caps per provider.
 
 MAX_ATTACHMENT_TOTAL = 20 * 1024 * 1024   # SMTP: typical provider limit ~25MB
-MAX_GRAPH_TOTAL = 3 * 1024 * 1024         # Graph simple-attach limit (~3MB without upload sessions)
 
 
 class Attachment:
@@ -317,88 +320,31 @@ class SmtpImapBackend:
             return "\n".join(lines) or "(no messages found)"
 
 
-class GraphBackend:
-    """Adapter over the existing GraphClient so Microsoft-connected users keep
-    working with zero changes."""
-
-    def __init__(self, graph):
-        self._graph = graph
-
-    def is_configured(self) -> bool:
-        return self._graph.is_connected()
-
-    async def send(self, to: list[str], subject: str, body: str,
-                   cc: list[str] | None = None, bcc: list[str] | None = None,
-                   attachments: list[Attachment] | None = None) -> str:
-        import base64
-
-        message = {
-            "subject": subject,
-            "body": {"contentType": "Text", "content": body},
-            "toRecipients": [{"emailAddress": {"address": a}} for a in to],
-        }
-        if cc:
-            message["ccRecipients"] = [{"emailAddress": {"address": a}} for a in cc]
-        if bcc:
-            message["bccRecipients"] = [{"emailAddress": {"address": a}} for a in bcc]
-        if attachments:
-            message["attachments"] = [
-                {
-                    "@odata.type": "#microsoft.graph.fileAttachment",
-                    "name": att.filename,
-                    "contentType": att.mimetype,
-                    "contentBytes": base64.b64encode(att.data).decode(),
-                }
-                for att in attachments
-            ]
-        await self._graph.request("POST", "/me/sendMail",
-                                  json_body={"message": message, "saveToSentItems": True})
-        return f"Email sent to {', '.join(to)}."
-
-    async def list_recent(self, count: int, unread_only: bool) -> str:
-        params = {
-            "$top": count,
-            "$select": "from,subject,bodyPreview,receivedDateTime,isRead",
-            "$orderby": "receivedDateTime desc",
-        }
-        if unread_only:
-            params["$filter"] = "isRead eq false"
-        data = await self._graph.request("GET", "/me/mailFolders/inbox/messages", params=params)
-        lines = [
-            f"- [{m['receivedDateTime'][:16]}] {m.get('from', {}).get('emailAddress', {}).get('address', '?')} "
-            f"| {m.get('subject', '(no subject)')} | {m.get('bodyPreview', '')[:140]}"
-            for m in data.get("value", [])
-        ]
-        return "\n".join(lines) or "(inbox empty)"
-
-    async def search(self, query: str) -> str:
-        data = await self._graph.request(
-            "GET", "/me/messages",
-            params={"$search": f'"{query}"', "$top": 10,
-                    "$select": "from,subject,bodyPreview,receivedDateTime"},
-        )
-        lines = [
-            f"- [{m['receivedDateTime'][:16]}] {m.get('from', {}).get('emailAddress', {}).get('address', '?')} "
-            f"| {m.get('subject', '')} | {m.get('bodyPreview', '')[:140]}"
-            for m in data.get("value", [])
-        ]
-        return "\n".join(lines) or "(no matches)"
+# (GraphBackend removed. MS Graph needed an Azure app registration that could
+#  not be completed here, ms_client_id never left its placeholder, and
+#  SMTP/IMAP has been the working path throughout.)
 
 
 class EmailRouter:
-    """Backend selection per call: SMTP first (user's explicit setup), Graph
-    as fallback. Checked at call time so Settings changes apply instantly."""
+    """Resolves the email backend at call time, so a Settings change applies
+    to the next message without a restart.
 
-    def __init__(self, smtp: SmtpImapBackend, graph: GraphBackend):
+    There is one backend now. MS Graph was removed: it required an Azure app
+    registration that could not be completed in this environment, `ms_client_id`
+    never left its placeholder, and SMTP/IMAP with an app password has been the
+    working path throughout. A fallback that cannot be reached is not a
+    fallback -- it is a second code path to keep correct for no benefit.
+
+    The indirection is KEPT rather than inlined into the tools: a second backend
+    (Gmail API, JMAP) would slot in here, and the call sites should not have to
+    change when it does.
+    """
+
+    def __init__(self, smtp: SmtpImapBackend):
         self._smtp = smtp
-        self._graph = graph
 
     async def backend(self) -> EmailBackend | None:
-        if await self._smtp.is_configured():
-            return self._smtp
-        if self._graph.is_configured():
-            return self._graph
-        return None
+        return self._smtp if await self._smtp.is_configured() else None
 
     async def is_configured(self) -> bool:
         return await self.backend() is not None
@@ -449,7 +395,7 @@ class EmailSendTool(Tool):
 
         loaded = None
         if args.attachments:
-            limit = MAX_GRAPH_TOTAL if isinstance(backend, GraphBackend) else MAX_ATTACHMENT_TOTAL
+            limit = MAX_ATTACHMENT_TOTAL
             try:
                 loaded = load_attachments(args.attachments, ctx.workspace_root, limit)
             except (FileNotFoundError, ValueError) as e:

@@ -27,7 +27,7 @@ from security.gateway import SecurityGateway
 from tests.fakes import (
     ConfirmEchoTool, CrashTool, EchoTool, ExternalTool, FakeEmbedder, FakeLLM, FakeScanner,
 )
-from tools.email_service import EmailRouter, GraphBackend, SmtpImapBackend
+from tools.email_service import EmailRouter, SmtpImapBackend
 
 
 class FakeVault:
@@ -101,7 +101,7 @@ async def app_state(settings, db, fake_llm, embedder, vault) -> AppState:
     chat = ChatService(settings, fake_llm, conversations, personas, memory, gateway, agent,
                        attachments=attachment_store)
 
-    email_router = EmailRouter(SmtpImapBackend(db, vault), GraphBackend(_NoGraph()))
+    email_router = EmailRouter(SmtpImapBackend(db, vault))
     sandbox = _NoSandbox()
     research = ResearchEngine(fake_llm, vault, sandbox, embedder, gateway)
     return AppState(
@@ -109,7 +109,7 @@ async def app_state(settings, db, fake_llm, embedder, vault) -> AppState:
         approvals=approvals, sandbox=sandbox, memory=memory, personas=personas,
         conversations=conversations, attachments=attachment_store,
         registry=registry, agent=agent, chat=chat,
-        graph=_NoGraph(), email_router=email_router, transcriber=None, byok=None,
+        email_router=email_router, transcriber=None, byok=None,
         research=research,
     )
 

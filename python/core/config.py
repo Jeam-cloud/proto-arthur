@@ -55,10 +55,9 @@ class Settings(BaseSettings):
     # The user can consciously flip this in Settings (stored in DB, mirrored here).
     allow_unsandboxed_network_tools: bool = False
 
-    # --- integrations ---
-    # Multi-tenant Azure app registration for MS Graph. Ship your own client id;
-    # it is public by design (PKCE flow needs no secret).
-    ms_client_id: str = "REPLACE-WITH-YOUR-AZURE-APP-CLIENT-ID"
+    # (ms_client_id removed with MS Graph. It was a placeholder that had to be
+    # filled before shipping and never was, which is what made the Graph path
+    # unreachable in practice.)
 
     log_level: str = "INFO"
 

@@ -111,7 +111,6 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
 .rail-btn.active { background: var(--emph); color: var(--text); }
 .rail-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 .rail-spacer { flex: 1; }
-.logo-mark { color: var(--inv); display: flex; }
 
 /* ---------- sidebar (conversations) ---------- */
 .sidebar {
@@ -586,42 +585,10 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
 .settings-body .section-sub { color: var(--tmut); font-size: 13.5px; margin-bottom: 24px; line-height: 1.55; }
 .settings-body code { background: var(--emph); border-radius: 5px; padding: 1px 6px; font-family: var(--mono); font-size: 12px; }
 
-/* Legacy Cookbook search bar. The Cookbook UI moved to the Model hub page
-   (.hub-* rules above); these classes stay only because .data-table is still
-   a generic table style other tabs can use. */
-.cookbook-search {
-  display: flex; align-items: center; gap: 10px; background: var(--muted);
-  border: 1px solid var(--border); border-radius: 12px; padding: 11px 14px; margin-bottom: 16px;
-}
-.cookbook-search input {
-  flex: 1; background: none; border: none; outline: none; font-size: 13.5px; color: var(--text);
-}
-.cookbook-budget { font-size: 11px; color: var(--tmut); font-family: var(--mono); flex-shrink: 0; }
-
-.terminal-input {
-  display: flex; align-items: center; gap: 9px; background: var(--bg2); border: 1px solid var(--border);
-  border-radius: 10px; padding: 9px 12px; font-family: var(--mono);
-}
-.terminal-input:focus-within { border-color: rgba(255, 255, 255, 0.22); }
-.terminal-prompt { color: var(--green); font-size: 13px; flex-shrink: 0; user-select: none; }
-.terminal-input input {
-  flex: 1; background: none; border: none; outline: none; color: var(--text); font-family: var(--mono); font-size: 13px;
-}
-.terminal-progress { font-size: 12px; color: var(--tmut); display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
-
-.data-table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
-.data-table th {
-  text-align: left; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
-  color: var(--tmut); padding: 0 8px 8px; border-bottom: 1px solid var(--border);
-}
-.data-table-sort {
-  display: inline-flex; align-items: center; gap: 3px; background: none; border: none;
-  color: inherit; font: inherit; text-transform: inherit; letter-spacing: inherit; cursor: pointer; padding: 0;
-}
-.data-table-sort:hover { color: var(--text); }
-.data-table td { padding: 10px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-.data-table tr:last-child td { border-bottom: none; }
-.data-table tr:hover td { background: var(--muted); }
+/* Removed: .cookbook-* (the Cookbook UI became the Model hub, .hub-* above),
+   .terminal-* (no terminal surface exists), .data-table* (kept for years as
+   "a generic table style other tabs can use" and never used by one). None
+   were referenced by any JSX. */
 .field { margin-bottom: 20px; }
 .field label { display: block; font-size: 13px; color: var(--tmut); margin-bottom: 8px; }
 .field input[type="text"], .field input[type="password"], .field textarea, .field select {
@@ -978,7 +945,12 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
    shrink below its content, the column grows past the viewport, and the
    composer is pushed off the bottom instead of the list scrolling. */
 .chat-body { flex: 1; min-height: 0; display: flex; }
-.chat-body > .message-list, .chat-body > .empty-chat { flex: 1; min-width: 0; }
+/* `.empty-state`, NOT `.empty-chat`. The suggestions screen is rendered by the
+   EmptyChat *component* but its element carries class `empty-state`, so the
+   old selector matched nothing and a brand-new conversation never got
+   `flex: 1` -- it sized to its content instead of filling the column. Found by
+   a dead-CSS scan, which is the only reason anyone would notice. */
+.chat-body > .message-list, .chat-body > .empty-state { flex: 1; min-width: 0; }
 /* The whole conversation accepts files, so the whole conversation says so --
    an inset tint rather than a border, because a hard outline on an area this
    large reads as an error state. The composer keeps the stronger highlight
