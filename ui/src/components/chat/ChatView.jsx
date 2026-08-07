@@ -9,6 +9,8 @@ import ActivityFeed from "./ActivityFeed";
 import WorkspaceBar from "../code/WorkspaceBar";
 import FileTree from "../code/FileTree";
 import { useWorkspace } from "../../stores/workspace";
+import { useAttachments } from "../../stores/attachments";
+import { useFileDrop } from "../../lib/useFileDrop";
 
 // Model selection lives in the composer bar (ModelMenu inside Composer),
 // mode-aware recommendations, Claude-bar style. The header stays clean.
@@ -19,6 +21,8 @@ export default function ChatView({ mode, setMode }) {
   const slice = useChat((s) => s.slice(activeId || ""));
   const loadMessages = useChat((s) => s.loadMessages);
   const requestInsert = useWorkspace((s) => s.requestInsert);
+  const dropHandlers = useFileDrop();
+  const dragging = useAttachments((s) => s.dragging);
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -60,7 +64,16 @@ export default function ChatView({ mode, setMode }) {
           wrapping it in an unstyled div collapsed that chain, so the list sized
           to its content and the composer floated up under the last message
           instead of sitting at the bottom of the window. */}
-      <div className={`chat-body${mode === "code" ? " with-files" : ""}`}>
+      {/* The CONVERSATION is a drop target, not just the composer.
+          Dragging a file over the messages -- which is most of the window and
+          the obvious place to aim -- used to show the "no drop" cursor and do
+          nothing, because only .composer-wrap called preventDefault on
+          dragover. The highlight still appears on the composer, since that is
+          where the files actually land. */}
+      <div
+        className={`chat-body${mode === "code" ? " with-files" : ""}${dragging ? " dropping" : ""}`}
+        {...dropHandlers}
+      >
       {showSuggestions ? (
         <EmptyChat conversationId={activeId} mode={mode} />
       ) : (

@@ -167,6 +167,34 @@ class TestAttachmentOnlyMessages:
         [with_images] = [m for m in sent if m.get("images")]
         assert with_images["content"].strip(), "a message with images must not be empty"
 
+    async def test_tools_are_dropped_on_a_turn_carrying_an_image(self, client, fake_llm, app_state):
+        """Vision and tool-calling live in different branches of a chat
+        template, and small models routinely mishandle the combination -- the
+        tool block renders and the image part is dropped, so the model reports
+        it received no image. Looking at a picture needs no tools, so the turn
+        gives them up rather than risk the image."""
+        fake_llm.turns = [{"tokens": ["a flower"]}]
+        fake_llm.caps = {"completion", "vision"}
+        conv = (await client.post("/conversations")).json()
+        await app_state.attachments.add_bytes(conv["id"], "flower.png", b"\x89PNG")
+
+        await client.post("/chat/stream", json={
+            "conversation_id": conv["id"], "message": "what is this",
+            "mode": "general", "model": "fake-model",
+        })
+        assert fake_llm.calls[0]["tools"] is None
+
+    async def test_tools_survive_a_turn_with_no_image(self, client, fake_llm):
+        # The drop is scoped to the image turn only; ordinary messages keep the
+        # full tool set.
+        fake_llm.turns = [{"tokens": ["hi"]}]
+        conv = (await client.post("/conversations")).json()
+        await client.post("/chat/stream", json={
+            "conversation_id": conv["id"], "message": "hello",
+            "mode": "general", "model": "fake-model",
+        })
+        assert fake_llm.calls[0]["tools"], "a normal turn must still get tools"
+
     async def test_a_blind_model_gets_told_instead_of_the_bytes(self, client, fake_llm, app_state):
         fake_llm.turns = [{"tokens": ["ok"]}]
         fake_llm.caps = {"completion"}  # no vision

@@ -220,6 +220,25 @@ class AgentLoop:
         """Streams via `emit`, returns the final assistant text."""
         tools = self._registry.for_mode(mode)
         schemas = [t.to_ollama_schema() for t in tools] or None
+
+        # TOOLS ARE DROPPED WHEN THE TURN CARRIES AN IMAGE.
+        #
+        # Vision and tool-calling are handled by different branches of a model's
+        # chat template, and on small local models the combination is routinely
+        # mishandled -- the template renders the tool block and drops the image
+        # part, so the model reports it received no image. That is exactly the
+        # symptom here: the bytes are verifiably base64 and on the last user
+        # message, Ollama reports `vision` for the model, and it still answers
+        # "I cannot see an image".
+        #
+        # Looking at a picture is not a task that needs tools, so giving them up
+        # for that one turn costs nothing real. If the model wants a tool it can
+        # ask in the next turn, which carries no image and gets the full set.
+        has_images = any(m.get("images") for m in messages)
+        if has_images and schemas:
+            log.info("dropping %d tool schemas for this turn: it carries an image", len(schemas))
+            schemas = None
+
         final_text_parts: list[str] = []
 
         for iteration in range(self._max_iterations):

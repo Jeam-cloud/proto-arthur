@@ -23,6 +23,11 @@ export const useAttachments = create((set, get) => ({
   // answer -- treated as capable, never warned about. A warning for a
   // limitation that may not exist teaches people to dismiss warnings.
   caps: { vision: true, known: false },
+  // True while a file is being dragged anywhere over the chat. Lives in the
+  // store because the element that DETECTS the drag (the whole conversation)
+  // is not the element that shows the highlight (the composer).
+  dragging: false,
+  setDragging: (dragging) => set((s) => (s.dragging === dragging ? {} : { dragging })),
 
   async load(conversationId) {
     set({ conversationId, items: [] });

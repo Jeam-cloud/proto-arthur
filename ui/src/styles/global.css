@@ -979,6 +979,11 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
    composer is pushed off the bottom instead of the list scrolling. */
 .chat-body { flex: 1; min-height: 0; display: flex; }
 .chat-body > .message-list, .chat-body > .empty-chat { flex: 1; min-width: 0; }
+/* The whole conversation accepts files, so the whole conversation says so --
+   an inset tint rather than a border, because a hard outline on an area this
+   large reads as an error state. The composer keeps the stronger highlight
+   since that is where the files actually go. */
+.chat-body.dropping { background: rgba(110, 231, 183, 0.04); }
 .filetree {
   width: 232px; flex-shrink: 0; overflow-y: auto; padding: 10px 8px 20px;
   border-left: 1px solid var(--border); background: var(--bg2);

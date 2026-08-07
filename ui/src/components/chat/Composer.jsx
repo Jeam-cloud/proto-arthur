@@ -14,6 +14,7 @@ import { useToasts } from "../../stores/toasts";
 import { useWorkspace } from "../../stores/workspace";
 import { useAttachments } from "../../stores/attachments";
 import { useSettings } from "../../stores/settings";
+import { useFileDrop } from "../../lib/useFileDrop";
 import AttachmentTray from "./AttachmentTray";
 import ModelMenu from "./ModelMenu";
 import ModeBadge from "./ModeBadge";
@@ -150,28 +151,11 @@ export default function Composer({ conversationId, mode, setMode }) {
     }
   };
 
-  // Drag state is counted, not boolean. dragenter/dragleave fire for every
-  // child element the pointer crosses, so a single flag flickers off the moment
-  // the cursor moves from the composer onto the textarea inside it.
-  const dragDepth = useRef(0);
-  const [dragging, setDragging] = useState(false);
+  // The drag STATE is shared -- the whole conversation is the drop target now
+  // (see ChatView), and this is only where the highlight is drawn.
+  const dragging = useAttachments((s) => s.dragging);
+  const dropHandlers = useFileDrop();
 
-  const onDragEnter = (e) => {
-    if (![...(e.dataTransfer?.types || [])].includes("Files")) return;
-    dragDepth.current += 1;
-    setDragging(true);
-  };
-  const onDragLeave = () => {
-    dragDepth.current = Math.max(0, dragDepth.current - 1);
-    if (dragDepth.current === 0) setDragging(false);
-  };
-  const onDrop = (e) => {
-    e.preventDefault();
-    dragDepth.current = 0;
-    setDragging(false);
-    const files = e.dataTransfer?.files;
-    if (files?.length) addFiles(files);
-  };
   // A paste carrying files (a screenshot from the clipboard) attaches them; a
   // paste carrying text must fall through to the textarea untouched.
   const onPaste = (e) => {
@@ -183,13 +167,9 @@ export default function Composer({ conversationId, mode, setMode }) {
   };
 
   return (
-    <div
-      className={`composer-wrap${dragging ? " dropping" : ""}`}
-      onDragEnter={onDragEnter}
-      onDragOver={(e) => e.preventDefault()}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
-    >
+    {/* Still a drop target itself, so dropping ON the composer works even
+        though the whole conversation now accepts files too. */}
+    <div className={`composer-wrap${dragging ? " dropping" : ""}`} {...dropHandlers}>
       <AttachmentTray />
       {dragging && (
         <div className="composer-dropzone">
