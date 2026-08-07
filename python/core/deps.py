@@ -43,6 +43,7 @@ from tools.email_service import (
 )
 from tools.finance import StockHistoryTool, StockQuoteTool
 from tools.research import QuickSearchTool, WebResearchTool
+from tools.search import FindFilesTool, SearchFilesTool
 from voice.transcriber import Transcriber
 
 log = logging.getLogger(__name__)
@@ -113,7 +114,7 @@ async def build_state(settings: Settings) -> AppState:
         StockQuoteTool(sandbox),
         StockHistoryTool(sandbox),
         ReadFileTool(), ListDirTool(), WriteFileTool(), EditFileTool(), DeleteFileTool(),
-        RunPythonTool(sandbox),
+        SearchFilesTool(), FindFilesTool(), RunPythonTool(sandbox),
         OpenAppTool(), ScreenshotTool(), ClickTool(), TypeTextTool(), PressKeysTool(),
         EmailSendTool(email_router), EmailListTool(email_router), EmailSearchTool(email_router),
     ):

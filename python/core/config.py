@@ -44,6 +44,22 @@ class Settings(BaseSettings):
 
     # --- agent guardrails ---
     max_agent_iterations: int = 6      # hard cap: a confused local model can't loop forever
+    # Code mode gets its own, far higher cap.
+    #
+    # WHY the default of 6 is right everywhere else and wrong here: in Email or
+    # Finance a turn means one action -- send this, quote that -- so a model
+    # still calling tools on the seventh round is looping, and stopping it is
+    # the correct outcome. Code mode's whole premise is the opposite. "Read the
+    # files, change five of them, check your work" is a dozen calls before
+    # anything useful exists, and stopping halfway is the WORST outcome
+    # available: it leaves a half-written changeset that looks exactly like a
+    # finished one in the review panel.
+    #
+    # The runaway risk the low cap defends against is real (the target models
+    # are small), so this is raised per-mode rather than globally, and the Stop
+    # button remains the actual backstop -- a human watching is a better limiter
+    # than a number that cannot tell progress from a loop.
+    max_agent_iterations_code: int = 40
     approval_timeout_s: float = 120.0  # unanswered confirmation = denied
     tool_output_max_chars: int = 16_000
 

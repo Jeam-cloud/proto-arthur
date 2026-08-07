@@ -76,11 +76,13 @@ MODE_GUIDANCE = {
     TaskMode.CODE: (
         "You are working directly in the user's project folder. Do the work yourself "
         "with the tools instead of describing it or printing code for them to paste.\n"
-        "How to work: use list_files and read_file to understand the code BEFORE "
-        "changing it. Use edit_file for changes to existing files (copy old_text "
-        "verbatim from what you just read) and write_file only for new files or full "
-        "rewrites. Keep going across as many files as the task needs — do not stop to "
-        "ask permission between steps.\n"
+        "How to work: START by finding the relevant code — search_files to find text "
+        "inside files, find_files to locate a file by name. Searching once beats "
+        "reading ten files to find the one that matters. Then read_file the files that "
+        "came back, and only then change anything. Use edit_file for changes to "
+        "existing files (copy old_text verbatim from what you just read) and write_file "
+        "only for new files or full rewrites. Keep going across as many files as the "
+        "task needs — do not stop to ask permission between steps.\n"
         "Nothing you write touches the user's disk. Every edit is staged as a diff that "
         "they review and apply themselves, so editing is safe and you never need to ask "
         "before making one. Say what you changed and why when you are done; do not claim "
@@ -209,7 +211,10 @@ class ChatService:
             ctx = ToolContext(conversation_id=conversation_id,
                               workspace_root=workspace_root, services=services,
                               changes=changes)
-            final_text = await self._agent.run(model, messages, mode, ctx, emit)
+            final_text = await self._agent.run(
+                model, messages, mode, ctx, emit,
+                max_iterations=self._iteration_cap(mode),
+            )
             # Tell the UI to open/refresh the review panel. Emitted once after
             # the turn rather than per tool call: mid-run the changeset is a
             # half-finished thought, and a diff panel that redraws on every
@@ -234,6 +239,17 @@ class ChatService:
         if conv["title"] == "New chat":
             self._spawn(self._generate_title(conversation_id, user_text, model, emit))
         self._spawn(self._extract_memories(conversation_id, user_text, model))
+
+    def _iteration_cap(self, mode: TaskMode) -> int:
+        """How many tool calls this mode is allowed in one message.
+
+        Code mode is the outlier and gets its own number — see
+        `max_agent_iterations_code` in core/config.py for why one global cap
+        cannot serve both "send this email" and "edit these five files".
+        """
+        if mode is TaskMode.CODE:
+            return self._settings.max_agent_iterations_code
+        return self._settings.max_agent_iterations
 
     def _build_messages(self, persona, memories, user_text, history,
                         mode: TaskMode = TaskMode.GENERAL,

@@ -275,6 +275,42 @@ async def test_iteration_cap_stops_runaway(db, settings):
     assert any("limit" in d["text"] for d in emit.of(events.STATUS))
 
 
+async def test_per_run_cap_overrides_the_constructor_default(db, settings):
+    """The right ceiling is a property of the task, not of the loop: Code mode
+    needs dozens of calls where Email needs two, so the caller passes it."""
+    tool = EchoTool()
+    llm = FakeLLM([
+        {"tool_calls": [{"name": "echo", "arguments": {"text": str(i)}}]} for i in range(10)
+    ])
+    loop, _ = make_loop(db, settings, llm, [tool], max_iterations=2)
+    await loop.run("m", [], TaskMode.GENERAL, CTX, CollectingEmit(), max_iterations=5)
+    assert len(tool.executions) == 5
+
+
+async def test_code_mode_warns_that_staged_edits_may_be_half_finished(db, settings):
+    """Hitting the cap mid-edit leaves a PARTIAL changeset that looks identical
+    to a finished one in the review panel. The user has to be told."""
+    tool = EchoTool()
+    llm = FakeLLM([
+        {"tool_calls": [{"name": "echo", "arguments": {"text": str(i)}}]} for i in range(10)
+    ])
+    loop, _ = make_loop(db, settings, llm, [tool], max_iterations=2)
+    emit = CollectingEmit()
+    await loop.run("m", [], TaskMode.CODE, CTX, emit)
+    assert any("half-finished" in d["text"] for d in emit.of(events.STATUS))
+
+
+async def test_other_modes_get_no_such_warning(db, settings):
+    tool = EchoTool()
+    llm = FakeLLM([
+        {"tool_calls": [{"name": "echo", "arguments": {"text": str(i)}}]} for i in range(10)
+    ])
+    loop, _ = make_loop(db, settings, llm, [tool], max_iterations=2)
+    emit = CollectingEmit()
+    await loop.run("m", [], TaskMode.GENERAL, CTX, emit)
+    assert not any("half-finished" in d["text"] for d in emit.of(events.STATUS))
+
+
 class TestRecoverTextToolCall:
     """Unit-level coverage for the text-tool-call salvage path, independent
     of the full agent loop. Regression source: a real run_python call whose

@@ -196,6 +196,17 @@ class ChangeSet:
     def paths(self) -> list[str]:
         return sorted(self._pending)
 
+    def staged_contents(self) -> dict[str, str | None]:
+        """{relative path -> staged text}, with None meaning staged-for-delete.
+
+        Exists so SEARCH can apply the same overlay reads do. An agent that
+        edits a file and then greps for what it just wrote must find it, and
+        must NOT find text it has already removed — otherwise it draws
+        conclusions about a version of the project that no longer exists even
+        in its own head.
+        """
+        return {k: c.after for k, c in self._pending.items()}
+
     def summary(self, include_diff: bool = True) -> list[dict]:
         return [self._pending[k].to_dict(include_diff) for k in self.paths()]
 

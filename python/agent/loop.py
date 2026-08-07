@@ -216,8 +216,17 @@ class AgentLoop:
         mode: TaskMode,
         ctx: ToolContext,
         emit: Emit,
+        max_iterations: int | None = None,
     ) -> str:
-        """Streams via `emit`, returns the final assistant text."""
+        """Streams via `emit`, returns the final assistant text.
+
+        `max_iterations` overrides the constructor default for THIS run. The
+        right ceiling is a property of the task, not of the loop: one email is
+        two calls, editing a project is forty. Passing it per run keeps that
+        judgement with the caller that knows the mode (see chat_service) rather
+        than freezing one number for every mode at startup.
+        """
+        limit = max_iterations or self._max_iterations
         tools = self._registry.for_mode(mode)
         schemas = [t.to_ollama_schema() for t in tools] or None
 
@@ -241,7 +250,7 @@ class AgentLoop:
 
         final_text_parts: list[str] = []
 
-        for iteration in range(self._max_iterations):
+        for _iteration in range(limit):
             tokens: list[str] = []
             tool_calls: list[dict[str, Any]] = []
 
@@ -283,7 +292,16 @@ class AgentLoop:
                 result_msg = await self._execute_one(call, mode, ctx, emit)
                 messages.append(result_msg)
 
-        await emit(events.STATUS, {"text": "Stopped: reached the tool-use limit for one message."})
+        # Hitting the cap in Code mode is not the same event as hitting it
+        # elsewhere. Everywhere else the turn just ends; here it can end with a
+        # PARTIALLY written changeset, which is indistinguishable from a
+        # finished one in the review panel. Saying so is the difference between
+        # the user reading the diff and the user trusting it.
+        note = (" Some edits may be half-finished — read the diff before applying, "
+                "or ask Arthur to carry on." if mode is TaskMode.CODE else "")
+        await emit(events.STATUS, {
+            "text": f"Stopped: reached the tool-use limit for one message.{note}",
+        })
         return "".join(final_text_parts)
 
     async def _execute_one(

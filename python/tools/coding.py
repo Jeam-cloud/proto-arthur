@@ -322,6 +322,17 @@ class RunPythonTool(Tool):
         return [pat for pat in _SUSPICIOUS if pat in code]
 
     async def execute(self, args: RunPythonArgs, ctx: ToolContext) -> ToolResult:
+        # Checked HERE rather than by hiding the tool, so the model can say
+        # something true to the user instead of quietly pretending it never had
+        # the option. Code mode itself no longer requires Docker — only this.
+        if not await self._sandbox.is_available():
+            return ToolResult(
+                ok=False, summary="sandbox unavailable",
+                content=("Docker is not running, so code cannot be executed safely. "
+                         "Everything else in Code mode still works — tell the user they "
+                         "can start Docker Desktop if they want code run."),
+            )
+
         try:
             from codeshield.cs import CodeShield
 
