@@ -8,7 +8,9 @@ import Markdown from "./Markdown";
 import ActivityFeed from "./ActivityFeed";
 import WorkspaceBar from "../code/WorkspaceBar";
 import FileTree from "../code/FileTree";
+import ChangesPanel from "../code/ChangesPanel";
 import { useWorkspace } from "../../stores/workspace";
+import { useChanges } from "../../stores/changes";
 import { useAttachments } from "../../stores/attachments";
 import { useFileDrop } from "../../lib/useFileDrop";
 
@@ -21,6 +23,7 @@ export default function ChatView({ mode, setMode }) {
   const slice = useChat((s) => s.slice(activeId || ""));
   const loadMessages = useChat((s) => s.loadMessages);
   const requestInsert = useWorkspace((s) => s.requestInsert);
+  const loadChanges = useChanges((s) => s.load);
   const dropHandlers = useFileDrop();
   const dragging = useAttachments((s) => s.dragging);
   const bottomRef = useRef(null);
@@ -28,6 +31,15 @@ export default function ChatView({ mode, setMode }) {
   useEffect(() => {
     if (activeId) loadMessages(activeId).catch(() => {});
   }, [activeId, loadMessages]);
+
+  // Pending edits survive a mode switch and a chat switch (they live on the
+  // backend for the life of the app), so the panel has to be re-hydrated on
+  // arrival rather than only appearing when a stream happens to stage
+  // something. Otherwise you leave Code mode with 4 files unreviewed, come
+  // back, and the app looks like it forgot.
+  useEffect(() => {
+    if (mode === "code") loadChanges(activeId);
+  }, [activeId, mode, loadChanges]);
 
   // pin to bottom while streaming
   useEffect(() => {
@@ -114,6 +126,12 @@ export default function ChatView({ mode, setMode }) {
           it is the user's. */}
       {mode === "code" && <FileTree onPick={(p) => requestInsert(`\`${p}\` `)} />}
       </div>
+
+      {/* Directly above the composer, so the last thing between "the agent
+          finished" and "you type again" is the diff. Putting it in a sidebar
+          would make reviewing an optional detour, and an optional review is
+          how unreviewed code gets applied. */}
+      {mode === "code" && <ChangesPanel conversationId={activeId} />}
 
       <Composer conversationId={activeId} mode={mode} setMode={setMode} />
     </>

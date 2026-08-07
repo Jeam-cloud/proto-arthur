@@ -27,6 +27,10 @@ from security.gateway import SecurityGateway
 from tests.fakes import (
     ConfirmEchoTool, CrashTool, EchoTool, ExternalTool, FakeEmbedder, FakeLLM, FakeScanner,
 )
+from coding.changeset import ChangeSetStore
+from tools.coding import (
+    DeleteFileTool, EditFileTool, ListDirTool, ReadFileTool, WriteFileTool,
+)
 from tools.email_service import EmailRouter, SmtpImapBackend
 
 
@@ -93,13 +97,17 @@ async def app_state(settings, db, fake_llm, embedder, vault) -> AppState:
     conversations = ConversationStore(db)
     attachment_store = AttachmentStore(db, settings.data_dir)
 
+    changesets = ChangeSetStore()
+
     registry = ToolRegistry()
-    for tool in (EchoTool(), ConfirmEchoTool(), ExternalTool(), CrashTool()):
+    for tool in (EchoTool(), ConfirmEchoTool(), ExternalTool(), CrashTool(),
+                 ReadFileTool(), ListDirTool(), WriteFileTool(), EditFileTool(),
+                 DeleteFileTool()):
         registry.register(tool)
 
     agent = AgentLoop(fake_llm, registry, gateway, approvals, max_iterations=4)
     chat = ChatService(settings, fake_llm, conversations, personas, memory, gateway, agent,
-                       attachments=attachment_store)
+                       attachments=attachment_store, changesets=changesets)
 
     email_router = EmailRouter(SmtpImapBackend(db, vault))
     sandbox = _NoSandbox()
@@ -108,7 +116,7 @@ async def app_state(settings, db, fake_llm, embedder, vault) -> AppState:
         settings=settings, db=db, llm=fake_llm, vault=vault, audit=audit, gateway=gateway,
         approvals=approvals, sandbox=sandbox, memory=memory, personas=personas,
         conversations=conversations, attachments=attachment_store,
-        registry=registry, agent=agent, chat=chat,
+        changesets=changesets, registry=registry, agent=agent, chat=chat,
         email_router=email_router, transcriber=None, byok=None,
         research=research,
     )

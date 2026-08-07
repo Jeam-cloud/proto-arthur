@@ -74,9 +74,17 @@ MODE_GUIDANCE = {
         "answer from memory when the user asks you to look something up. Cite sources as [n]."
     ),
     TaskMode.CODE: (
-        "You can read/write files in the user's workspace folder and run Python in an "
-        "isolated sandbox via the tools. Writes and code execution are confirmed by the "
-        "app — call the tools directly."
+        "You are working directly in the user's project folder. Do the work yourself "
+        "with the tools instead of describing it or printing code for them to paste.\n"
+        "How to work: use list_files and read_file to understand the code BEFORE "
+        "changing it. Use edit_file for changes to existing files (copy old_text "
+        "verbatim from what you just read) and write_file only for new files or full "
+        "rewrites. Keep going across as many files as the task needs — do not stop to "
+        "ask permission between steps.\n"
+        "Nothing you write touches the user's disk. Every edit is staged as a diff that "
+        "they review and apply themselves, so editing is safe and you never need to ask "
+        "before making one. Say what you changed and why when you are done; do not claim "
+        "anything works unless you actually ran it."
     ),
     TaskMode.FINANCE: (
         "Use stock_quote and stock_history for market data — never invent prices. "
@@ -119,6 +127,7 @@ class ChatService:
         agent: AgentLoop,
         byok_router=None,  # optional BYOKRouter — cloud requests bypass tools by design
         attachments=None,  # optional AttachmentStore; None = attachments disabled
+        changesets=None,   # optional ChangeSetStore; None = Code mode staging disabled
     ):
         self._settings = settings
         self._llm = llm
@@ -129,6 +138,7 @@ class ChatService:
         self._agent = agent
         self._byok = byok_router
         self._attachments = attachments
+        self._changesets = changesets
         self._background: set[asyncio.Task] = set()
 
     async def stream_reply(
@@ -190,9 +200,22 @@ class ChatService:
         if provider != "local" and self._byok is not None:
             final_text = await self._byok.stream_chat(provider, messages, emit)
         else:
+            # Code mode's staging buffer, resolved from (conversation, folder)
+            # rather than passed down from the route: the route should not have
+            # to know that Code mode has a changeset at all. Other modes get
+            # None, and the file tools refuse to write without one.
+            changes = (self._changesets.get(conversation_id, workspace_root)
+                       if self._changesets is not None and mode is TaskMode.CODE else None)
             ctx = ToolContext(conversation_id=conversation_id,
-                              workspace_root=workspace_root, services=services)
+                              workspace_root=workspace_root, services=services,
+                              changes=changes)
             final_text = await self._agent.run(model, messages, mode, ctx, emit)
+            # Tell the UI to open/refresh the review panel. Emitted once after
+            # the turn rather than per tool call: mid-run the changeset is a
+            # half-finished thought, and a diff panel that redraws on every
+            # staged file is noise the user cannot act on yet.
+            if changes is not None and not changes.is_empty():
+                await emit(events.CHANGES_UPDATED, changes.totals())
 
         # 6. sanitize + persist assistant turn
         final_text = await self._gateway.scan_model_output(final_text)

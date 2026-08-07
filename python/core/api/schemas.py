@@ -132,6 +132,19 @@ class WorkspaceRequest(BaseModel):
     root: str | None = Field(default=None, max_length=500)
 
 
+class ChangesRequest(BaseModel):
+    """Which staged files to apply or discard.
+
+    `None` means "all", which is the one-click case after reading the diff.
+    A list is the partial case: taking three of the agent's five edits is a
+    normal code-review outcome, not an edge case.
+
+    Paths are validated again inside ChangeSet against the workspace root, so
+    a hostile list here can only ever name files that are already staged.
+    """
+    paths: list[str] | None = Field(default=None, max_length=200)
+
+
 class MemoryCreate(BaseModel):
     text: str = Field(min_length=3, max_length=500)
     category: str = Field(default="other", pattern="^(profile|preference|project|other)$")

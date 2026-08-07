@@ -1,28 +1,36 @@
-"""Coding assistant tools: file read/write inside ONE user-chosen workspace
-folder, plus sandboxed Python execution.
+"""Coding tools: read, list, edit and write files inside ONE user-chosen
+workspace folder, plus sandboxed Python execution.
 
-PATH TRAVERSAL DEFENSE (`_safe_path`) — the classic attack is `../../../
-Users/you/.ssh/id_rsa` or an absolute path. Defense in two layers: reject
-absolute-SHAPED paths under both OS conventions up front, then join to the
-workspace root, `resolve()` to collapse `..` and symlinks into a real
-absolute path, and require the result to still be inside the root. Checking
-AFTER resolve() is the whole trick — string prefix checks before resolution
-are bypassable.
+RISK SPLIT, AND WHY IT CHANGED
+------------------------------
+Reads and listing are SAFE — workspace-scoped and non-destructive.
 
-RISK SPLIT — reads/listing are SAFE (workspace only, reversible); writes are
-CONFIRM with a content preview; execution is CONFIRM plus a CodeShield (or
-fallback regex) scan whose findings are shown IN the approval dialog, so the
-human decides with the warnings in front of them.
+Writes and edits are ALSO SAFE now, which looks alarming until you see where
+they go: nowhere. They stage into the conversation's ChangeSet
+(coding/changeset.py) and never touch disk. Staged work is fully reversible,
+and reversible actions do not need a human in the loop, so the agent can work
+across many files uninterrupted. The approval gate MOVED rather than vanished:
+it now sits at the diff (POST /conversations/{cid}/changes/apply), where the
+user approves the whole batch with every change visible at once.
+
+Execution stays CONFIRM. Running code is not reversible and not previewable —
+a diff cannot tell you what `run_python` will do — so it keeps its dialog, plus
+a CodeShield (or fallback regex) scan whose findings are shown IN that dialog.
+
+EDIT VS WRITE
+-------------
+`edit_file` replaces an exact snippet; `write_file` replaces a whole file.
+Editing is the one to reach for on existing code, and the uniqueness rule below
+is what makes it trustworthy — see EditFileTool.
 """
 
 from __future__ import annotations
 
 import logging
-from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from pydantic import BaseModel, Field
 
-from core.errors import PathTraversalError
+from coding.paths import SKIP_DIRS, safe_path
 from sandbox.runner import SandboxRunner
 from tools.base import Risk, TaskMode, Tool, ToolContext, ToolResult
 
@@ -31,6 +39,10 @@ log = logging.getLogger(__name__)
 CODE_IMAGE = "arthur-code:1"
 MAX_READ_BYTES = 200_000
 
+# Re-exported under its old private name: tests/test_paths.py and any existing
+# imports still reach for tools.coding._safe_path.
+_safe_path = safe_path
+
 # Fallback patterns when CodeShield isn't installed. The sandbox (no network,
 # read-only fs) is the real containment; this is a human-facing heads-up.
 _SUSPICIOUS = [
@@ -38,30 +50,21 @@ _SUSPICIOUS = [
     "__import__", "ctypes", "urllib.request", "requests.",
 ]
 
+_NO_CHANGESET = (
+    "Error: file editing is unavailable for this conversation. Tell the user to "
+    "pick a workspace folder in the folder bar at the top of Code mode."
+)
 
-def _safe_path(workspace_root: str | None, relative: str) -> Path:
-    if not workspace_root:
-        # The signpost has to be RIGHT. This used to say "Settings → Workspace",
-        # and there is no Workspace tab -- so the one piece of guidance a user
-        # got when Code mode refused to work pointed at a screen that does not
-        # exist. The folder is now chosen in Code mode itself.
-        raise PathTraversalError(
-            "No folder is set for this chat. Choose one from the folder bar at the top of Code mode."
-        )
-    # Reject absolute-shaped paths under BOTH OS conventions before touching
-    # the filesystem. Relying only on join+resolve is platform-dependent: on
-    # Linux "C:\..." is just a weird filename; on Windows it would replace the
-    # root. Explicit rejection fails the same way everywhere.
-    win = PureWindowsPath(relative)
-    if PurePosixPath(relative).is_absolute() or win.is_absolute() or win.drive:
-        raise PathTraversalError(f"Absolute paths are not allowed: {relative!r}")
-    root = Path(workspace_root).resolve()
-    candidate = (root / relative).resolve()
-    if not candidate.is_relative_to(root):
-        raise PathTraversalError(f"Path escapes the workspace folder: {relative!r}")
-    if ".git" in candidate.parts:
-        raise PathTraversalError("Direct writes into .git are not allowed.")
-    return candidate
+
+def _changes(ctx: ToolContext):
+    """The conversation's staging buffer, or None.
+
+    Every write path calls this and BAILS on None. It never falls back to
+    writing directly to disk — a bug that disabled staging would otherwise turn
+    silently into 'the agent edits your files with no review', which is the one
+    outcome this whole design exists to prevent.
+    """
+    return ctx.changes
 
 
 class ReadFileArgs(BaseModel):
@@ -70,7 +73,10 @@ class ReadFileArgs(BaseModel):
 
 class ReadFileTool(Tool):
     name = "read_file"
-    description = "Read a text file from the user's workspace folder."
+    description = (
+        "Read a text file from the workspace folder. Always read a file before "
+        "editing it, so your edit matches the real text."
+    )
     Args = ReadFileArgs
     risk = Risk.SAFE
     modes = {TaskMode.CODE}
@@ -79,15 +85,37 @@ class ReadFileTool(Tool):
         return f"Read {args.path}"
 
     async def execute(self, args: ReadFileArgs, ctx: ToolContext) -> ToolResult:
-        p = _safe_path(ctx.workspace_root, args.path)
-        if not p.is_file():
+        cs = _changes(ctx)
+        if cs is not None:
+            # Read THROUGH the overlay: pending edits win over disk. Without
+            # this an agent that writes a file and reads it back sees the old
+            # text, decides the write failed, and rewrites it in a loop.
+            text, state = cs.read(args.path)
+        else:
+            p = safe_path(ctx.workspace_root, args.path)
+            state = "disk" if p.is_file() else "missing"
+            text = None
+            if state == "disk":
+                try:
+                    text = p.read_bytes()[:MAX_READ_BYTES].decode("utf-8")
+                except UnicodeDecodeError:
+                    state = "binary"
+
+        if state == "missing":
             return ToolResult(ok=False, content=f"No such file: {args.path}", summary="not found")
-        data = p.read_bytes()[:MAX_READ_BYTES]
-        try:
-            text = data.decode("utf-8")
-        except UnicodeDecodeError:
+        if state == "binary" or text is None:
             return ToolResult(ok=False, content=f"{args.path} is not a text file.", summary="binary file")
-        return ToolResult(ok=True, content=f"Contents of {args.path}:\n```\n{text}\n```", summary=f"read {args.path}")
+
+        truncated = ""
+        if len(text) > MAX_READ_BYTES:
+            text = text[:MAX_READ_BYTES]
+            truncated = "\n(truncated)"
+        note = " (including your pending edits)" if state == "staged" else ""
+        return ToolResult(
+            ok=True,
+            content=f"Contents of {args.path}{note}:\n```\n{text}\n```{truncated}",
+            summary=f"read {args.path}",
+        )
 
 
 class ListDirArgs(BaseModel):
@@ -105,12 +133,28 @@ class ListDirTool(Tool):
         return f"List files in {args.path}"
 
     async def execute(self, args: ListDirArgs, ctx: ToolContext) -> ToolResult:
-        p = _safe_path(ctx.workspace_root, args.path)
+        p = safe_path(ctx.workspace_root, args.path)
         if not p.is_dir():
             return ToolResult(ok=False, content=f"No such folder: {args.path}", summary="not found")
         entries = sorted(p.iterdir(), key=lambda e: (e.is_file(), e.name.lower()))[:200]
-        lines = [f"{'[dir] ' if e.is_dir() else ''}{e.name}" for e in entries if e.name != ".git"]
-        return ToolResult(ok=True, content="\n".join(lines) or "(empty)", summary=f"{len(lines)} entries")
+        lines = [f"{'[dir] ' if e.is_dir() else ''}{e.name}"
+                 for e in entries if e.name not in SKIP_DIRS]
+
+        # Files that exist only as pending creates are invisible to iterdir(),
+        # so list them too — same reasoning as the read overlay.
+        cs = _changes(ctx)
+        if cs is not None:
+            prefix = "" if args.path in (".", "") else args.path.strip("/") + "/"
+            existing = {e.name for e in entries}
+            for change in cs.summary(include_diff=False):
+                rel = change["path"]
+                if change["kind"] == "create" and rel.startswith(prefix):
+                    tail = rel[len(prefix):]
+                    if "/" not in tail and tail not in existing:
+                        lines.append(f"{tail} (pending, not yet applied)")
+
+        return ToolResult(ok=True, content="\n".join(lines) or "(empty)",
+                          summary=f"{len(lines)} entries")
 
 
 class WriteFileArgs(BaseModel):
@@ -120,22 +164,133 @@ class WriteFileArgs(BaseModel):
 
 class WriteFileTool(Tool):
     name = "write_file"
-    description = "Create or overwrite a text file in the workspace folder."
+    description = (
+        "Create a new file, or replace an existing file's entire contents. "
+        "The change is staged for the user to review as a diff — it does not "
+        "touch their disk yet, so make the edit and keep going. For a small "
+        "change to an existing file, prefer edit_file."
+    )
     Args = WriteFileArgs
-    risk = Risk.CONFIRM  # destructive: can overwrite the user's work
+    risk = Risk.SAFE  # stages only; the gate is the diff review, not this call
     modes = {TaskMode.CODE}
 
     def approval_summary(self, args: WriteFileArgs) -> str:
         preview = args.content[:400] + ("…" if len(args.content) > 400 else "")
-        return f"Write {len(args.content)} chars to {args.path}\n---\n{preview}"
+        return f"Stage {len(args.content)} chars to {args.path}\n---\n{preview}"
 
     async def execute(self, args: WriteFileArgs, ctx: ToolContext) -> ToolResult:
-        p = _safe_path(ctx.workspace_root, args.path)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        existed = p.exists()
-        p.write_text(args.content, encoding="utf-8")
-        return ToolResult(ok=True, content=f"{'Overwrote' if existed else 'Created'} {args.path}.",
-                          summary=f"wrote {args.path}")
+        cs = _changes(ctx)
+        if cs is None:
+            return ToolResult(ok=False, content=_NO_CHANGESET, summary="staging unavailable")
+        change = cs.stage_write(args.path, args.content)
+        adds, dels = change.stats()
+        verb = {"create": "Created", "modify": "Rewrote", "delete": "Emptied"}[change.kind]
+        return ToolResult(
+            ok=True,
+            content=f"{verb} {args.path} (+{adds}/-{dels}), staged for review.",
+            summary=f"staged {args.path}",
+        )
+
+
+class EditFileArgs(BaseModel):
+    path: str = Field(description="Path relative to the workspace folder")
+    old_text: str = Field(
+        min_length=1, max_length=200_000,
+        description="Exact text to find, copied verbatim from the file including indentation",
+    )
+    new_text: str = Field(
+        max_length=200_000, description="Text to put in its place. Empty string deletes it.",
+    )
+    replace_all: bool = Field(
+        default=False, description="Replace every occurrence instead of requiring a unique match",
+    )
+
+
+class EditFileTool(Tool):
+    name = "edit_file"
+    description = (
+        "Change part of an existing file by replacing an exact snippet. "
+        "old_text must appear EXACTLY once (copy it verbatim from read_file, "
+        "with the surrounding lines needed to make it unique) unless you set "
+        "replace_all. Staged for review like write_file."
+    )
+    Args = EditFileArgs
+    risk = Risk.SAFE
+    modes = {TaskMode.CODE}
+
+    def approval_summary(self, args: EditFileArgs) -> str:
+        return f"Edit {args.path}"
+
+    async def execute(self, args: EditFileArgs, ctx: ToolContext) -> ToolResult:
+        cs = _changes(ctx)
+        if cs is None:
+            return ToolResult(ok=False, content=_NO_CHANGESET, summary="staging unavailable")
+
+        text, state = cs.read(args.path)
+        if state == "missing":
+            return ToolResult(ok=False, summary="not found",
+                              content=f"No such file: {args.path}. Use write_file to create it.")
+        if text is None:
+            return ToolResult(ok=False, content=f"{args.path} is not a text file.", summary="binary file")
+
+        count = text.count(args.old_text)
+        # THE UNIQUENESS RULE IS THE SAFETY PROPERTY.
+        #
+        # A model asked to fix "the second `return None`" cannot see line
+        # numbers reliably and will happily edit the first one. Demanding a
+        # unique match makes that class of mistake IMPOSSIBLE to express: the
+        # edit either identifies exactly one place or it is refused. The error
+        # goes back as a tool result, so the model simply retries with more
+        # surrounding context — which is precisely the fix.
+        if count == 0:
+            return ToolResult(
+                ok=False, summary="no match",
+                content=(f"old_text was not found in {args.path}. Re-read the file and copy the "
+                         "snippet exactly, including indentation and line breaks."),
+            )
+        if count > 1 and not args.replace_all:
+            return ToolResult(
+                ok=False, summary=f"{count} matches",
+                content=(f"old_text appears {count} times in {args.path}. Include more surrounding "
+                         "lines so it matches exactly one place, or set replace_all=true."),
+            )
+
+        updated = (text.replace(args.old_text, args.new_text) if args.replace_all
+                   else text.replace(args.old_text, args.new_text, 1))
+        change = cs.stage_write(args.path, updated)
+        adds, dels = change.stats()
+        where = f"{count} places" if args.replace_all else "1 place"
+        return ToolResult(
+            ok=True,
+            content=f"Edited {args.path} in {where} (+{adds}/-{dels}), staged for review.",
+            summary=f"edited {args.path}",
+        )
+
+
+class DeleteFileArgs(BaseModel):
+    path: str = Field(description="Path relative to the workspace folder")
+
+
+class DeleteFileTool(Tool):
+    name = "delete_file"
+    description = "Stage a file for deletion. Shown in the review diff before anything is removed."
+    Args = DeleteFileArgs
+    risk = Risk.SAFE
+    modes = {TaskMode.CODE}
+
+    def approval_summary(self, args: DeleteFileArgs) -> str:
+        return f"Delete {args.path}"
+
+    async def execute(self, args: DeleteFileArgs, ctx: ToolContext) -> ToolResult:
+        cs = _changes(ctx)
+        if cs is None:
+            return ToolResult(ok=False, content=_NO_CHANGESET, summary="staging unavailable")
+        _text, state = cs.read(args.path)
+        if state == "missing":
+            return ToolResult(ok=False, content=f"No such file: {args.path}", summary="not found")
+        cs.stage_delete(args.path)
+        return ToolResult(ok=True, content=f"Staged {args.path} for deletion.",
+                          summary=f"staged delete {args.path}")
 
 
 class RunPythonArgs(BaseModel):
@@ -149,7 +304,7 @@ class RunPythonTool(Tool):
         "45s limit) and return stdout/stderr. Print what you want to see."
     )
     Args = RunPythonArgs
-    risk = Risk.CONFIRM
+    risk = Risk.CONFIRM  # not reversible and not previewable — keeps its dialog
     modes = {TaskMode.CODE}
 
     def __init__(self, sandbox: SandboxRunner):

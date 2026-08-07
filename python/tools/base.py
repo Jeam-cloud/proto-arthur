@@ -87,3 +87,9 @@ class ToolContext:
     conversation_id: str
     workspace_root: str | None = None
     services: dict[str, Any] | None = None  # sandbox runner, vault, graph client…
+    # Code mode's pending-edit buffer (coding.changeset.ChangeSet). Typed as
+    # Any so this module — the contract every tool depends on — stays free of
+    # imports from any one mode's domain package. None outside Code mode, and
+    # the file tools treat None as "staging unavailable" rather than falling
+    # back to writing straight to disk: failing closed is the whole point.
+    changes: Any = None

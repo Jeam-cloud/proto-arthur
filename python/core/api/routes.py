@@ -32,7 +32,7 @@ from core.api.schemas import (
     ApprovalDecision, ArchiveRequest, ChatRequest, MemoryCreate, MemoryUpdate, PersonaBody,
     PullRequest, RenameRequest, ResearchExportRequest, ResearchFindSourcesRequest,
     ResearchPlanRequest, ResearchRunRequest, ResearchSynthesizeRequest, SecretBody, SettingsPatch,
-    AttachPathsRequest, WorkspaceRequest,
+    AttachPathsRequest, ChangesRequest, WorkspaceRequest,
 )
 from research import citations as research_citations
 from research import engine as research_engine
@@ -653,6 +653,66 @@ async def set_conversation_workspace(request: Request, cid: str, body: Workspace
     if body.root:
         await s.db.set_setting("workspace_root", body.root)
     return {"root": body.root, "bound": bool(body.root)}
+
+
+# ---------- code mode: pending changes ----------
+#
+# The review gate. Every file the agent "wrote" this session is sitting in a
+# ChangeSet; these three routes are the only way it reaches disk, and the only
+# way it goes away. Nothing here is reachable in other modes because nothing in
+# other modes ever stages anything.
+
+
+@router.get("/conversations/{cid}/changes")
+async def list_changes(request: Request, cid: str, diffs: bool = True) -> dict:
+    """Pending edits for this chat, newest state first.
+
+    `diffs=false` exists for the header badge, which only needs the counts. A
+    twelve-file diff is a lot of bytes to ship on a poll that renders "3 files".
+    """
+    s = state(request)
+    cs = s.changesets.peek(cid)
+    if cs is None:
+        return {"changes": [], "files": 0, "additions": 0, "deletions": 0}
+    return {"changes": cs.summary(include_diff=diffs), **cs.totals()}
+
+
+@router.post("/conversations/{cid}/changes/apply")
+async def apply_changes(request: Request, cid: str, body: ChangesRequest) -> dict:
+    """Write staged edits to disk. THE one destructive route in Code mode.
+
+    `paths=null` means all — the common case, one click after reading the diff.
+    Passing a subset lets the user take three of the agent's five edits, which
+    matters because partial agreement is the normal outcome of a code review.
+
+    Conflicts (the file changed underneath us) are reported, not forced; see
+    ChangeSet.apply.
+    """
+    s = state(request)
+    cs = s.changesets.peek(cid)
+    if cs is None or cs.is_empty():
+        return {"applied": [], "conflicts": [], "failed": [], "remaining": 0}
+    result = cs.apply(body.paths)
+    # Audited because this is the moment the agent's work becomes real. If a
+    # user later finds a file they did not expect to change, the trail says
+    # which conversation applied it and when.
+    await s.audit.record(
+        "code.changes_applied", "info",
+        conversation_id=cid,
+        applied=", ".join(result["applied"]),
+        conflicts=", ".join(result["conflicts"]),
+    )
+    return result
+
+
+@router.post("/conversations/{cid}/changes/discard")
+async def discard_changes(request: Request, cid: str, body: ChangesRequest) -> dict:
+    s = state(request)
+    cs = s.changesets.peek(cid)
+    if cs is None:
+        return {"discarded": [], "remaining": 0}
+    discarded = cs.discard(body.paths)
+    return {"discarded": discarded, "remaining": len(cs.paths())}
 
 
 # ---------- attachments ----------

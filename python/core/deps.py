@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from agent.loop import AgentLoop
 from agent.registry import ToolRegistry
 from byok.router import BYOKRouter
+from coding.changeset import ChangeSetStore
 from core.chat_service import ChatService
 from core.config import Settings
 from core.attachments import AttachmentStore
@@ -32,7 +33,9 @@ from security.audit import AuditLog
 from security.gateway import SecurityGateway
 from security.scanners import build_scanner
 from security.vault import SecretsVault
-from tools.coding import ListDirTool, ReadFileTool, RunPythonTool, WriteFileTool
+from tools.coding import (
+    DeleteFileTool, EditFileTool, ListDirTool, ReadFileTool, RunPythonTool, WriteFileTool,
+)
 from tools.computer import ClickTool, OpenAppTool, PressKeysTool, ScreenshotTool, TypeTextTool
 from tools.email_service import (
     EmailListTool, EmailRouter, EmailSearchTool, EmailSendTool,
@@ -59,6 +62,7 @@ class AppState:
     personas: PersonaStore
     conversations: ConversationStore
     attachments: AttachmentStore
+    changesets: ChangeSetStore
     registry: ToolRegistry
     agent: AgentLoop
     chat: ChatService
@@ -93,6 +97,9 @@ async def build_state(settings: Settings) -> AppState:
     await personas.ensure_default()
     conversations = ConversationStore(db)
     attachment_store = AttachmentStore(db, settings.data_dir)
+    # Deliberately process-lifetime and in-memory: unapplied edits should not
+    # survive a restart. See the module docstring in coding/changeset.py.
+    changesets = ChangeSetStore()
 
     # One backend: SMTP/IMAP with an app password. MS Graph was removed --
     # see the module docstring in tools/email_service.py for why.
@@ -105,7 +112,8 @@ async def build_state(settings: Settings) -> AppState:
         QuickSearchTool(vault),
         StockQuoteTool(sandbox),
         StockHistoryTool(sandbox),
-        ReadFileTool(), ListDirTool(), WriteFileTool(), RunPythonTool(sandbox),
+        ReadFileTool(), ListDirTool(), WriteFileTool(), EditFileTool(), DeleteFileTool(),
+        RunPythonTool(sandbox),
         OpenAppTool(), ScreenshotTool(), ClickTool(), TypeTextTool(), PressKeysTool(),
         EmailSendTool(email_router), EmailListTool(email_router), EmailSearchTool(email_router),
     ):
@@ -115,7 +123,8 @@ async def build_state(settings: Settings) -> AppState:
                       max_iterations=settings.max_agent_iterations)
     byok = BYOKRouter(vault)
     chat = ChatService(settings, llm, conversations, personas, memory, gateway, agent,
-                       byok_router=byok, attachments=attachment_store)
+                       byok_router=byok, attachments=attachment_store,
+                       changesets=changesets)
     # Research mode does NOT go through the agent loop: an investigation is a
     # fixed Python state machine, not a model deciding what to do next. It
     # reuses the same vault/sandbox/embedder/gateway so the trust boundaries are
@@ -127,7 +136,7 @@ async def build_state(settings: Settings) -> AppState:
         settings=settings, db=db, llm=llm, vault=vault, audit=audit, gateway=gateway,
         approvals=approvals, sandbox=sandbox, memory=memory, personas=personas,
         conversations=conversations, attachments=attachment_store,
-        registry=registry, agent=agent, chat=chat,
+        changesets=changesets, registry=registry, agent=agent, chat=chat,
         email_router=email_router, transcriber=Transcriber(), byok=byok,
         research=research,
     )

@@ -12,6 +12,7 @@ import { create } from "zustand";
 import { api } from "../api/client";
 import { streamSSE } from "../api/sse";
 import { useApprovals } from "./approvals";
+import { useChanges } from "./changes";
 import { useConversations } from "./conversations";
 
 // ONE stable, frozen reference for the "no data yet" slice.
@@ -119,6 +120,12 @@ export const useChat = create((set, get) => ({
             break;
           case "approval_resolved":
             useApprovals.getState().dismiss(data.id);
+            break;
+          // The turn staged file edits. The event carries only totals, so the
+          // panel fetches the diffs itself — see api/changes.js for why they
+          // are not pushed down the stream.
+          case "changes_updated":
+            useChanges.getState().load(cid);
             break;
           case "memory_used":
             get()._patch(cid, { memoryUsed: data.items });

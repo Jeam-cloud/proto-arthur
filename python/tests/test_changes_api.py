@@ -1,0 +1,119 @@
+"""The review routes over the real app: /changes, /changes/apply, /changes/discard.
+
+These exist separately from test_changeset.py because the guarantee being
+checked is different. There, "staging does not touch disk". Here, "the only
+route that writes to disk is the one the user clicks Apply on, and it needs a
+token to reach".
+"""
+
+import httpx
+import pytest
+
+from core.app import create_app
+
+
+@pytest.fixture
+async def client(settings, app_state):
+    app = create_app(settings=settings, state=app_state)
+    async with httpx.ASGITransport(app=app) as transport:
+        app.state.arthur = app_state
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://127.0.0.1",
+            headers={"Authorization": "Bearer test-token-123"},
+        ) as c:
+            yield c
+
+
+@pytest.fixture
+async def anon(settings, app_state):
+    """Same app, no token — these routes write to the user's disk, so 'is it
+    behind auth' is a property worth asserting, not assuming."""
+    app = create_app(settings=settings, state=app_state)
+    async with httpx.ASGITransport(app=app) as transport:
+        app.state.arthur = app_state
+        async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1") as c:
+            yield c
+
+
+@pytest.fixture
+def project(tmp_path):
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "app.py").write_text("x = 1\n")
+    return root
+
+
+async def new_conversation(client) -> str:
+    res = await client.post("/conversations", json={"title": "code"})
+    return res.json()["id"]
+
+
+def stage(app_state, cid, root, path, content):
+    app_state.changesets.get(cid, str(root)).stage_write(path, content)
+
+
+class TestListChanges:
+    async def test_empty_for_a_fresh_conversation(self, client):
+        cid = await new_conversation(client)
+        res = await client.get(f"/conversations/{cid}/changes")
+        assert res.status_code == 200
+        assert res.json() == {"changes": [], "files": 0, "additions": 0, "deletions": 0}
+
+    async def test_lists_staged_diff(self, client, app_state, project):
+        cid = await new_conversation(client)
+        stage(app_state, cid, project, "app.py", "x = 2\n")
+        body = (await client.get(f"/conversations/{cid}/changes")).json()
+        assert body["files"] == 1 and body["additions"] == 1 and body["deletions"] == 1
+        assert "x = 2" in body["changes"][0]["diff"]
+
+    async def test_diffs_false_omits_the_diff_body(self, client, app_state, project):
+        cid = await new_conversation(client)
+        stage(app_state, cid, project, "app.py", "x = 2\n")
+        body = (await client.get(f"/conversations/{cid}/changes?diffs=false")).json()
+        assert "diff" not in body["changes"][0]
+        assert body["files"] == 1  # counts still arrive
+
+    async def test_requires_auth(self, anon):
+        res = await anon.get("/conversations/anything/changes")
+        assert res.status_code == 401
+
+
+class TestApply:
+    async def test_apply_writes_to_disk(self, client, app_state, project):
+        cid = await new_conversation(client)
+        stage(app_state, cid, project, "app.py", "x = 2\n")
+        assert (project / "app.py").read_text() == "x = 1\n"   # untouched while pending
+
+        res = await client.post(f"/conversations/{cid}/changes/apply", json={"paths": None})
+        assert res.json()["applied"] == ["app.py"]
+        assert (project / "app.py").read_text() == "x = 2\n"
+
+    async def test_apply_subset_leaves_the_rest_pending(self, client, app_state, project):
+        cid = await new_conversation(client)
+        stage(app_state, cid, project, "a.py", "A")
+        stage(app_state, cid, project, "b.py", "B")
+        res = await client.post(f"/conversations/{cid}/changes/apply", json={"paths": ["a.py"]})
+        assert res.json()["applied"] == ["a.py"] and res.json()["remaining"] == 1
+        assert (project / "a.py").exists() and not (project / "b.py").exists()
+
+    async def test_apply_is_audited(self, client, app_state, project):
+        cid = await new_conversation(client)
+        stage(app_state, cid, project, "app.py", "x = 2\n")
+        await client.post(f"/conversations/{cid}/changes/apply", json={"paths": None})
+        kinds = [e["kind"] for e in await app_state.audit.recent()]
+        assert "code.changes_applied" in kinds
+
+    async def test_apply_with_nothing_staged_is_a_no_op(self, client):
+        cid = await new_conversation(client)
+        res = await client.post(f"/conversations/{cid}/changes/apply", json={"paths": None})
+        assert res.json()["applied"] == []
+
+
+class TestDiscard:
+    async def test_discard_leaves_disk_untouched(self, client, app_state, project):
+        cid = await new_conversation(client)
+        stage(app_state, cid, project, "app.py", "x = 2\n")
+        res = await client.post(f"/conversations/{cid}/changes/discard", json={"paths": None})
+        assert res.json()["discarded"] == ["app.py"]
+        assert (project / "app.py").read_text() == "x = 1\n"
+        assert (await client.get(f"/conversations/{cid}/changes")).json()["files"] == 0

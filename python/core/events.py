@@ -17,6 +17,13 @@ TITLE = "title"                    # {conversation_id, title}
 ERROR = "error"                    # {code, message}
 DONE = "done"                      # {message_id, conversation_id}
 
+# ---- code mode ----
+# The turn staged file edits. Carries only TOTALS ({files, additions,
+# deletions}) — the diffs themselves are fetched over HTTP, not pushed down the
+# stream, because a multi-file diff is far too big to belong in an SSE frame
+# and the user may never open the panel.
+CHANGES_UPDATED = "changes_updated"  # {files, additions, deletions}
+
 # ---- research mode ----
 # An investigation is not a token stream, so it needs its own vocabulary. Each
 # event is a whole object the UI can render on its own: lanes redraw one row,
