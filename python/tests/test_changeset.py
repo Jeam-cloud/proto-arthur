@@ -117,6 +117,33 @@ class TestConflicts:
         assert cs.paths() == ["src/app.py"]                 # still pending, not lost
 
 
+class TestConflictLifecycle:
+    """A conflict has to STICK to the file (so the card can show it) and then
+    CLEAR when the edit is redone — otherwise the same file conflicts forever."""
+
+    def test_conflict_is_reported_on_the_change(self, cs, tmp_path):
+        cs.stage_write("src/app.py", "agent version\n")
+        (tmp_path / "src" / "app.py").write_text("user edited\n")
+        cs.apply()
+        assert cs.summary()[0]["conflict"] is True
+
+    def test_restaging_adopts_the_users_version_as_the_baseline(self, cs, tmp_path):
+        cs.stage_write("src/app.py", "agent version\n")
+        (tmp_path / "src" / "app.py").write_text("user edited\n")
+        cs.apply()
+
+        # "Re-read and retry": the agent reads current disk and edits again.
+        cs.stage_write("src/app.py", "user edited, plus agent change\n")
+        assert cs.summary()[0]["conflict"] is False
+        result = cs.apply()
+        assert result["applied"] == ["src/app.py"]
+        assert (tmp_path / "src" / "app.py").read_text() == "user edited, plus agent change\n"
+
+    def test_clean_changes_are_not_marked_conflicted(self, cs):
+        cs.stage_write("src/app.py", "fine\n")
+        assert cs.summary()[0]["conflict"] is False
+
+
 class TestStore:
     def test_changing_folder_drops_pending_edits(self, workspace, tmp_path):
         store = ChangeSetStore()

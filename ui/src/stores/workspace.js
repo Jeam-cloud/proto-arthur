@@ -81,6 +81,13 @@ export const useWorkspace = create((set, get) => ({
   toggleDir: (path) =>
     set((s) => ({ expanded: { ...s.expanded, [path]: !s.expanded[path] } })),
 
+  // Collapse-all and hide-panel are separate controls on purpose: folding the
+  // folders and putting the whole panel away are different intentions, and one
+  // chevron cannot mean both.
+  collapseAll: () => set({ expanded: {} }),
+  treeOpen: true,
+  toggleTree: () => set((s) => ({ treeOpen: !s.treeOpen })),
+
   // Text the file tree wants appended to the composer's draft.
   //
   // WHY a token rather than just the string: the composer consumes this in an

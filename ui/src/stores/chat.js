@@ -89,6 +89,10 @@ export const useChat = create((set, get) => ({
       activity: [], memoryUsed: [], streaming: true, error: null,
     });
 
+    // A new turn is not cut short until it says so; leaving the banner up would
+    // accuse this turn of something the last one did.
+    useChanges.getState().clearCapped();
+
     const aborter = new AbortController();
     set((st) => ({ aborters: { ...st.aborters, [cid]: aborter } }));
 
@@ -126,6 +130,12 @@ export const useChat = create((set, get) => ({
           // are not pushed down the stream.
           case "changes_updated":
             useChanges.getState().load(cid);
+            break;
+          // The turn ran out of tool calls rather than finishing, so whatever
+          // is staged is PARTIAL. The panel says so above the files; applying
+          // half a change is the mistake that screen exists to prevent.
+          case "tool_limit":
+            if (data.mode === "code") useChanges.getState().markCapped();
             break;
           case "memory_used":
             get()._patch(cid, { memoryUsed: data.items });

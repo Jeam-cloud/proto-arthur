@@ -956,25 +956,65 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
    large reads as an error state. The composer keeps the stronger highlight
    since that is where the files actually go. */
 .chat-body.dropping { background: rgba(110, 231, 183, 0.04); }
+/* ---------- Code mode: the decorated file tree ----------
+   ONE tree, the whole project, changes marked in place. See FileTree.jsx for
+   why a separate "staged" list was rejected. */
 .filetree {
-  width: 232px; flex-shrink: 0; overflow-y: auto; padding: 10px 8px 20px;
+  width: 232px; flex-shrink: 0; display: flex; flex-direction: column; min-height: 0;
   border-left: 1px solid var(--border); background: var(--bg2);
 }
+.filetree.collapsed {
+  width: 38px; align-items: center; padding: 11px 0; gap: 8px;
+}
 .filetree-head {
-  font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em;
-  color: var(--tmut); padding: 4px 8px 9px;
+  display: flex; align-items: center; gap: 6px; padding: 11px 10px 8px; flex-shrink: 0;
 }
+.filetree-title { font-size: 12px; font-weight: 600; color: var(--tmut); flex: 1; }
+.filetree-body { flex: 1; overflow-y: auto; padding: 0 6px 12px; }
 .filetree-empty { font-size: 12px; color: var(--tmut); padding: 8px; line-height: 1.5; }
-.filetree-row {
-  display: flex; align-items: center; gap: 6px; width: 100%;
-  padding: 4px 8px; border: none; background: none; border-radius: 6px;
-  color: var(--tmut); font-size: 12.5px; font-family: inherit; text-align: left; cursor: pointer;
+.filetree-more { font-size: 11.5px; color: var(--tmut); font-style: italic; padding: 6px 10px; opacity: 0.7; }
+
+/* Count badge: changed files, not total files. The number that matters is the
+   one you still have to decide about. */
+.tree-count {
+  font-family: var(--mono); font-size: 10.5px; font-weight: 700; flex-shrink: 0;
+  padding: 1px 6px; border-radius: 5px;
+  background: rgba(110, 231, 183, 0.14); color: var(--green);
 }
-.filetree-row:hover { background: var(--emph); color: var(--text); }
-.filetree-row svg { flex-shrink: 0; }
-.filetree-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.filetree-caret { transition: transform 0.13s; }
-.filetree-caret.open { transform: rotate(90deg); }
+
+.tree-row {
+  display: flex; align-items: center; gap: 4px; width: 100%; height: 24px;
+  padding-right: 6px; border: 0; background: none; border-radius: 6px;
+  font-size: 12px; text-align: left; cursor: pointer; position: relative;
+  color: var(--text);
+}
+.tree-row:hover { background: var(--emph); }
+.tree-row.dir { font-family: inherit; }
+.tree-row.file { font-family: var(--mono); }
+.tree-icon { flex-shrink: 0; opacity: 0.75; }
+.tree-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chev { flex-shrink: 0; opacity: 0.75; transition: transform 0.15s; }
+.chev.open { transform: rotate(90deg); }
+.chev-space { width: 12px; flex-shrink: 0; }
+/* Faint verticals, one per depth level. Without them four levels of nesting is
+   whitespace, and an indented list stops reading as a tree. */
+.tree-guide { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--border); }
+
+/* Decorations. Colour AND a letter, never colour alone. */
+.tree-row.add .tree-name, .tree-row.add .tree-badge { color: var(--green); }
+.tree-row.mod .tree-name, .tree-row.mod .tree-badge { color: var(--yellow); }
+.tree-row.del .tree-name, .tree-row.del .tree-badge { color: var(--red); }
+.tree-row.del .tree-name { text-decoration: line-through; }
+.tree-row.add .tree-name, .tree-row.mod .tree-name, .tree-row.del .tree-name { font-weight: 600; }
+/* A folder whose CONTENTS changed. Load-bearing: without it, collapsing a
+   folder hides the fact that most of the edits are inside it. */
+.tree-row.dir.under .tree-name { color: var(--yellow); }
+.tree-row.conflict .tree-name { color: var(--yellow); }
+.tree-stat { font-family: var(--mono); font-size: 10.5px; color: var(--tmut); flex-shrink: 0; }
+.tree-badge {
+  font-family: var(--mono); font-size: 10.5px; font-weight: 700;
+  width: 9px; text-align: center; flex-shrink: 0;
+}
 
 /* ---- home: the brief composer ----
    The card is SEGMENTED: one band per decision, divided by rules, with the
@@ -1609,60 +1649,138 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
 .modal.narrow { max-width: 420px; }
 .modal.narrow p { color: var(--tmut); font-size: 13.5px; line-height: 1.65; margin: 10px 0 4px; }
 
-/* ---------- Code mode: the review gate ---------- */
-/* Sits between the conversation and the composer. It is chrome only while
-   collapsed; open, it is the most important thing on screen, because it is the
-   last moment before the agent's work becomes real. */
-.changes-panel {
-  flex-shrink: 0; border-top: 1px solid var(--border); background: var(--bg2);
-  max-height: 52vh; display: flex; flex-direction: column;
+
+/* ---------- Code mode: the review gate ----------
+   Sits between the conversation and the composer. Collapsed it is one line of
+   chrome; open it takes the column, because at that moment it IS the task. */
+.code-idle {
+  display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+  margin: 0 22px 10px; padding: 11px 14px;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--bg2);
+  font-size: 12.5px; color: var(--tmut); line-height: 1.5;
 }
+.code-idle > svg { flex-shrink: 0; }
+
+.changes-panel {
+  flex-shrink: 0; margin: 0 22px 10px; overflow: hidden;
+  border: 1px solid var(--border); border-radius: 13px; background: var(--bg2);
+  display: flex; flex-direction: column; min-height: 0;
+}
+/* Expanded, the panel takes the column rather than a fixed max-height: a review
+   squeezed into 52vh scrolls in a slot while empty space sits above it. */
+.changes-panel.expanded { flex: 1 1 0; }
 .changes-head {
-  display: flex; align-items: center; gap: 8px; width: 100%; flex-shrink: 0;
-  padding: 10px 20px; background: none; border: 0; cursor: pointer;
-  color: var(--text); font-size: 12.5px; text-align: left;
+  display: flex; align-items: center; gap: 10px; width: 100%; flex-shrink: 0;
+  padding: 12px 14px; background: none; border: 0; cursor: pointer;
+  color: var(--text); font-size: 13.5px; text-align: left;
 }
 .changes-head:hover { background: var(--muted); }
 .changes-title { font-weight: 600; }
-.changes-hint { margin-left: auto; color: var(--tmut); font-size: 11.5px; }
-/* +/- counts. Mono so the columns line up between rows, which is most of what
-   makes a list of diffs scannable. */
-.diff-stat { font-family: var(--mono); font-size: 11px; }
+.changes-hint { margin-left: auto; color: var(--tmut); font-size: 12.5px; }
+.diff-stat { font-family: var(--mono); font-size: 12px; }
 .diff-stat.add { color: var(--green); }
 .diff-stat.del { color: var(--red); }
 
-.changes-list { overflow-y: auto; padding: 0 12px 8px; }
-.change { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 8px; overflow: hidden; }
-/* Unticked files fade rather than disappear: you need to see what you are
+.changes-list { flex: 1 1 0; overflow-y: auto; padding: 4px 12px 12px; border-top: 1px solid var(--border); min-height: 0; }
+
+.change {
+  border: 1px solid var(--border); border-radius: 13px; background: var(--bg2);
+  margin-bottom: 9px; overflow: hidden;
+  transition: opacity 0.15s, background 0.3s, border-color 0.3s;
+}
+/* Unticked files fade, they do not vanish: you need to see what you are
    choosing NOT to take as clearly as what you are taking. */
 .change.deselected { opacity: 0.45; }
-.change-head { display: flex; align-items: center; gap: 8px; padding: 7px 10px; background: var(--muted); }
-.change-head input[type="checkbox"] { accent-color: var(--green); cursor: pointer; }
-.change-path {
-  flex: 1; min-width: 0; background: none; border: 0; cursor: pointer; text-align: left;
-  font-family: var(--mono); font-size: 12px; color: var(--text);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+.change.conflict { border-color: rgba(252, 211, 77, 0.45); }
+/* Brief highlight when the tree jumps you here, so the eye lands in the right
+   place instead of hunting for what just scrolled. */
+.change.flash { border-color: rgba(244, 246, 250, 0.4); background: var(--muted); }
+.change-head { display: flex; align-items: center; gap: 10px; padding: 11px 13px; }
+.change-body { border-top: 1px solid var(--border); }
+
+.tickbox {
+  width: 17px; height: 17px; border-radius: 5px; flex-shrink: 0; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; padding: 0;
+  border: 1px solid var(--border); background: transparent; color: var(--inv);
 }
+.tickbox.on { border: none; background: var(--accent); }
+.tickbox:disabled { cursor: not-allowed; opacity: 0.5; }
+
+/* Directory dims and truncates; the FILENAME never does. The name is what
+   identifies the file — the path is context you can afford to lose. */
+.change-path { display: flex; flex: 1; min-width: 96px; font-family: var(--mono); font-size: 12.5px; }
+.change-path .dir { color: var(--tmut); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.change-path .name { white-space: nowrap; flex-shrink: 0; }
+.change-kind { flex-shrink: 0; }
 .change-kind.create { color: var(--green); }
 .change-kind.delete { color: var(--red); }
 .change-kind.modify { color: var(--tmut); }
 
-.diff {
-  margin: 0; padding: 6px 0; overflow-x: auto; background: var(--bg);
-  font-family: var(--mono); font-size: 11.5px; line-height: 1.55;
+.icon-btn {
+  width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
+  border-radius: 7px; border: 1px solid var(--border); background: none;
+  color: var(--tmut); cursor: pointer; flex-shrink: 0;
 }
-.diff.empty { padding: 10px; color: var(--tmut); }
-.diff-line { padding: 0 12px; white-space: pre; }
-/* Tinted background AND the leading +/- the diff already carries: about 1 in 12
-   men cannot separate red from green reliably, and this is the screen where
-   confusing an addition with a deletion costs the most. */
-.diff-line.add { background: rgba(110, 231, 183, 0.10); color: var(--green); }
-.diff-line.del { background: rgba(252, 165, 165, 0.10); color: var(--red); }
-.diff-line.hunk { color: var(--tmut); background: var(--muted); }
-.diff-line.meta { color: var(--tmut); opacity: 0.7; }
+.icon-btn:hover { color: var(--text); background: var(--muted); }
+.filetree-head .icon-btn, .filetree.collapsed .icon-btn { border: none; width: 24px; height: 24px; }
+
+/* Conflict lives ON the card, not in a toast. A toast fades and appears away
+   from the file, leaving it looking identical to the ones that applied. */
+.change-conflict {
+  display: flex; align-items: center; gap: 10px; padding: 10px 13px;
+  background: rgba(252, 211, 77, 0.07); border-top: 1px solid rgba(252, 211, 77, 0.28);
+  font-size: 12.5px; line-height: 1.5;
+}
+.change-conflict > svg { flex-shrink: 0; color: var(--yellow); }
+.change-conflict > span { flex: 1; }
+
+.notice {
+  display: flex; align-items: flex-start; gap: 10px; padding: 11px 13px; margin-bottom: 9px;
+  border-radius: 12px; font-size: 12px; line-height: 1.55;
+}
+.notice > svg { flex-shrink: 0; margin-top: 1px; }
+.notice-title { font-size: 12.5px; font-weight: 600; margin-bottom: 3px; color: var(--text); }
+.notice p { color: var(--tmut); margin-bottom: 9px; }
+.notice.warn { border: 1px solid rgba(252, 211, 77, 0.4); background: rgba(252, 211, 77, 0.06); }
+.notice.warn > svg { color: var(--yellow); }
+.btn.tiny.warn {
+  border: 1px solid rgba(252, 211, 77, 0.4); background: rgba(252, 211, 77, 0.1);
+  color: var(--yellow); font-weight: 600;
+}
+
+.fold {
+  width: 100%; text-align: left; font-size: 12px; padding: 9px 13px;
+  border: 0; background: none; color: var(--tmut); cursor: pointer; font-family: inherit;
+}
+.fold:hover { color: var(--text); }
+
+.diff { overflow-x: auto; padding: 4px 0 6px; font-family: var(--mono); font-size: 12px; line-height: 1.65; }
+.diff.empty { padding: 10px 13px; color: var(--tmut); }
+.diff-line { display: flex; white-space: pre; }
+.diff-line .gutter {
+  width: 52px; flex-shrink: 0; padding: 0 10px; text-align: right;
+  color: var(--tmut); opacity: 0.7; user-select: none; font-size: 11px;
+}
+/* Sign column as well as colour — see ChangesPanel.jsx. */
+.diff-line .sign { width: 15px; flex-shrink: 0; font-weight: 600; user-select: none; color: var(--tmut); }
+.diff-line .code { padding-right: 14px; }
+.diff-line.add { background: rgba(110, 231, 183, 0.09); }
+.diff-line.add .sign { color: var(--green); }
+.diff-line.del { background: rgba(252, 165, 165, 0.09); }
+.diff-line.del .sign { color: var(--red); }
+.diff-line.hunk { background: var(--muted); color: var(--tmut); }
 
 .changes-actions {
-  display: flex; align-items: center; gap: 10px; flex-shrink: 0;
-  padding: 10px 20px; border-top: 1px solid var(--border);
+  display: flex; align-items: center; gap: 10px; flex-shrink: 0; min-width: 0;
+  padding: 11px 14px; border-top: 1px solid var(--border);
 }
-.changes-note { color: var(--tmut); font-size: 11.5px; }
+.changes-note {
+  color: var(--tmut); font-size: 12px; flex: 1 1 0; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.spinner {
+  width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
+  border: 1.7px solid rgba(11, 13, 18, 0.3); border-top-color: var(--inv);
+  animation: ar-spin 0.8s linear infinite;
+}
+@keyframes ar-spin { to { transform: rotate(360deg); } }

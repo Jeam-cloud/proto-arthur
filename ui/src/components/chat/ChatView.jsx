@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from "react";
-import { BrainCircuit, Compass, FileText, Image as ImageIcon } from "lucide-react";
+import { BrainCircuit, Compass, FileText, Image as ImageIcon, ShieldCheck } from "lucide-react";
 import { useChat } from "../../stores/chat";
 import { useConversations } from "../../stores/conversations";
 import Composer from "./Composer";
@@ -24,6 +24,8 @@ export default function ChatView({ mode, setMode }) {
   const loadMessages = useChat((s) => s.loadMessages);
   const requestInsert = useWorkspace((s) => s.requestInsert);
   const loadChanges = useChanges((s) => s.load);
+  const pendingFiles = useChanges((s) => s.files);
+  const hasFolder = useWorkspace((s) => !!s.root);
   const dropHandlers = useFileDrop();
   const dragging = useAttachments((s) => s.dragging);
   const bottomRef = useRef(null);
@@ -131,6 +133,20 @@ export default function ChatView({ mode, setMode }) {
           finished" and "you type again" is the diff. Putting it in a sidebar
           would make reviewing an optional detour, and an optional review is
           how unreviewed code gets applied. */}
+      {/* The guarantee, stated before it's needed rather than after. Without
+          this a first-time user has no way to know Arthur won't just overwrite
+          their project — the reassurance only ever arrived once edits were
+          already staged, which is the wrong moment to learn it. */}
+      {mode === "code" && hasFolder && !pendingFiles && (
+        <div className="code-idle">
+          <ShieldCheck size={15} strokeWidth={1.8} />
+          <span>
+            Arthur edits this folder on its own, then stages every change here for you to
+            review. Nothing is written until you approve it.
+          </span>
+        </div>
+      )}
+
       {mode === "code" && <ChangesPanel conversationId={activeId} />}
 
       <Composer conversationId={activeId} mode={mode} setMode={setMode} />
