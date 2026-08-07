@@ -146,7 +146,7 @@ class FindFilesTool(Tool):
 
         if not hits:
             return ToolResult(
-                ok=True, summary="no matches",
+                ok=True, summary=f"Found files matching {args.pattern!r}", detail="none",
                 content=(f"No files match {args.pattern!r} under {args.path}. "
                          "Try a broader pattern, or list_files to see what is there."),
             )
@@ -161,7 +161,7 @@ class FindFilesTool(Tool):
             notes.append(f"stopped after scanning {MAX_FILES_SCANNED} files")
         tail = f"\n({'; '.join(notes)})" if notes else ""
         return ToolResult(
-            ok=True, summary=f"{len(hits)} files",
+            ok=True, summary=f"Found files matching {args.pattern!r}", detail=f"{len(hits)} files",
             content=f"{len(hits)} match {args.pattern!r}:\n" + "\n".join(shown) + tail,
         )
 
@@ -273,7 +273,7 @@ class SearchFilesTool(Tool):
         if not total_hits:
             scope = f" in {args.file_pattern}" if args.file_pattern else ""
             return ToolResult(
-                ok=True, summary="no matches",
+                ok=True, summary=f"Searched for {args.query!r}", detail="no matches",
                 content=(f"No matches for {args.query!r}{scope} under {args.path}. "
                          "Try a shorter or more general query, or find_files to check the "
                          "file is where you think it is."),
@@ -295,6 +295,7 @@ class SearchFilesTool(Tool):
         head = (f"{total_hits} match{'es' if total_hits != 1 else ''} for {args.query!r} "
                 f"in {files_with_hits} file{'s' if files_with_hits != 1 else ''}:")
         return ToolResult(
-            ok=True, summary=f"{total_hits} in {files_with_hits} files",
+            ok=True, summary=f"Searched for {args.query!r}",
+            detail=f"{total_hits} in {files_with_hits} file{'s' if files_with_hits != 1 else ''}",
             content=f"{head}\n" + "\n".join(lines_out) + tail,
         )

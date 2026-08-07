@@ -131,6 +131,52 @@ MIGRATIONS: list[str] = [
     CREATE INDEX idx_attach_conv ON attachments(conversation_id, created_at);
     CREATE INDEX idx_attach_msg ON attachments(message_id);
     """,
+
+    # 4 — the 'receipt' message role.
+    #
+    # Code mode writes one of these when the user applies a changeset: "Wrote 4
+    # files to ~/dev/atlas". It has to live in the messages table so it appears
+    # in the transcript in the right place and survives a restart -- a toast
+    # cannot do either -- but it must NEVER be replayed to the model.
+    # history_for_model already selects only 'user' and 'assistant', so a new
+    # role is excluded from the prompt for free, with no filter to remember.
+    #
+    # WHY a table rebuild: SQLite cannot ALTER a CHECK constraint. The
+    # create-copy-drop-rename dance is the documented way, and it runs inside
+    # the migration's implicit transaction, so a failure part-way leaves the old
+    # table intact rather than a half-migrated database.
+    #
+    # Foreign keys are disabled for the swap: attachments.message_id references
+    # messages(id), and dropping the old table with them on would either fail or
+    # cascade the references away. `legacy_alter_table` keeps the rename from
+    # rewriting those references to point at the temporary name.
+    """
+    PRAGMA foreign_keys=OFF;
+    PRAGMA legacy_alter_table=ON;
+
+    CREATE TABLE messages_new (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        role TEXT NOT NULL CHECK (role IN ('user','assistant','tool','system','receipt')),
+        content TEXT NOT NULL,
+        tool_calls TEXT,
+        tool_name TEXT,
+        model TEXT,
+        provider TEXT NOT NULL DEFAULT 'local',
+        created_at REAL NOT NULL
+    );
+    INSERT INTO messages_new
+        SELECT id, conversation_id, role, content, tool_calls, tool_name, model, provider, created_at
+        FROM messages;
+    DROP TABLE messages;
+    ALTER TABLE messages_new RENAME TO messages;
+    -- Same name as migration 1's index: DROP TABLE took the original with it,
+    -- and the rebuilt schema should differ from the old one in exactly one way.
+    CREATE INDEX idx_messages_conv ON messages(conversation_id, created_at);
+
+    PRAGMA legacy_alter_table=OFF;
+    PRAGMA foreign_keys=ON;
+    """,
 ]
 
 

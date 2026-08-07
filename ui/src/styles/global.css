@@ -1784,3 +1784,64 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
   animation: ar-spin 0.8s linear infinite;
 }
 @keyframes ar-spin { to { transform: rotate(360deg); } }
+
+/* ---------- Code mode: the live run block ----------
+   Replaces the flat activity list while a Code turn is streaming. See
+   ActivityFeed.jsx for why one row per tool call stops working at fifteen. */
+.runblock {
+  border: 1px solid var(--border); border-radius: 13px; background: var(--bg2);
+  overflow: hidden; margin-bottom: 13px;
+}
+.runblock-head {
+  display: flex; align-items: center; gap: 9px;
+  padding: 12px 14px; border-bottom: 1px solid var(--border);
+}
+.runblock-title { font-size: 13.5px; font-weight: 600; }
+.runblock-sum { font-size: 12px; color: var(--tmut); margin-left: auto; font-variant-numeric: tabular-nums; }
+/* A slow pulse, not a spinner: the run lasts minutes and something spinning
+   that whole time reads as stuck rather than busy. */
+.pulse {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex-shrink: 0;
+  animation: ar-pulse 1.4s ease-in-out infinite;
+}
+@keyframes ar-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+.runblock-rows { padding: 7px; display: flex; flex-direction: column; gap: 2px; max-height: 196px; overflow-y: auto; }
+.runrow {
+  display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 9px;
+  font-size: 13px; color: var(--tmut);
+}
+/* Writes and edits are the only calls with consequences, so they get the
+   weight. Reads recede — they are how it got there, not what it did. */
+.runrow.heavy { background: var(--muted); color: var(--text); }
+.runrow.heavy .runrow-label { font-weight: 600; }
+.runrow-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.runrow-detail {
+  font-size: 12px; color: var(--tmut); font-family: var(--mono);
+  margin-left: auto; flex-shrink: 0; padding-left: 10px;
+}
+.runrow .good { color: var(--green); flex-shrink: 0; }
+.runrow .bad { color: var(--red); flex-shrink: 0; }
+.runspin {
+  width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0;
+  border: 1.6px solid var(--border); border-top-color: var(--text);
+  animation: ar-spin 0.8s linear infinite;
+}
+.runblock-foot {
+  display: flex; align-items: center; gap: 11px;
+  padding: 11px 14px; border-top: 1px solid var(--border);
+  font-size: 12.5px; color: var(--tmut); line-height: 1.5;
+}
+.runblock-foot > span { flex: 1; }
+
+/* The apply receipt: the record that Code mode actually touched the disk.
+   Deliberately not a bubble — it is not something Arthur said. */
+.message-row.receipt { justify-content: flex-start; }
+.receipt-card {
+  display: flex; align-items: flex-start; gap: 9px; max-width: 82%;
+  padding: 14px 16px; border-radius: 13px; background: var(--bg2);
+  border: 1px solid rgba(110, 231, 183, 0.32);
+}
+.receipt-card > svg { color: var(--green); flex-shrink: 0; margin-top: 1px; }
+.receipt-title { font-size: 13.5px; font-weight: 600; margin-bottom: 7px; }
+.receipt-note { font-size: 12.5px; color: var(--tmut); line-height: 1.6; }

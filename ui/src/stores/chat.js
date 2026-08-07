@@ -31,7 +31,7 @@ import { useConversations } from "./conversations";
 // every empty slice silently.
 const EMPTY_SLICE = Object.freeze({
   messages: [], draft: null, activity: [], memoryUsed: [],
-  streaming: false, error: null, loaded: false,
+  streaming: false, error: null, loaded: false, startedAt: null,
 });
 
 export const useChat = create((set, get) => ({
@@ -60,7 +60,9 @@ export const useChat = create((set, get) => ({
     if (get().slice(cid).loaded) return;
     const rows = await api.get(`/conversations/${cid}/messages`);
     const messages = rows
-      .filter((m) => m.role === "user" || m.role === "assistant")
+      // `receipt` rows are Code mode's "this actually landed" notes. Rendered
+      // in the transcript, never sent to the model — see the apply route.
+      .filter((m) => m.role === "user" || m.role === "assistant" || m.role === "receipt")
       .map((m) => ({ id: m.id, role: m.role, content: m.content, provider: m.provider }));
     get()._patch(cid, { messages, loaded: true });
   },
@@ -86,6 +88,10 @@ export const useChat = create((set, get) => ({
     g._patch(cid, {
       messages: [...s.messages, userMsg],
       draft: { role: "assistant", content: "", provider: provider || "local" },
+      // Wall-clock start, for the run block's elapsed counter. Stored rather
+      // than derived: a turn that takes four minutes needs a clock, and the
+      // only honest starting point is when the request actually went out.
+      startedAt: Date.now(),
       activity: [], memoryUsed: [], streaming: true, error: null,
     });
 
@@ -115,7 +121,8 @@ export const useChat = create((set, get) => ({
             get()._patch(cid, {
               activity: cur.activity.map((a, i) =>
                 i === cur.activity.length - 1 && a.name === data.name
-                  ? { ...a, running: false, ok: data.ok, flagged: data.flagged, summary: data.summary }
+                  ? { ...a, running: false, ok: data.ok, flagged: data.flagged,
+                      summary: data.summary, detail: data.detail }
                   : a),
             });
             break;
@@ -177,6 +184,14 @@ export const useChat = create((set, get) => ({
         return { aborters: rest };
       });
     }
+  },
+
+  // Append a message the SERVER created outside the stream (currently only the
+  // apply receipt). Kept here rather than in the changes store so every write
+  // to a conversation's message list goes through one place.
+  appendMessage(cid, message) {
+    const cur = get().slice(cid);
+    get()._patch(cid, { messages: [...cur.messages, message] });
   },
 
   stop(cid) {

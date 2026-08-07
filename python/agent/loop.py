@@ -380,6 +380,7 @@ class AgentLoop:
         await emit(events.TOOL_RESULT, {
             "name": name, "ok": result.ok,
             "summary": result.summary or ("done" if result.ok else "failed"),
+            "detail": result.detail,
             "flagged": flagged,
         })
         msg = tool_msg(content)

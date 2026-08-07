@@ -67,6 +67,12 @@ def _changes(ctx: ToolContext):
     return ctx.changes
 
 
+def _counts(adds: int, dels: int) -> str:
+    """The activity feed's right-hand metric. Both halves are shown even when
+    one is zero, so the numbers stay in the same two columns down a long run."""
+    return f"+{adds} \u2212{dels}"
+
+
 class ReadFileArgs(BaseModel):
     path: str = Field(description="Path relative to the workspace folder")
 
@@ -114,7 +120,7 @@ class ReadFileTool(Tool):
         return ToolResult(
             ok=True,
             content=f"Contents of {args.path}{note}:\n```\n{text}\n```{truncated}",
-            summary=f"read {args.path}",
+            summary=f"Read {args.path.rsplit('/', 1)[-1]}", detail=f"{len(text.splitlines())} lines",
         )
 
 
@@ -154,7 +160,7 @@ class ListDirTool(Tool):
                         lines.append(f"{tail} (pending, not yet applied)")
 
         return ToolResult(ok=True, content="\n".join(lines) or "(empty)",
-                          summary=f"{len(lines)} entries")
+                          summary=f"Listed {args.path}", detail=f"{len(lines)} entries")
 
 
 class WriteFileArgs(BaseModel):
@@ -188,7 +194,7 @@ class WriteFileTool(Tool):
         return ToolResult(
             ok=True,
             content=f"{verb} {args.path} (+{adds}/-{dels}), staged for review.",
-            summary=f"staged {args.path}",
+            summary=f"{verb} {args.path.rsplit('/', 1)[-1]}", detail=_counts(adds, dels),
         )
 
 
@@ -263,7 +269,7 @@ class EditFileTool(Tool):
         return ToolResult(
             ok=True,
             content=f"Edited {args.path} in {where} (+{adds}/-{dels}), staged for review.",
-            summary=f"edited {args.path}",
+            summary=f"Edited {args.path.rsplit('/', 1)[-1]}", detail=_counts(adds, dels),
         )
 
 
@@ -290,7 +296,7 @@ class DeleteFileTool(Tool):
             return ToolResult(ok=False, content=f"No such file: {args.path}", summary="not found")
         cs.stage_delete(args.path)
         return ToolResult(ok=True, content=f"Staged {args.path} for deletion.",
-                          summary=f"staged delete {args.path}")
+                          summary=f"Deleted {args.path.rsplit('/', 1)[-1]}", detail="removed")
 
 
 class RunPythonArgs(BaseModel):
@@ -352,4 +358,4 @@ class RunPythonTool(Tool):
         if res.stderr:
             out += f"\nstderr:\n{res.stderr}"
         return ToolResult(ok=res.exit_code == 0, content=out,
-                          summary=f"exit {res.exit_code}")
+                          summary="Ran Python", detail=f"exit {res.exit_code}")

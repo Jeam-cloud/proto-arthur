@@ -702,6 +702,28 @@ async def apply_changes(request: Request, cid: str, body: ChangesRequest) -> dic
         applied=", ".join(result["applied"]),
         conflicts=", ".join(result["conflicts"]),
     )
+
+    # A RECEIPT in the transcript.
+    #
+    # Applying is the only moment in Code mode that changes the user's disk, and
+    # until now it left no trace: a toast, then silence. Scrolling back through a
+    # conversation you would see Arthur propose edits and never learn whether
+    # they landed. The receipt is written as its own role so it is visible in the
+    # transcript but NEVER replayed to the model -- history_for_model selects
+    # only 'user' and 'assistant', so this is a note to the human, not a turn the
+    # model can be confused by or made to imitate.
+    if result["applied"]:
+        n = len(result["applied"])
+        root = await _conversation_workspace(s, cid)
+        text = f"Wrote {n} {'file' if n == 1 else 'files'} to {root or 'your folder'}."
+        if result["conflicts"]:
+            text += (f" {len(result['conflicts'])} left alone — "
+                     "changed on disk since Arthur read them.")
+        result["receipt"] = {
+            "id": await s.conversations.add_message(cid, "receipt", text),
+            "role": "receipt",
+            "content": text,
+        }
     return result
 
 

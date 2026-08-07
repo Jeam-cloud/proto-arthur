@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from "react";
-import { BrainCircuit, Compass, FileText, Image as ImageIcon, ShieldCheck } from "lucide-react";
+import { BrainCircuit, Check, Compass, FileText, Image as ImageIcon, ShieldCheck } from "lucide-react";
 import { useChat } from "../../stores/chat";
 import { useConversations } from "../../stores/conversations";
 import Composer from "./Composer";
@@ -26,6 +26,10 @@ export default function ChatView({ mode, setMode }) {
   const loadChanges = useChanges((s) => s.load);
   const pendingFiles = useChanges((s) => s.files);
   const hasFolder = useWorkspace((s) => !!s.root);
+  // Just the last segment: "Working in atlas" is the project, "Working in
+  // C:\Users\rian\OneDrive\…\atlas" is a path nobody reads.
+  const folderName = useWorkspace((s) => (s.root ? s.root.replace(/[\\/]+$/, "").split(/[\\/]/).pop() : ""));
+  const stop = useChat((s) => s.stop);
   const dropHandlers = useFileDrop();
   const dragging = useAttachments((s) => s.dragging);
   const bottomRef = useRef(null);
@@ -103,7 +107,18 @@ export default function ChatView({ mode, setMode }) {
             <div className="message-row assistant">
               <div className="bubble">
                 {slice.draft.provider !== "local" && <span className="provider-badge">cloud · {slice.draft.provider}</span>}
-                <ActivityFeed items={slice.activity} />
+                {/* The run block is for the LIVE turn in Code mode only.
+                    Historical messages keep the plain list: once a turn is
+                    over, "still working" framing and a Stop button are lies,
+                    and the grouping that helps mid-run just hides detail you
+                    may be scrolling back to find. */}
+                <ActivityFeed
+                  items={slice.activity}
+                  variant={mode === "code" ? "run" : "list"}
+                  startedAt={slice.startedAt}
+                  folder={folderName}
+                  onStop={() => stop(activeId)}
+                />
                 {slice.draft.content
                   ? <><Markdown>{slice.draft.content}</Markdown><span className="cursor-blink" /></>
                   : !slice.activity.length && <span className="cursor-blink" />}
@@ -155,6 +170,23 @@ export default function ChatView({ mode, setMode }) {
 }
 
 function Message({ message }) {
+  // The apply receipt: not a turn, a record. Styled as a note rather than a
+  // bubble so it never reads as something Arthur said.
+  if (message.role === "receipt") {
+    return (
+      <div className="message-row receipt">
+        <div className="receipt-card">
+          <Check size={16} strokeWidth={2.2} />
+          <div>
+            <div className="receipt-title">{message.content}</div>
+            <div className="receipt-note">
+              You reviewed every line before this happened. This receipt stays in the conversation.
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className={`message-row ${message.role}`}>
       <div className="bubble">

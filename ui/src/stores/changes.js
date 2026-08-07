@@ -96,8 +96,13 @@ export const useChanges = create((set, get) => ({
     set({ busy: true });
     try {
       const res = await applyChanges(conversationId, targets);
-      const n = res.applied.length;
-      if (n) useToasts.getState().push(`Applied ${n} ${n === 1 ? "file" : "files"}.`, "success");
+      // The receipt goes in the transcript rather than a toast: this is the one
+      // moment Code mode changed the user's disk, and a message that scrolls
+      // away is a poor record of it. See the apply route.
+      if (res.receipt) {
+        const { useChat } = await import("./chat");
+        useChat.getState().appendMessage(conversationId, res.receipt);
+      }
       // Conflicts are NOT toasted any more — they now render on the file's own
       // card, where the file still is. See ChangesPanel.
       for (const f of res.failed) {

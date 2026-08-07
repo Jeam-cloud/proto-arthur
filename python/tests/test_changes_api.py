@@ -103,6 +103,31 @@ class TestApply:
         kinds = [e["kind"] for e in await app_state.audit.recent()]
         assert "code.changes_applied" in kinds
 
+    async def test_apply_writes_a_receipt_into_the_transcript(self, client, app_state, project):
+        cid = await new_conversation(client)
+        stage(app_state, cid, project, "app.py", "x = 2\n")
+        res = await client.post(f"/conversations/{cid}/changes/apply", json={"paths": None})
+        assert "Wrote 1 file" in res.json()["receipt"]["content"]
+
+        rows = (await client.get(f"/conversations/{cid}/messages")).json()
+        assert [r["role"] for r in rows] == ["receipt"]
+
+    async def test_receipt_is_never_replayed_to_the_model(self, client, app_state, project):
+        """It is a note to the human. If it reached the prompt the model would
+        start narrating disk writes it did not make."""
+        cid = await new_conversation(client)
+        stage(app_state, cid, project, "app.py", "x = 2\n")
+        await client.post(f"/conversations/{cid}/changes/apply", json={"paths": None})
+        history = await app_state.conversations.history_for_model(cid)
+        assert history == []
+
+    async def test_no_receipt_when_nothing_applied(self, client, app_state, project):
+        cid = await new_conversation(client)
+        stage(app_state, cid, project, "app.py", "x = 2\n")
+        (project / "app.py").write_text("user edited\n")   # conflict: nothing applies
+        res = await client.post(f"/conversations/{cid}/changes/apply", json={"paths": None})
+        assert "receipt" not in res.json()
+
     async def test_apply_with_nothing_staged_is_a_no_op(self, client):
         cid = await new_conversation(client)
         res = await client.post(f"/conversations/{cid}/changes/apply", json={"paths": None})

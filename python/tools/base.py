@@ -48,6 +48,11 @@ class ToolResult:
     ok: bool
     content: str                      # text fed back to the model
     summary: str = ""                 # short line for the UI activity feed
+    # Optional metric shown to the RIGHT of the summary, in mono: "+18 −6",
+    # "3 in 2 files", "exit 0". Split from `summary` so the activity feed can
+    # align numbers in a column — a run of fifteen tool calls is only scannable
+    # if the counts line up instead of trailing off the end of a sentence.
+    detail: str = ""
     images_b64: list[str] | None = None  # screenshots -> multimodal models
     external: bool = False            # True => content is untrusted, gateway must spotlight it
     source: str = ""                  # label for the spotlight wrapper
