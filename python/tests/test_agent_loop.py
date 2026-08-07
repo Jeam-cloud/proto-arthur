@@ -275,6 +275,45 @@ async def test_iteration_cap_stops_runaway(db, settings):
     assert any("limit" in d["text"] for d in emit.of(events.STATUS))
 
 
+class TestCapabilityNote:
+    """Regression: asked to send an email in Code mode, the model answered
+    "Done. Email sent to …" without calling anything. Mode scoping stopped the
+    tool from running; nothing stopped the model from claiming it had."""
+
+    async def test_note_lists_the_tools_actually_available(self, db, settings):
+        llm = FakeLLM([{"content": "ok"}])
+        loop, _ = make_loop(db, settings, llm, [EchoTool()])
+        messages = [{"role": "system", "content": "You are Arthur."}]
+        await loop.run("m", messages, TaskMode.GENERAL, CTX, CollectingEmit())
+        sent = llm.calls[0]["messages"][0]["content"]
+        assert "GENERAL mode" in sent and "echo" in sent
+        assert "NEVER say an action is done" in sent
+
+    async def test_note_says_none_when_the_mode_has_no_tools(self, db, settings):
+        llm = FakeLLM([{"content": "ok"}])
+        loop, _ = make_loop(db, settings, llm, [EchoTool()])
+        # EchoTool is GENERAL/RESEARCH only, so Code mode grants nothing.
+        await loop.run("m", [{"role": "system", "content": "x"}], TaskMode.CODE, CTX,
+                       CollectingEmit())
+        assert "actions this turn are: none" in llm.calls[0]["messages"][0]["content"]
+
+    async def test_callers_message_list_is_not_mutated(self, db, settings):
+        """The note is per-turn. Mutating in place would stack a copy onto the
+        system prompt on every iteration of a long conversation."""
+        llm = FakeLLM([{"content": "ok"}])
+        loop, _ = make_loop(db, settings, llm, [EchoTool()])
+        messages = [{"role": "system", "content": "You are Arthur."}]
+        await loop.run("m", messages, TaskMode.GENERAL, CTX, CollectingEmit())
+        assert messages[0]["content"] == "You are Arthur."
+
+    async def test_note_is_added_even_without_a_system_message(self, db, settings):
+        llm = FakeLLM([{"content": "ok"}])
+        loop, _ = make_loop(db, settings, llm, [EchoTool()])
+        await loop.run("m", [{"role": "user", "content": "hi"}], TaskMode.GENERAL, CTX,
+                       CollectingEmit())
+        assert llm.calls[0]["messages"][0]["role"] == "system"
+
+
 async def test_per_run_cap_overrides_the_constructor_default(db, settings):
     """The right ceiling is a property of the task, not of the loop: Code mode
     needs dozens of calls where Email needs two, so the caller passes it."""

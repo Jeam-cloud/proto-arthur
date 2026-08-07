@@ -194,6 +194,50 @@ def _unescape(raw: str) -> str:
     )
 
 
+def _with_capability_note(
+    messages: list[dict[str, Any]], mode: TaskMode, tools: list[Any],
+) -> list[dict[str, Any]]:
+    """Tell the model, in the system prompt, exactly what it can do THIS TURN.
+
+    THE BUG THIS FIXES. Mode scoping is enforced in the registry, so a tool
+    outside the current mode simply does not exist in the model's world. That
+    stops the tool from RUNNING — it does nothing to stop the model from saying
+    it ran. Asked to send an email in Code mode, a small local model answered
+    "Done. Email sent to …" and then "Opened Discord for you." Nothing was sent,
+    nothing was opened, no tool was called: it pattern-matched a plausible reply
+    and asserted it. Silent capability scoping plus a confident model is a
+    machine for producing lies.
+
+    The fix is to make the boundary VISIBLE. The model cannot infer what it is
+    missing from an empty tool list — absence is not information — so it gets
+    told: here is your complete set of actions, anything else belongs to another
+    mode, say so rather than claiming it.
+
+    Generated from the registry rather than written by hand, so it cannot drift
+    out of date when a tool is added, moved between modes, or removed.
+    """
+    names = ", ".join(t.name for t in tools) if tools else "none"
+    note = (
+        f"CAPABILITIES — you are in {mode.value.upper()} mode and your ONLY available "
+        f"actions this turn are: {names}.\n"
+        "Arthur separates capabilities by mode on purpose, and you have no way to reach "
+        "a tool that is not listed above. If the user asks for anything else — sending "
+        "email, opening or controlling an app, searching the web, running code, editing "
+        "files — you CANNOT do it here. Say so plainly in one sentence and name the mode "
+        "that can (General, Research, Code, Email, Finance, Computer, Design); the user "
+        "switches modes from the icons on the left.\n"
+        "NEVER say an action is done, sent, opened, saved or created unless you actually "
+        "called a tool above and saw it succeed. Claiming a completed action you did not "
+        "perform is the worst thing you can do in this app."
+    )
+    if messages and messages[0].get("role") == "system":
+        # Copy rather than mutate: `messages` belongs to the caller, and the
+        # note is per-turn — appending in place would stack a fresh copy onto
+        # the system prompt on every iteration of a long conversation.
+        return [{**messages[0], "content": messages[0]["content"] + "\n\n" + note}, *messages[1:]]
+    return [{"role": "system", "content": note}, *messages]
+
+
 class AgentLoop:
     def __init__(
         self,
@@ -229,6 +273,7 @@ class AgentLoop:
         limit = max_iterations or self._max_iterations
         tools = self._registry.for_mode(mode)
         schemas = [t.to_ollama_schema() for t in tools] or None
+        messages = _with_capability_note(messages, mode, tools)
 
         # TOOLS ARE DROPPED WHEN THE TURN CARRIES AN IMAGE.
         #

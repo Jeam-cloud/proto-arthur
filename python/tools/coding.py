@@ -108,7 +108,18 @@ class ReadFileTool(Tool):
                     state = "binary"
 
         if state == "missing":
-            return ToolResult(ok=False, content=f"No such file: {args.path}", summary="not found")
+            # THE RECOVERY INSTRUCTION LIVES ON THE ERROR, not only in the
+            # system prompt. A miss is exactly the moment the model decides what
+            # to do next, and a bare "No such file" reads as a dead end — the
+            # observed failure was the model guessing a second path, missing
+            # again, and then asking the USER where their CSS lived, with a
+            # search tool sitting unused the whole time.
+            return ToolResult(
+                ok=False, summary="not found", detail=args.path.rsplit("/", 1)[-1],
+                content=(f"No such file: {args.path}. Do NOT guess another path and do NOT ask "
+                         "the user where it is — call find_files (e.g. pattern '*.css') or "
+                         "search_files to locate it yourself, then read what you find."),
+            )
         if state == "binary" or text is None:
             return ToolResult(ok=False, content=f"{args.path} is not a text file.", summary="binary file")
 
@@ -141,7 +152,11 @@ class ListDirTool(Tool):
     async def execute(self, args: ListDirArgs, ctx: ToolContext) -> ToolResult:
         p = safe_path(ctx.workspace_root, args.path)
         if not p.is_dir():
-            return ToolResult(ok=False, content=f"No such folder: {args.path}", summary="not found")
+            return ToolResult(
+                ok=False, summary="not found", detail=args.path,
+                content=(f"No such folder: {args.path}. Use find_files to locate what you are "
+                         "after instead of guessing folder names."),
+            )
         entries = sorted(p.iterdir(), key=lambda e: (e.is_file(), e.name.lower()))[:200]
         lines = [f"{'[dir] ' if e.is_dir() else ''}{e.name}"
                  for e in entries if e.name not in SKIP_DIRS]
@@ -234,8 +249,12 @@ class EditFileTool(Tool):
 
         text, state = cs.read(args.path)
         if state == "missing":
-            return ToolResult(ok=False, summary="not found",
-                              content=f"No such file: {args.path}. Use write_file to create it.")
+            return ToolResult(
+                ok=False, summary="not found", detail=args.path.rsplit("/", 1)[-1],
+                content=(f"No such file: {args.path}. If it should already exist, find it with "
+                         "find_files or search_files rather than guessing. If it is genuinely "
+                         "new, use write_file to create it."),
+            )
         if text is None:
             return ToolResult(ok=False, content=f"{args.path} is not a text file.", summary="binary file")
 

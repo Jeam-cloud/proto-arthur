@@ -215,6 +215,16 @@ class TestTools:
             EditFileTool.Args(path="nope.py", old_text="a", new_text="b"), ctx_for(cs))
         assert not res.ok and "write_file" in res.content
 
+    async def test_a_missed_read_tells_the_model_to_search_not_ask(self, cs):
+        """Regression: on a miss the model guessed a second path, missed again,
+        then asked the user where their CSS was — with search sitting unused.
+        The recovery instruction belongs ON the error, where the decision is
+        actually made."""
+        res = await ReadFileTool().execute(ReadFileTool.Args(path="static/login.css"), ctx_for(cs))
+        assert not res.ok
+        assert "find_files" in res.content and "search_files" in res.content
+        assert "do not ask" in res.content.lower()
+
     async def test_delete_tool_stages_only(self, cs, tmp_path):
         res = await DeleteFileTool().execute(
             DeleteFileTool.Args(path="src/app.py"), ctx_for(cs))
