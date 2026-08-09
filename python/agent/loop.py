@@ -19,6 +19,7 @@ Failure design — the model is assumed to be unreliable:
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -73,12 +74,34 @@ def recover_text_tool_call(text: str) -> dict[str, Any] | None:
     # JSON soup with a code block embedded in it (this is exactly what
     # happened with a run_python call whose code contained an unescaped
     # f-string quote). Try one more salvage pass before giving up.
-    start = text.find('{"')
-    if start == -1:
-        start = text.find('{ "')
+    start = _next_object(text, 0)
     if start != -1:
         return _salvage_unescaped_field(text, start)
     return None
+
+
+# `{` then ANY whitespace then `"`. The whitespace is the whole point.
+#
+# THE BUG THIS FIXES. This scan used to look for the literal strings '{"' and
+# '{ "', which matches compact JSON and nothing else. A model that pretty-prints
+# its call —
+#
+#     {
+#       "name": "find_files",
+#       "arguments": {"pattern": "login.css"}
+#     }
+#
+# — opens with '{\n  "', so the scan never found it, recovery never ran, and the
+# loop treated a tool call as the final answer. On screen that looked like
+# Arthur announcing "I'll search for it", printing a JSON code block, and
+# stopping dead. Every turn. Pretty-printing is the DEFAULT for coder-tuned
+# models, which is why it showed up the moment a coder model was used.
+_OBJ_START = re.compile(r'\{\s*"')
+
+
+def _next_object(text: str, idx: int) -> int:
+    m = _OBJ_START.search(text, idx)
+    return m.start() if m else -1
 
 
 def _salvage_unescaped_field(text: str, start: int) -> dict[str, Any] | None:

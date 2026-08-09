@@ -275,6 +275,50 @@ async def test_iteration_cap_stops_runaway(db, settings):
     assert any("limit" in d["text"] for d in emit.of(events.STATUS))
 
 
+class TestPrettyPrintedToolCalls:
+    """Regression, found with qwen2.5-coder:14b. The salvage scan looked for the
+    literal strings '{"' and '{ "', so a PRETTY-PRINTED call opening with
+    '{\\n  "' was never found. On screen: Arthur says "I'll search for it",
+    prints a JSON code block, and stops. Every turn. Pretty-printing is the
+    default for coder-tuned models."""
+
+    def test_recovers_a_pretty_printed_call(self):
+        text = (
+            "Sure, let me look.\n\n```json\n{\n"
+            '  "name": "find_files",\n'
+            '  "arguments": {\n    "pattern": "login.css"\n  }\n'
+            "}\n```\n\nThen I'll change the colours."
+        )
+        assert recover_text_tool_call(text) == {
+            "name": "find_files", "arguments": {"pattern": "login.css"},
+        }
+
+    def test_recovers_with_windows_line_endings(self):
+        text = '{\r\n  "name": "read_file",\r\n  "arguments": {"path": "a.py"}\r\n}'
+        assert recover_text_tool_call(text)["name"] == "read_file"
+
+    def test_still_recovers_compact_and_spaced_forms(self):
+        compact = '{"name": "read_file", "arguments": {"path": "a.py"}}'
+        spaced = '{ "name": "read_file", "arguments": {"path": "a.py"}}'
+        assert recover_text_tool_call(compact)["name"] == "read_file"
+        assert recover_text_tool_call(spaced)["name"] == "read_file"
+
+    def test_plain_prose_is_still_not_a_tool_call(self):
+        assert recover_text_tool_call("I had a look and found nothing useful.") is None
+
+    async def test_a_pretty_printed_call_actually_executes(self, db, settings):
+        """The end-to-end shape of the bug: the loop must run the tool and
+        continue, not return the JSON as its final answer."""
+        tool = EchoTool()
+        llm = FakeLLM([
+            {"tokens": ['{\n  "name": "echo",\n  "arguments": {\n    "text": "hi"\n  }\n}']},
+            {"tokens": ["done"]},
+        ])
+        loop, _ = make_loop(db, settings, llm, [tool])
+        await loop.run("m", [], TaskMode.GENERAL, CTX, CollectingEmit())
+        assert tool.executions == ["hi"]
+
+
 class TestCapabilityNote:
     """Regression: asked to send an email in Code mode, the model answered
     "Done. Email sent to …" without calling anything. Mode scoping stopped the
