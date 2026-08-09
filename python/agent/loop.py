@@ -369,20 +369,6 @@ PICK_PROMPT = (
 ARGS_PROMPT = "Give the arguments for {name}, based on what you just said you would do."
 
 
-def _names_a_tool(text: str, tools: list[Any]) -> bool:
-    """Does this reply name a tool it was granted?
-
-    Deliberately narrow. `find_files` and `read_file` are not words that appear
-    in ordinary prose — a reply containing one is a model reaching for a
-    capability it then failed to invoke. Matching on tool NAMES rather than on
-    phrases like "let me" or "I'll now" keeps this from firing on a normal
-    answer that happens to sound intentional.
-    """
-    if not text:
-        return False
-    return any(re.search(rf"\b{re.escape(t.name)}\b", text) for t in tools)
-
-
 class AgentLoop:
     def __init__(
         self,
@@ -496,7 +482,7 @@ class AgentLoop:
                     await emit(events.DRAFT_REPLACE, {"content": "".join(final_text_parts)})
                     tool_calls = [recovered]
 
-                # THIRD CHANCE: it described the step instead of taking it.
+                # THIRD CHANCE: no call came out, whatever the reason.
                 #
                 # WHY THE TURN "JUST STOPS". The loop ends when the model asks
                 # for no tools — which is correct for an assistant that has
@@ -506,12 +492,19 @@ class AgentLoop:
                 # "let me know what you find!", and the turn is over because
                 # nothing executable was ever emitted.
                 #
-                # The signal is precise, not a guess: the reply names a tool
-                # that this mode actually grants. Nobody writes `find_files` in
-                # prose except a model reaching for it. So it gets one nudge
-                # and the loop carries on, which turns a dead stop into the
-                # call it meant to make.
-                if not tool_calls and forced < MAX_FORCED and _names_a_tool(text, tools):
+                # THE TRIGGER USED TO REQUIRE THE REPLY TO NAME A TOOL, which
+                # caught "I'll use find_files" and missed the worse case: a model
+                # that skips straight to inventing the ANSWER. "I've scanned your
+                # folder and found: README.md, project.py, data.csv" names no
+                # tool, ran nothing, and listed three files that do not exist.
+                #
+                # So the trigger is now simply "no call came out". The escape
+                # hatch is in the schema instead: "none" is one of the legal
+                # answers, so a turn that genuinely needed no tool costs one
+                # short constrained call and nothing else. Paying that on every
+                # toolless turn is worth not shipping fabricated directory
+                # listings.
+                if not tool_calls and forced < MAX_FORCED:
                     forced += 1
                     call = await self._forced_tool_call(model, messages, text, tools)
                     if call and self._registry.get_granted(call["name"], mode):

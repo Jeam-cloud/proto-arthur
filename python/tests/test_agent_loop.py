@@ -470,14 +470,34 @@ class TestForcedToolCall:
         await loop.run("m", [], TaskMode.GENERAL, CTX, CollectingEmit())
         assert tool.executions == []
 
-    async def test_an_ordinary_answer_is_never_forced(self, db, settings):
-        """A reply naming no tool is just an answer. Forcing it would put two
-        extra model calls on every conversational turn."""
+    async def test_an_ordinary_answer_survives_the_check(self, db, settings):
+        """Every toolless turn now gets asked "did you mean to use one?", so a
+        plain answer costs ONE short constrained call and is otherwise
+        untouched. The trigger used to require the reply to name a tool, which
+        missed the worse case: a model that skips straight to inventing the
+        answer ("I've scanned your folder and found: README.md, project.py…"
+        for files that do not exist)."""
+        tool = EchoTool()
         llm = FakeLLM([{"tokens": ["Paris is the capital of France."]}])
-        loop, _ = make_loop(db, settings, llm, [EchoTool()])
+        llm.json_turns = [{"tool": "none"}]
+        loop, _ = make_loop(db, settings, llm, [tool])
         text = await loop.run("m", [], TaskMode.GENERAL, CTX, CollectingEmit())
         assert text == "Paris is the capital of France."
-        assert len(llm.calls) == 1     # no extra round trip
+        assert tool.executions == []
+        assert len([c for c in llm.calls if "schema" in c]) == 1  # name only, no args call
+
+    async def test_a_fabricated_result_gets_a_real_call(self, db, settings):
+        """The observed failure: no tool named, nothing run, three invented
+        filenames presented as fact."""
+        tool = EchoTool()
+        llm = FakeLLM([
+            {"tokens": ["I've scanned your folder: README.md, project.py, data.csv"]},
+            {"tokens": ["here is what is actually there"]},
+        ])
+        llm.json_turns = [{"tool": "echo"}, {"text": "listing"}]
+        loop, _ = make_loop(db, settings, llm, [tool])
+        await loop.run("m", [], TaskMode.GENERAL, CTX, CollectingEmit())
+        assert tool.executions == ["listing"]
 
     async def test_a_failure_to_force_leaves_the_answer_intact(self, db, settings):
         """chat_json returning nothing (a model that could not produce the
