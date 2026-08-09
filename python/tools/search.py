@@ -110,9 +110,31 @@ def _root_of(ctx: ToolContext) -> Path:
 class FindFilesArgs(BaseModel):
     pattern: str = Field(
         min_length=1, max_length=200,
-        description="Glob-style name pattern, e.g. '*.py', 'test_*.py', 'ChangesPanel.jsx'",
+        description=(
+            "Glob-style name pattern, e.g. '*.py', 'test_*.py', 'ChangesPanel.jsx'. "
+            "Several patterns can be given at once, separated by spaces or commas: "
+            "'*.html *.css' finds both."
+        ),
     )
     path: str = Field(default=".", description="Folder to search under, relative to the workspace")
+
+
+def _patterns(raw: str) -> list[str]:
+    """One pattern string -> the list of globs the model meant.
+
+    Models routinely send `'*.html *.css *login*'` as a single pattern, having
+    read "e.g. '*.py'" and reasoned that more is better. Treated literally that
+    matches a file called exactly `*.html *.css *login*`, i.e. nothing — and a
+    no-match answer sends the model looking somewhere else entirely instead of
+    fixing its query. Observed doing precisely that, then giving up and asking
+    the user to run the search themselves.
+
+    Splitting is safe: whitespace and commas are not glob syntax, and a real
+    filename containing a space would not be reached with a bare `*` pattern
+    anyway. Accepting the obvious intent beats being right about the schema.
+    """
+    parts = [p for p in re.split(r"[,\s]+", raw.strip()) if p]
+    return parts or [raw]
 
 
 class FindFilesTool(Tool):
@@ -138,17 +160,19 @@ class FindFilesTool(Tool):
         files, walk_truncated = _walk(base)
         # Match on the FULL relative path as well as the bare name, so both
         # '*.jsx' and 'components/code/*.jsx' behave the way a person expects.
+        globs = _patterns(args.pattern)
         hits = []
         for f in files:
             rel = f.relative_to(root).as_posix()
-            if fnmatch.fnmatch(f.name, args.pattern) or fnmatch.fnmatch(rel, args.pattern):
+            if any(fnmatch.fnmatch(f.name, g) or fnmatch.fnmatch(rel, g) for g in globs):
                 hits.append(rel)
 
         if not hits:
             return ToolResult(
                 ok=True, summary=f"Found files matching {args.pattern!r}", detail="none",
-                content=(f"No files match {args.pattern!r} under {args.path}. "
-                         "Try a broader pattern, or list_files to see what is there."),
+                content=(f"No files match {args.pattern!r} under {args.path}. Try a broader "
+                         "pattern such as '*' to see everything, or list_files to look around. "
+                         "Do NOT ask the user to search for you — you have the tools."),
             )
 
         hits.sort()
@@ -274,9 +298,9 @@ class SearchFilesTool(Tool):
             scope = f" in {args.file_pattern}" if args.file_pattern else ""
             return ToolResult(
                 ok=True, summary=f"Searched for {args.query!r}", detail="no matches",
-                content=(f"No matches for {args.query!r}{scope} under {args.path}. "
-                         "Try a shorter or more general query, or find_files to check the "
-                         "file is where you think it is."),
+                content=(f"No matches for {args.query!r}{scope} under {args.path}. Try a "
+                         "shorter or more general query, or find_files to check the file is "
+                         "where you think it is. Do NOT ask the user to search for you."),
             )
 
         # LIMITS ARE ALWAYS STATED. An agent that knows it saw a partial answer

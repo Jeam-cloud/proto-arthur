@@ -342,7 +342,11 @@ def _with_capability_note(
         "is the same lie as the paragraph above.\n"
         "Do not ask permission before using a tool. The app already asks the user "
         "whenever a confirmation is genuinely needed, so a question from you just stalls "
-        "the work. Take the next step."
+        "the work. Take the next step.\n"
+        "YOU are the one who runs these tools — the user cannot. Never write a plan that "
+        "tells them which tool to use, never say 'let me know what you find', and never "
+        "ask them to report a result back to you. If you catch yourself describing a "
+        "step, make the call instead."
     )
     if messages and messages[0].get("role") == "system":
         # Copy rather than mutate: `messages` belongs to the caller, and the
@@ -350,6 +354,33 @@ def _with_capability_note(
         # the system prompt on every iteration of a long conversation.
         return [{**messages[0], "content": messages[0]["content"] + "\n\n" + note}, *messages[1:]]
     return [{"role": "system", "content": note}, *messages]
+
+
+# How many times one turn may be told "you described it, now do it". Two is
+# enough to convert a plan into a call without letting a model that genuinely
+# has nothing to run spin: the iteration cap bounds it anyway, but burning the
+# whole budget on nudges would starve the real work.
+MAX_NUDGES = 2
+
+NUDGE = (
+    "You described the next step but did not actually call the tool, so nothing "
+    "happened and the user is still waiting. Do not explain the plan again and do not "
+    "ask them to run anything. Make the tool call now."
+)
+
+
+def _names_a_tool(text: str, tools: list[Any]) -> bool:
+    """Does this reply name a tool it was granted?
+
+    Deliberately narrow. `find_files` and `read_file` are not words that appear
+    in ordinary prose — a reply containing one is a model reaching for a
+    capability it then failed to invoke. Matching on tool NAMES rather than on
+    phrases like "let me" or "I'll now" keeps this from firing on a normal
+    answer that happens to sound intentional.
+    """
+    if not text:
+        return False
+    return any(re.search(rf"\b{re.escape(t.name)}\b", text) for t in tools)
 
 
 class AgentLoop:
@@ -408,6 +439,7 @@ class AgentLoop:
             schemas = None
 
         final_text_parts: list[str] = []
+        nudges = 0
 
         for _iteration in range(limit):
             tokens: list[str] = []
@@ -463,6 +495,27 @@ class AgentLoop:
                     final_text_parts[-1:] = [text] if text else []
                     await emit(events.DRAFT_REPLACE, {"content": "".join(final_text_parts)})
                     tool_calls = [recovered]
+
+                # THIRD CHANCE: it described the step instead of taking it.
+                #
+                # WHY THE TURN "JUST STOPS". The loop ends when the model asks
+                # for no tools — which is correct for an assistant that has
+                # finished answering, and wrong for one that has finished
+                # WRITING A PLAN. Small models do the latter constantly: a tidy
+                # numbered list saying "1. Use find_files with '*login*'", then
+                # "let me know what you find!", and the turn is over because
+                # nothing executable was ever emitted.
+                #
+                # The signal is precise, not a guess: the reply names a tool
+                # that this mode actually grants. Nobody writes `find_files` in
+                # prose except a model reaching for it. So it gets one nudge
+                # and the loop carries on, which turns a dead stop into the
+                # call it meant to make.
+                if not tool_calls and nudges < MAX_NUDGES and _names_a_tool(text, tools):
+                    nudges += 1
+                    messages.append({"role": "assistant", "content": text})
+                    messages.append({"role": "user", "content": NUDGE})
+                    continue
 
             if not tool_calls:
                 return "".join(final_text_parts)

@@ -170,6 +170,31 @@ class TestFindFiles:
             FindFilesTool.Args(pattern="*.js"), ctx_for(workspace))
         assert "node_modules" not in res.content
 
+    async def test_several_globs_in_one_pattern(self, workspace):
+        """Models routinely send '*.html *.css' as a single pattern. Taken
+        literally that matches a file with that exact name — nothing — and the
+        empty result sends them looking somewhere else instead of fixing the
+        query. Observed doing exactly that, then asking the user to search."""
+        res = await FindFilesTool().execute(
+            FindFilesTool.Args(pattern="*.md *.js"), ctx_for(workspace))
+        assert res.ok
+        assert "README.md" in res.content and "src/app.test.js" in res.content
+
+    async def test_comma_separated_globs_work_too(self, workspace):
+        res = await FindFilesTool().execute(
+            FindFilesTool.Args(pattern="*.md, *.js"), ctx_for(workspace))
+        assert "README.md" in res.content and "src/app.test.js" in res.content
+
+    async def test_a_single_pattern_is_unaffected(self, workspace):
+        res = await FindFilesTool().execute(
+            FindFilesTool.Args(pattern="*.py"), ctx_for(workspace))
+        assert "src/app.py" in res.content and "README.md" not in res.content
+
+    async def test_no_matches_tells_it_not_to_delegate(self, workspace):
+        res = await FindFilesTool().execute(
+            FindFilesTool.Args(pattern="*.rs"), ctx_for(workspace))
+        assert "Do NOT ask the user" in res.content
+
     async def test_no_matches_suggests_a_next_step(self, workspace):
         res = await FindFilesTool().execute(
             FindFilesTool.Args(pattern="*.rs"), ctx_for(workspace))
