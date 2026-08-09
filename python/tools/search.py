@@ -48,6 +48,10 @@ from tools.base import Risk, TaskMode, Tool, ToolContext, ToolResult
 
 log = logging.getLogger(__name__)
 
+# walk_files / is_texty / split_patterns are PUBLIC so anything else needing
+# "which files count in this workspace" uses the same answer as the tools do,
+# rather than growing a second, subtly different traversal.
+
 MAX_FILES_SCANNED = 4_000     # ceiling on the walk itself
 MAX_MATCHES = 100             # total match lines returned
 MAX_MATCHES_PER_FILE = 5      # so one generated file can't crowd out the rest
@@ -72,11 +76,11 @@ TEXT_SUFFIXES = {
 TEXT_STEMS = {"Dockerfile", "Makefile", "LICENSE", "README", "CHANGELOG", "Procfile"}
 
 
-def _is_texty(p: Path) -> bool:
+def is_texty(p: Path) -> bool:
     return p.suffix.lower() in TEXT_SUFFIXES or p.name in TEXT_STEMS
 
 
-def _walk(root: Path) -> tuple[list[Path], bool]:
+def walk_files(root: Path) -> tuple[list[Path], bool]:
     """Every candidate file under root, skipping the noise directories.
 
     Returns (files, truncated). Pruning SKIP_DIRS in place matters: on a real
@@ -119,7 +123,7 @@ class FindFilesArgs(BaseModel):
     path: str = Field(default=".", description="Folder to search under, relative to the workspace")
 
 
-def _patterns(raw: str) -> list[str]:
+def split_patterns(raw: str) -> list[str]:
     """One pattern string -> the list of globs the model meant.
 
     Models routinely send `'*.html *.css *login*'` as a single pattern, having
@@ -157,10 +161,10 @@ class FindFilesTool(Tool):
             return ToolResult(ok=False, content=f"No such folder: {args.path}", summary="not found")
 
         root = _root_of(ctx)
-        files, walk_truncated = _walk(base)
+        files, walk_truncated = walk_files(base)
         # Match on the FULL relative path as well as the bare name, so both
         # '*.jsx' and 'components/code/*.jsx' behave the way a person expects.
-        globs = _patterns(args.pattern)
+        globs = split_patterns(args.pattern)
         hits = []
         for f in files:
             rel = f.relative_to(root).as_posix()
@@ -233,7 +237,7 @@ class SearchFilesTool(Tool):
                                       "to search for it as plain text.")
 
         root = _root_of(ctx)
-        files, walk_truncated = _walk(base)
+        files, walk_truncated = walk_files(base)
 
         # Search reads through the changeset for exactly the reason read_file
         # does: the agent must find text it just wrote, and must not find text
@@ -254,7 +258,7 @@ class SearchFilesTool(Tool):
         hit_cap_reached = False
 
         for f in sorted(files):
-            if not _is_texty(f):
+            if not is_texty(f):
                 continue
             rel = f.relative_to(root).as_posix()
             if args.file_pattern and not (

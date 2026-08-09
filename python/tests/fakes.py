@@ -27,6 +27,7 @@ class FakeLLM:
     def __init__(self, turns: list[dict[str, Any]] | None = None):
         self.turns = list(turns or [])
         self.calls: list[dict] = []  # every request, for assertions
+        self.json_turns: list[Any] = []  # scripted chat_json replies
         # What this fake claims it can do. Default is EMPTY, matching a real
         # Ollama that could not answer -- and callers must treat unknown as
         # "capable", so the default exercises the permissive path.
@@ -40,6 +41,16 @@ class FakeLLM:
         if turn.get("tool_calls"):
             yield {"type": "tool_calls", "calls": turn["tool_calls"]}
         yield {"type": "done", "eval_count": 1}
+
+    async def chat_json(self, model, messages, schema, **kwargs):
+        """Scripted constrained-decoding replies.
+
+        Pops from `json_turns`. Returning None when the script runs dry mirrors
+        the real client's failure mode (a model that could not produce the
+        shape), which every caller must already survive.
+        """
+        self.calls.append({"model": model, "messages": list(messages), "schema": schema})
+        return self.json_turns.pop(0) if self.json_turns else None
 
     async def is_up(self) -> bool:
         return True

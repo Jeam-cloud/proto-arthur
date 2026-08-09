@@ -356,17 +356,17 @@ def _with_capability_note(
     return [{"role": "system", "content": note}, *messages]
 
 
-# How many times one turn may be told "you described it, now do it". Two is
-# enough to convert a plan into a call without letting a model that genuinely
-# has nothing to run spin: the iteration cap bounds it anyway, but burning the
-# whole budget on nudges would starve the real work.
-MAX_NUDGES = 2
+# How many times one turn may be forced into a structured call. Two is enough
+# to convert a plan into action without letting a model that genuinely has
+# nothing to run spin.
+MAX_FORCED = 2
 
-NUDGE = (
-    "You described the next step but did not actually call the tool, so nothing "
-    "happened and the user is still waiting. Do not explain the plan again and do not "
-    "ask them to run anything. Make the tool call now."
+PICK_PROMPT = (
+    "You described a step but did not call a tool, so nothing happened. "
+    "Which tool did you mean to use? Answer with its name, or \"none\" if you were "
+    "not trying to use one."
 )
+ARGS_PROMPT = "Give the arguments for {name}, based on what you just said you would do."
 
 
 def _names_a_tool(text: str, tools: list[Any]) -> bool:
@@ -439,7 +439,7 @@ class AgentLoop:
             schemas = None
 
         final_text_parts: list[str] = []
-        nudges = 0
+        forced = 0
 
         for _iteration in range(limit):
             tokens: list[str] = []
@@ -511,11 +511,11 @@ class AgentLoop:
                 # prose except a model reaching for it. So it gets one nudge
                 # and the loop carries on, which turns a dead stop into the
                 # call it meant to make.
-                if not tool_calls and nudges < MAX_NUDGES and _names_a_tool(text, tools):
-                    nudges += 1
-                    messages.append({"role": "assistant", "content": text})
-                    messages.append({"role": "user", "content": NUDGE})
-                    continue
+                if not tool_calls and forced < MAX_FORCED and _names_a_tool(text, tools):
+                    forced += 1
+                    call = await self._forced_tool_call(model, messages, text, tools)
+                    if call and self._registry.get_granted(call["name"], mode):
+                        tool_calls = [call]
 
             if not tool_calls:
                 return "".join(final_text_parts)
@@ -547,6 +547,66 @@ class AgentLoop:
         })
         await emit(events.TOOL_LIMIT, {"mode": mode.value})
         return "".join(final_text_parts)
+
+    async def _forced_tool_call(
+        self, model: str, messages: list[dict[str, Any]], said: str, tools: list[Any],
+    ) -> dict[str, Any] | None:
+        """Turn "I'll use find_files" into an actual call, using constrained decoding.
+
+        WHY THIS EXISTS, and why it is not another prompt.
+
+        The loop ends when the model asks for no tools. That is right for an
+        assistant that finished ANSWERING and wrong for one that finished
+        writing a PLAN — and small models write plans constantly: a tidy
+        numbered list saying "1. Use find_files with '*login*'", addressed to
+        the user as though they had the tools. Nothing executable is emitted, so
+        the turn dies.
+
+        The first attempt at this was a prose nudge ("you did not actually call
+        the tool, make the call now"), which is just asking the same model to do
+        the same thing it already failed at. This instead REMOVES the failure
+        mode: OllamaClient.chat_json compiles a JSON schema into a decoding
+        grammar, so tokens that would break the shape are unreachable. The model
+        cannot answer with a plan, an apology, or malformed JSON — the only
+        legal outputs are a tool name, then that tool's own arguments.
+
+        Two calls rather than one, because a union-of-all-tools schema is
+        awkward and small models pick badly from it: first the name from a short
+        enum, then the arguments from THAT tool's Pydantic schema, which we
+        already generate for the native tool-calling path.
+
+        The result goes through every normal gate afterwards — mode check,
+        Pydantic validation, approval. Forcing changes how a call is OBTAINED,
+        never what it is allowed to do.
+        """
+        names = [t.name for t in tools]
+        history = [*messages, {"role": "assistant", "content": said}]
+        try:
+            pick = await self._llm.chat_json(
+                model,
+                [*history, {"role": "user", "content": PICK_PROMPT}],
+                {"type": "object",
+                 "properties": {"tool": {"type": "string", "enum": [*names, "none"]}},
+                 "required": ["tool"]},
+            )
+            name = (pick or {}).get("tool")
+            # "none" is a real answer, not a failure: a model may name a tool
+            # while explaining rather than while intending to use one.
+            if not name or name == "none":
+                return None
+            tool = next(t for t in tools if t.name == name)
+            args = await self._llm.chat_json(
+                model,
+                [*history, {"role": "user", "content": ARGS_PROMPT.format(name=name)}],
+                tool.Args.model_json_schema(),
+            )
+        except Exception as e:
+            # Never let this break the turn. Without it the user still gets the
+            # model's text, which is the behaviour we had before.
+            log.info("forced tool call failed: %s", e)
+            return None
+        log.info("forced a structured call to %s after the model described it", name)
+        return {"name": name, "arguments": args if isinstance(args, dict) else {}}
 
     async def _execute_one(
         self, call: dict[str, Any], mode: TaskMode, ctx: ToolContext, emit: Emit

@@ -2,7 +2,9 @@
 
 import asyncio
 
-from agent.loop import AgentLoop, recover_text_tool_call, strip_tool_call_json
+from agent.loop import (
+    MAX_FORCED, AgentLoop, recover_text_tool_call, strip_tool_call_json,
+)
 from agent.registry import ToolRegistry
 from core import events
 from security.approvals import ApprovalBroker
@@ -420,51 +422,82 @@ class TestOutOfModeTextCall:
         assert tool.executions == ["hi"]
 
 
-class TestNudgeWhenItOnlyDescribesTheStep:
+class TestForcedToolCall:
     """Why a turn "just stops": the loop ends when the model asks for no tools.
     That is right for an assistant that finished answering and wrong for one
     that finished writing a PLAN — "1. Use find_files with '*login*' … let me
-    know what you find!" — which is what small models do constantly."""
+    know what you find!" — which is what small models do constantly.
 
-    async def test_a_described_step_gets_nudged_into_a_real_call(self, db, settings):
+    The fix is not another prompt. chat_json compiles a schema into a decoding
+    grammar, so a plan, an apology, or malformed JSON are all unreachable: the
+    only legal outputs are a tool name, then that tool's arguments."""
+
+    async def test_a_described_step_becomes_a_real_call(self, db, settings):
         tool = EchoTool()
         llm = FakeLLM([
-            {"tokens": ["Here's the plan:\n1. Use echo with the text 'hi'.\nLet me know!"]},
-            {"tool_calls": [{"name": "echo", "arguments": {"text": "hi"}}]},
+            {"tokens": ["Here's the plan:\n1. Use echo with 'hi'.\nLet me know!"]},
             {"tokens": ["done"]},
         ])
+        llm.json_turns = [{"tool": "echo"}, {"text": "hi"}]
         loop, _ = make_loop(db, settings, llm, [tool])
         text = await loop.run("m", [], TaskMode.GENERAL, CTX, CollectingEmit())
         assert tool.executions == ["hi"]      # the plan became a call
         assert text.endswith("done")
 
-    async def test_the_nudge_is_sent_as_a_message(self, db, settings):
-        llm = FakeLLM([
-            {"tokens": ["I will use echo next."]},
-            {"tokens": ["ok"]},
-        ])
+    async def test_the_name_is_picked_from_an_enum_of_real_tools(self, db, settings):
+        llm = FakeLLM([{"tokens": ["I will use echo next."]}, {"tokens": ["ok"]}])
+        llm.json_turns = [{"tool": "echo"}, {"text": "x"}]
         loop, _ = make_loop(db, settings, llm, [EchoTool()])
         await loop.run("m", [], TaskMode.GENERAL, CTX, CollectingEmit())
-        assert "did not actually call the tool" in llm.calls[1]["messages"][-1]["content"]
+        schema = next(c["schema"] for c in llm.calls if "schema" in c)
+        assert schema["properties"]["tool"]["enum"] == ["echo", "none"]
 
-    async def test_an_ordinary_answer_is_never_nudged(self, db, settings):
-        """A reply that names no tool is just an answer. Nudging it would make
-        every conversational turn cost a second model call."""
+    async def test_args_come_from_that_tools_own_schema(self, db, settings):
+        llm = FakeLLM([{"tokens": ["I will use echo next."]}, {"tokens": ["ok"]}])
+        llm.json_turns = [{"tool": "echo"}, {"text": "x"}]
+        loop, _ = make_loop(db, settings, llm, [EchoTool()])
+        await loop.run("m", [], TaskMode.GENERAL, CTX, CollectingEmit())
+        schemas = [c["schema"] for c in llm.calls if "schema" in c]
+        assert "text" in schemas[1]["properties"]
+
+    async def test_none_is_a_real_answer_not_a_failure(self, db, settings):
+        """A model may NAME a tool while explaining rather than intending to
+        use one. Forcing a call there would invent work nobody asked for."""
+        tool = EchoTool()
+        llm = FakeLLM([{"tokens": ["The echo tool would repeat your text."]}])
+        llm.json_turns = [{"tool": "none"}]
+        loop, _ = make_loop(db, settings, llm, [tool])
+        await loop.run("m", [], TaskMode.GENERAL, CTX, CollectingEmit())
+        assert tool.executions == []
+
+    async def test_an_ordinary_answer_is_never_forced(self, db, settings):
+        """A reply naming no tool is just an answer. Forcing it would put two
+        extra model calls on every conversational turn."""
         llm = FakeLLM([{"tokens": ["Paris is the capital of France."]}])
         loop, _ = make_loop(db, settings, llm, [EchoTool()])
         text = await loop.run("m", [], TaskMode.GENERAL, CTX, CollectingEmit())
         assert text == "Paris is the capital of France."
         assert len(llm.calls) == 1     # no extra round trip
 
-    async def test_nudging_gives_up_rather_than_looping(self, db, settings):
-        """A model that keeps describing and never calls must not burn the
-        whole iteration budget on nudges."""
+    async def test_a_failure_to_force_leaves_the_answer_intact(self, db, settings):
+        """chat_json returning nothing (a model that could not produce the
+        shape) must degrade to the old behaviour, not break the turn."""
+        llm = FakeLLM([{"tokens": ["I'll use echo."]}])
+        llm.json_turns = []     # the constrained call yields nothing
+        loop, _ = make_loop(db, settings, llm, [EchoTool()])
+        text = await loop.run("m", [], TaskMode.GENERAL, CTX, CollectingEmit())
+        assert text == "I'll use echo."
+
+    async def test_forcing_gives_up_rather_than_looping(self, db, settings):
         llm = FakeLLM([{"tokens": ["I'll use echo."]} for _ in range(6)])
+        llm.json_turns = []
         loop, _ = make_loop(db, settings, llm, [EchoTool()], max_iterations=6)
         await loop.run("m", [], TaskMode.GENERAL, CTX, CollectingEmit())
-        assert len(llm.calls) == 1 + 2   # first try + MAX_NUDGES
+        # One streamed turn, then MAX_FORCED attempts at the name -- and then
+        # it stops rather than spending the whole iteration budget.
+        assert len([c for c in llm.calls if "schema" in c]) <= MAX_FORCED
 
-    async def test_no_nudge_in_a_mode_with_no_tools(self, db, settings):
+    async def test_no_forcing_in_a_mode_with_no_tools(self, db, settings):
         llm = FakeLLM([{"tokens": ["I would use echo if I could."]}])
         loop, _ = make_loop(db, settings, llm, [EchoTool()])
         await loop.run("m", [], TaskMode.CODE, CTX, CollectingEmit())
