@@ -42,7 +42,16 @@ export default function ActivityFeed({ items, variant = "list", startedAt, onSto
               : a.flagged ? <ShieldAlert size={13} />
               : a.ok === false ? <XCircle size={13} />
               : <CheckCircle2 size={13} />}
-            <span><strong>{a.name}</strong>{a.summary ? `: ${a.summary}` : ""}</span>
+            {/* The human sentence, not the function name.
+                This used to read `read_file: Read login.html` — the API name
+                bolted onto a phrase that already says the same thing in
+                English. `read_file` is our identifier for a capability; it is
+                not information the user asked for or can act on. What they
+                need is WHAT HAPPENED to their machine, and "Read login.html"
+                is that. Tools whose summary is thin fall back to the name so a
+                row is never blank. */}
+            <span>{a.summary || a.name}</span>
+            {a.detail && <span className="activity-detail">{a.detail}</span>}
           </div>
         ))}
       </div>

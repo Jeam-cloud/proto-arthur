@@ -7,6 +7,11 @@ names in one module (mirrored in ui/src/api/sse.js) prevents the classic
 """
 
 TOKEN = "token"                    # {content}
+# Replace the streaming draft wholesale. Sent when the model typed a tool call
+# as prose: those tokens are already on screen by the time we recognise them,
+# and a raw JSON blob is not something the user should ever have to read. The
+# UI swaps its accumulated draft for this cleaned text.
+DRAFT_REPLACE = "draft_replace"    # {content}
 STATUS = "status"                  # {text}            transient progress line
 TOOL_START = "tool_start"          # {name, summary}
 TOOL_RESULT = "tool_result"        # {name, ok, summary, flagged}

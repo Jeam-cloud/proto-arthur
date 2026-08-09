@@ -2,7 +2,7 @@
 
 import asyncio
 
-from agent.loop import AgentLoop, recover_text_tool_call
+from agent.loop import AgentLoop, recover_text_tool_call, strip_tool_call_json
 from agent.registry import ToolRegistry
 from core import events
 from security.approvals import ApprovalBroker
@@ -306,6 +306,14 @@ class TestPrettyPrintedToolCalls:
     def test_plain_prose_is_still_not_a_tool_call(self):
         assert recover_text_tool_call("I had a look and found nothing useful.") is None
 
+    def test_recovers_a_call_with_no_arguments(self):
+        """`{}` is falsy, so the old `arguments or parameters or args` chain
+        silently rejected zero-argument calls — and those are exactly what a
+        model reaches for first when orienting itself in a project."""
+        assert recover_text_tool_call('{"name": "list_files", "arguments": {}}') == {
+            "name": "list_files", "arguments": {},
+        }
+
     async def test_a_pretty_printed_call_actually_executes(self, db, settings):
         """The end-to-end shape of the bug: the loop must run the tool and
         continue, not return the JSON as its final answer."""
@@ -317,6 +325,67 @@ class TestPrettyPrintedToolCalls:
         loop, _ = make_loop(db, settings, llm, [tool])
         await loop.run("m", [], TaskMode.GENERAL, CTX, CollectingEmit())
         assert tool.executions == ["hi"]
+
+
+class TestStripToolCallJson:
+    """The user should never read a raw tool-call blob. It explains nothing the
+    activity row doesn't already say in English, and leaving it in the persisted
+    text teaches the model that printing JSON into chat is normal."""
+
+    def test_strips_a_fenced_call_and_keeps_the_prose(self):
+        text = (
+            "Let me look at that file.\n\n```json\n{\n"
+            '  "name": "read_file",\n  "arguments": {"path": "a.css"}\n}\n```\n\n'
+            "Then I'll change the colours."
+        )
+        out = strip_tool_call_json(text)
+        assert "name" not in out and "```" not in out
+        assert "Let me look at that file." in out
+        assert "Then I'll change the colours." in out
+
+    def test_strips_a_bare_unfenced_call(self):
+        out = strip_tool_call_json('Sure.\n{"name": "echo", "arguments": {"text": "hi"}}\nDone.')
+        assert out == "Sure.\n\nDone."
+
+    def test_strips_several_calls_in_one_message(self):
+        text = ('{"name": "a", "arguments": {}}\nmiddle\n{"name": "b", "arguments": {}}')
+        assert strip_tool_call_json(text).strip() == "middle"
+
+    def test_leaves_ordinary_json_alone(self):
+        """JSON the user asked to see is content, not plumbing."""
+        text = 'Here is your config:\n```json\n{"port": 8080, "debug": true}\n```'
+        assert strip_tool_call_json(text) == text
+
+    def test_leaves_prose_alone(self):
+        assert strip_tool_call_json("No JSON here.") == "No JSON here."
+
+    def test_strips_an_unparseable_call_from_the_brace_onward(self):
+        """The unescaped-field case: raw file content runs to the end and
+        strict decoding fails, but it is still a blob nobody should read."""
+        text = 'Updating it now.\n{"name": "write_file", "arguments": {"content": "a "quote" broke it'
+        assert strip_tool_call_json(text) == "Updating it now."
+
+    async def test_the_draft_is_replaced_on_screen(self, db, settings):
+        tool = EchoTool()
+        llm = FakeLLM([
+            {"tokens": ['Working on it.\n{"name": "echo", "arguments": {"text": "hi"}}']},
+            {"tokens": ["done"]},
+        ])
+        loop, _ = make_loop(db, settings, llm, [tool])
+        emit = CollectingEmit()
+        await loop.run("m", [], TaskMode.GENERAL, CTX, emit)
+        replaced = emit.of(events.DRAFT_REPLACE)
+        assert replaced and replaced[-1]["content"] == "Working on it."
+
+    async def test_the_json_never_reaches_the_persisted_text(self, db, settings):
+        tool = EchoTool()
+        llm = FakeLLM([
+            {"tokens": ['Working on it.\n{"name": "echo", "arguments": {"text": "hi"}}']},
+            {"tokens": [" All set."]},
+        ])
+        loop, _ = make_loop(db, settings, llm, [tool])
+        final = await loop.run("m", [], TaskMode.GENERAL, CTX, CollectingEmit())
+        assert '"name"' not in final and "Working on it." in final
 
 
 class TestCapabilityNote:

@@ -114,6 +114,13 @@ export const useChat = create((set, get) => ({
           case "token":
             get()._patch(cid, { draft: { ...cur.draft, content: cur.draft.content + data.content } });
             break;
+          // The model typed a tool call as prose and the backend recognised
+          // it after the tokens were already on screen. Swap the draft for the
+          // cleaned text — a raw JSON blob is not something the user should
+          // have to read past.
+          case "draft_replace":
+            get()._patch(cid, { draft: { ...cur.draft, content: data.content } });
+            break;
           case "tool_start":
             get()._patch(cid, { activity: [...cur.activity, { key: `${data.name}-${cur.activity.length}`, name: data.name, summary: data.summary, running: true }] });
             break;

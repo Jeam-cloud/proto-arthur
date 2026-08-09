@@ -37,6 +37,23 @@ log = logging.getLogger(__name__)
 Emit = Callable[[str, dict[str, Any]], Awaitable[None]]
 
 
+def _call_shape(obj: Any) -> dict[str, Any] | None:
+    """{"name": str, arguments: dict} -> a normalised call, else None.
+
+    The `or` chain this replaces (`obj.get("arguments") or obj.get("parameters")`)
+    had a quiet bug: an EMPTY dict is falsy, so a call with no arguments —
+    `{"name": "list_files", "arguments": {}}` — fell through every branch and was
+    never recognised. Zero-argument tools are exactly the ones a model reaches
+    for first when orienting itself in a project.
+    """
+    if not isinstance(obj, dict) or not isinstance(obj.get("name"), str):
+        return None
+    for key in ("arguments", "parameters", "args"):
+        if key in obj and isinstance(obj[key], dict):
+            return {"name": obj["name"], "arguments": obj[key]}
+    return None
+
+
 def recover_text_tool_call(text: str) -> dict[str, Any] | None:
     """Salvage a tool call the model wrote as PROSE instead of emitting
     structurally — e.g. printing {"name": "email_send", "parameters": {...}}
@@ -60,11 +77,9 @@ def recover_text_tool_call(text: str) -> dict[str, Any] | None:
         except json.JSONDecodeError:
             idx = start + 1
             continue
-        if isinstance(obj, dict):
-            name = obj.get("name")
-            args = obj.get("arguments") or obj.get("parameters") or obj.get("args")
-            if isinstance(name, str) and isinstance(args, dict):
-                return {"name": name, "arguments": args}
+        call = _call_shape(obj)
+        if call:
+            return call
         idx = start + 1
 
     # Strict decoding never found a valid call. This is the common case for
@@ -102,6 +117,78 @@ _OBJ_START = re.compile(r'\{\s*"')
 def _next_object(text: str, idx: int) -> int:
     m = _OBJ_START.search(text, idx)
     return m.start() if m else -1
+
+
+# A ```json fence around the blob, which is how coder models present it.
+_FENCE_OPEN = re.compile(r"```[a-zA-Z]*\s*$")
+
+
+def strip_tool_call_json(text: str) -> str:
+    """Remove tool-call JSON the model typed into its reply.
+
+    WHY THIS IS NOT COSMETIC. When a model writes its call as prose instead of
+    emitting it structurally, those characters stream to the screen as ordinary
+    tokens — so the user reads a raw `{"name": "edit_file", "arguments": {...}}`
+    blob with the whole file contents escaped inside it, and then watches it
+    happen again on the next turn. It is the single ugliest thing in the app and
+    it explains nothing: the activity row already says "Edited login.css" in
+    words. The mechanism by which Arthur asked for a tool is an implementation
+    detail; the fact that it edited a file is not.
+
+    It also matters for the MODEL. The cleaned text is what gets persisted and
+    replayed as history, so the transcript does not teach it that printing JSON
+    into the chat is normal — which is exactly the habit that produced the
+    apology-and-retry spiral ("I apologize for the confusion. It seems there was
+    an issue with the JSON formatting").
+
+    Only blobs shaped like a tool call are removed: an object with a string
+    `name` and a dict of arguments. JSON the user asked to see survives.
+    """
+    import json
+
+    decoder = json.JSONDecoder()
+    spans: list[tuple[int, int]] = []
+    idx = 0
+    while True:
+        start = _next_object(text, idx)
+        if start == -1:
+            break
+        try:
+            obj, end = decoder.raw_decode(text[start:])
+        except json.JSONDecodeError:
+            idx = start + 1
+            continue
+        if _call_shape(obj):
+            spans.append((start, start + end))
+            idx = start + end
+        else:
+            idx = start + 1
+
+    if not spans:
+        # Unparseable blobs (the unescaped-field case) still reach the screen.
+        # Cut from the opening brace to the end: a call the strict decoder
+        # cannot read is always the tail of the message, because the thing that
+        # broke it was raw file content running to the end.
+        start = _next_object(text, 0)
+        if start != -1 and '"name"' in text[start:start + 60]:
+            spans = [(start, len(text))]
+        else:
+            return text
+
+    out = text
+    for start, end in reversed(spans):
+        # Swallow the enclosing ``` fence if there is one, so removing the blob
+        # does not leave an empty code block behind.
+        head, tail = out[:start], out[end:]
+        m = _FENCE_OPEN.search(head.rstrip("\n") + "\n")
+        if m:
+            head = head[:head.rstrip().rfind("```")]
+        stripped = tail.lstrip()
+        if stripped.startswith("```"):
+            tail = stripped[3:]
+        out = head.rstrip() + "\n\n" + tail.lstrip()
+
+    return out.strip()
 
 
 def _salvage_unescaped_field(text: str, start: int) -> dict[str, Any] | None:
@@ -334,9 +421,19 @@ class AgentLoop:
                 # Second chance: did the model write the call as text?
                 recovered = recover_text_tool_call(text)
                 if recovered and self._registry.get_granted(recovered["name"], mode):
-                    await emit(events.STATUS, {
-                        "text": f"Understood — running {recovered['name']} (the model wrote it as text).",
-                    })
+                    # Take the JSON back off the screen. The tokens are already
+                    # there — nothing can stop that mid-stream — so the draft is
+                    # replaced with the cleaned version, and the cleaned version
+                    # is what gets persisted and replayed as history.
+                    #
+                    # No STATUS line here any more. "Understood — running
+                    # read_file (the model wrote it as text)" narrated our own
+                    # plumbing at the user: they did not ask for a tool by name
+                    # and cannot act on how it was parsed. The activity row says
+                    # "Read login.css", which is the part that is about them.
+                    text = strip_tool_call_json(text)
+                    final_text_parts[-1:] = [text] if text else []
+                    await emit(events.DRAFT_REPLACE, {"content": "".join(final_text_parts)})
                     tool_calls = [recovered]
 
             if not tool_calls:
