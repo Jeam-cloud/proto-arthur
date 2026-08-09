@@ -51,12 +51,9 @@ def recover_text_tool_call(text: str) -> dict[str, Any] | None:
     decoder = json.JSONDecoder()
     idx = 0
     while True:
-        start = text.find('{"', idx)
+        start = _next_object(text, idx)
         if start == -1:
-            # also tolerate a space after the brace
-            start = text.find('{ "', idx)
-            if start == -1:
-                break
+            break
         try:
             obj, _end = decoder.raw_decode(text[start:])
         except json.JSONDecodeError:
