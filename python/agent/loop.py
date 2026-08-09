@@ -420,7 +420,28 @@ class AgentLoop:
             if not tool_calls and tools:
                 # Second chance: did the model write the call as text?
                 recovered = recover_text_tool_call(text)
-                if recovered and self._registry.get_granted(recovered["name"], mode):
+                if recovered and not self._registry.get_granted(recovered["name"], mode):
+                    # RECOGNISED BUT NOT AVAILABLE HERE — e.g. the model tried
+                    # to read a file while in General mode.
+                    #
+                    # The JSON gets stripped anyway. Whether Arthur COULD run
+                    # the call has nothing to do with whether the user should
+                    # have to read the blob, and this is the case where it is
+                    # least excusable: nothing happened, so the only thing on
+                    # screen is machine syntax describing a non-event.
+                    #
+                    # Then say what went wrong in words. Without this the user
+                    # sees an answer that simply stops, with no hint that the
+                    # mode is the reason.
+                    cleaned = strip_tool_call_json(text)
+                    if cleaned != text:
+                        final_text_parts[-1:] = [cleaned] if cleaned else []
+                        await emit(events.DRAFT_REPLACE, {"content": "".join(final_text_parts)})
+                    await emit(events.STATUS, {
+                        "text": (f"Tried to use {recovered['name']}, which isn't available in "
+                                 f"{mode.value} mode — switch modes on the left to allow it."),
+                    })
+                elif recovered and self._registry.get_granted(recovered["name"], mode):
                     # Take the JSON back off the screen. The tokens are already
                     # there — nothing can stop that mid-stream — so the draft is
                     # replaced with the cleaned version, and the cleaned version

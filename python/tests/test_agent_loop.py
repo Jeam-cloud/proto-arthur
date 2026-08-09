@@ -388,6 +388,38 @@ class TestStripToolCallJson:
         assert '"name"' not in final and "Working on it." in final
 
 
+class TestOutOfModeTextCall:
+    """Observed: in GENERAL mode a coder model wrote read_file/edit_file JSON
+    into the chat. Nothing could run it, so the user was left reading machine
+    syntax that described a non-event, with no clue the mode was the reason."""
+
+    async def test_json_is_stripped_even_though_it_cannot_run(self, db, settings):
+        llm = FakeLLM([{"tokens": ['Let me read it.\n{"name": "read_file", "arguments": {"path": "a.css"}}']}])
+        loop, _ = make_loop(db, settings, llm, [EchoTool()])
+        emit = CollectingEmit()
+        text = await loop.run("m", [], TaskMode.GENERAL, CTX, emit)
+        assert '"name"' not in text
+        assert emit.of(events.DRAFT_REPLACE)[-1]["content"] == "Let me read it."
+
+    async def test_the_user_is_told_the_mode_is_the_problem(self, db, settings):
+        llm = FakeLLM([{"tokens": ['{"name": "read_file", "arguments": {"path": "a.css"}}']}])
+        loop, _ = make_loop(db, settings, llm, [EchoTool()])
+        emit = CollectingEmit()
+        await loop.run("m", [], TaskMode.GENERAL, CTX, emit)
+        status = " ".join(d["text"] for d in emit.of(events.STATUS))
+        assert "read_file" in status and "general mode" in status.lower()
+
+    async def test_an_available_tool_still_runs_normally(self, db, settings):
+        tool = EchoTool()
+        llm = FakeLLM([
+            {"tokens": ['{"name": "echo", "arguments": {"text": "hi"}}']},
+            {"tokens": ["done"]},
+        ])
+        loop, _ = make_loop(db, settings, llm, [tool])
+        await loop.run("m", [], TaskMode.GENERAL, CTX, CollectingEmit())
+        assert tool.executions == ["hi"]
+
+
 class TestCapabilityNote:
     """Regression: asked to send an email in Code mode, the model answered
     "Done. Email sent to …" without calling anything. Mode scoping stopped the
