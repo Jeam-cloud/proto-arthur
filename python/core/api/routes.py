@@ -32,7 +32,7 @@ from core.api.schemas import (
     ApprovalDecision, ArchiveRequest, ChatRequest, MemoryCreate, MemoryUpdate, PersonaBody,
     PullRequest, RenameRequest, ResearchExportRequest, ResearchFindSourcesRequest,
     ResearchPlanRequest, ResearchRunRequest, ResearchSynthesizeRequest, SecretBody, SettingsPatch,
-    AttachPathsRequest, ChangesRequest, WorkspaceRequest,
+    AttachPathsRequest, ChangesRequest, NewConversation, WorkspaceRequest,
 )
 from research import citations as research_citations
 from research import engine as research_engine
@@ -588,8 +588,49 @@ async def list_conversations(request: Request, archived: bool = False) -> list[d
 
 
 @router.post("/conversations")
-async def create_conversation(request: Request) -> dict:
-    return await state(request).conversations.create()
+async def create_conversation(request: Request, body: NewConversation | None = None) -> dict:
+    """Start a chat in a given mode, optionally bound to a folder.
+
+    The folder is remembered globally too, so it heads the recents list next
+    time — but the conversation's own binding is what governs its access.
+    """
+    s = state(request)
+    body = body or NewConversation()
+    conv = await s.conversations.create(mode=body.mode, workspace_root=body.workspace_root)
+    if body.workspace_root:
+        await _remember_workspace(s, body.workspace_root)
+    return conv
+
+
+RECENT_ROOTS_KEY = "recent_workspace_roots"
+MAX_RECENT_ROOTS = 8
+
+
+async def _remember_workspace(s: AppState, root: str) -> None:
+    """Most-recently-used list of project folders.
+
+    WHY: picking a folder used to mean the OS dialog, every time, for every
+    chat — which is precisely the friction that made everyone stay on one
+    folder and gave up multi-project work. Switching between two projects
+    should be one click.
+
+    Move-to-front, de-duplicated, capped. Paths are NOT validated here: a
+    folder on an unplugged drive should stay in the list (see WorkspaceRequest
+    for the same reasoning), and containment is enforced at use.
+    """
+    recents = await s.db.get_setting(RECENT_ROOTS_KEY, []) or []
+    recents = [r for r in recents if r != root][:MAX_RECENT_ROOTS - 1]
+    await s.db.set_setting(RECENT_ROOTS_KEY, [root, *recents])
+    await s.db.set_setting("workspace_root", root)
+
+
+@router.get("/workspace/recents")
+async def workspace_recents(request: Request) -> dict:
+    s = state(request)
+    roots = await s.db.get_setting(RECENT_ROOTS_KEY, []) or []
+    # `exists` per entry so the menu can grey out a folder that has moved
+    # rather than offering it and failing on the next tool call.
+    return {"recents": [{"root": r, "exists": Path(r).is_dir()} for r in roots]}
 
 
 @router.get("/conversations/{cid}/messages")
@@ -647,11 +688,10 @@ async def get_conversation_workspace(request: Request, cid: str) -> dict:
 async def set_conversation_workspace(request: Request, cid: str, body: WorkspaceRequest) -> dict:
     s = state(request)
     await s.conversations.set_workspace(cid, body.root)
-    # Also remembered globally as "the last folder chosen", which is what a
-    # brand-new conversation inherits. This is the whole reason per-conversation
-    # scoping does not become a folder prompt on every new chat.
+    # Also remembered globally, which seeds the recents menu and the folder a
+    # brand-new conversation inherits.
     if body.root:
-        await s.db.set_setting("workspace_root", body.root)
+        await _remember_workspace(s, body.root)
     return {"root": body.root, "bound": bool(body.root)}
 
 

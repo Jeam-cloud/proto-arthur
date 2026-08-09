@@ -12,14 +12,26 @@ class ConversationStore:
     def __init__(self, db: Database):
         self._db = db
 
-    async def create(self, persona_id: str | None = None) -> dict:
+    async def create(
+        self, persona_id: str | None = None, *,
+        mode: str = "general", workspace_root: str | None = None,
+    ) -> dict:
+        """Start a conversation, with its mode and folder decided UP FRONT.
+
+        Both used to be set afterwards, or not at all: mode lived in React
+        state and the folder fell through to a global "last used". Deciding at
+        creation is what lets two chats sit side by side on two projects, and
+        what lets a chat still be a Code chat after a restart.
+        """
         cid = new_id()
         ts = now()
         await self._db.write(
-            "INSERT INTO conversations(id, title, persona_id, created_at, updated_at) VALUES(?,?,?,?,?)",
-            (cid, "New chat", persona_id, ts, ts),
+            "INSERT INTO conversations(id, title, persona_id, mode, workspace_root, "
+            "created_at, updated_at) VALUES(?,?,?,?,?,?,?)",
+            (cid, "New chat", persona_id, mode, workspace_root, ts, ts),
         )
-        return {"id": cid, "title": "New chat", "created_at": ts, "updated_at": ts}
+        return {"id": cid, "title": "New chat", "mode": mode,
+                "workspace_root": workspace_root, "created_at": ts, "updated_at": ts}
 
     async def list_all(self, *, archived: bool = False) -> list[dict]:
         return await self._db.fetch_all(

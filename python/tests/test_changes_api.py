@@ -52,6 +52,59 @@ def stage(app_state, cid, root, path, content):
     app_state.changesets.get(cid, str(root)).stage_write(path, content)
 
 
+class TestConversationIdentity:
+    """Mode and folder are properties of the conversation, decided at creation.
+    Before this, mode lived in React state (so a reload made every chat General)
+    and the folder fell through to a global 'last used' (so two projects at once
+    was impossible)."""
+
+    async def test_mode_and_folder_are_set_at_creation(self, client, project):
+        res = await client.post("/conversations",
+                                json={"mode": "code", "workspace_root": str(project)})
+        assert res.json()["mode"] == "code"
+        cid = res.json()["id"]
+        ws = (await client.get(f"/conversations/{cid}/workspace")).json()
+        assert ws["root"] == str(project) and ws["bound"] is True
+
+    async def test_two_chats_can_hold_two_different_projects(self, client, tmp_path):
+        a, b = tmp_path / "alpha", tmp_path / "beta"
+        a.mkdir()
+        b.mkdir()
+        ca = (await client.post("/conversations",
+                                json={"mode": "code", "workspace_root": str(a)})).json()["id"]
+        cb = (await client.post("/conversations",
+                                json={"mode": "code", "workspace_root": str(b)})).json()["id"]
+        # Creating the second must not move the first — the bug that made
+        # multi-project work impossible was exactly this leaking through a
+        # single global setting.
+        assert (await client.get(f"/conversations/{ca}/workspace")).json()["root"] == str(a)
+        assert (await client.get(f"/conversations/{cb}/workspace")).json()["root"] == str(b)
+
+    async def test_a_bodyless_post_still_makes_a_general_chat(self, client):
+        res = await client.post("/conversations")
+        assert res.status_code == 200 and res.json()["mode"] == "general"
+
+    async def test_recent_folders_are_most_recent_first_and_deduped(self, client, tmp_path):
+        a, b = tmp_path / "alpha", tmp_path / "beta"
+        a.mkdir()
+        b.mkdir()
+        for root in (a, b, a):
+            await client.post("/conversations",
+                              json={"mode": "code", "workspace_root": str(root)})
+        recents = (await client.get("/workspace/recents")).json()["recents"]
+        assert [r["root"] for r in recents] == [str(a), str(b)]
+        assert all(r["exists"] for r in recents)
+
+    async def test_a_folder_that_moved_is_kept_but_flagged(self, client, tmp_path):
+        gone = tmp_path / "gone"
+        gone.mkdir()
+        await client.post("/conversations",
+                          json={"mode": "code", "workspace_root": str(gone)})
+        gone.rmdir()
+        recents = (await client.get("/workspace/recents")).json()["recents"]
+        assert recents[0]["root"] == str(gone) and recents[0]["exists"] is False
+
+
 class TestListChanges:
     async def test_empty_for_a_fresh_conversation(self, client):
         cid = await new_conversation(client)

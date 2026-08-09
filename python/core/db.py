@@ -177,6 +177,27 @@ MIGRATIONS: list[str] = [
     PRAGMA legacy_alter_table=OFF;
     PRAGMA foreign_keys=ON;
     """,
+
+    # 5 — mode belongs to the conversation.
+    #
+    # It used to be `useState("general")` in App.jsx: app-level React state,
+    # never persisted and never attached to anything. So a "Code chat" was not a
+    # thing that existed — a conversation was whatever mode the rail happened to
+    # point at while you were looking at it, and a reload turned every chat back
+    # into General, including ones holding staged edits.
+    #
+    # Storing it makes a conversation mean something: this chat is a Code chat,
+    # bound to this folder, with these tools, forever. Which in turn makes the
+    # folder binding beside it (migration 2) actually usable for more than one
+    # project at a time.
+    #
+    # DEFAULT 'general' so every existing conversation keeps behaving exactly as
+    # it did. No CHECK constraint on the value: TaskMode is the authority and it
+    # will gain modes, and a schema-level enum would mean a table rebuild every
+    # time one is added.
+    """
+    ALTER TABLE conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'general';
+    """,
 ]
 
 

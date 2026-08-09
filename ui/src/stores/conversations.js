@@ -13,8 +13,11 @@ export const useConversations = create((set, get) => ({
     if (!get().activeId && list.length) set({ activeId: list[0].id });
   },
 
-  async createNew() {
-    const conv = await api.post("/conversations");
+  // Mode and folder are decided HERE, at creation, and never change after.
+  // That is what makes "this is a Code chat on this project" a durable fact
+  // rather than a reading of whatever the rail currently points at.
+  async createNew({ mode = "general", workspaceRoot = null } = {}) {
+    const conv = await api.post("/conversations", { mode, workspace_root: workspaceRoot });
     set((s) => ({ list: [{ ...conv, message_count: 0 }, ...s.list], activeId: conv.id }));
     return conv.id;
   },

@@ -23,7 +23,6 @@ import ErrorBoundary from "./components/common/ErrorBoundary";
 
 export default function App() {
   const [view, setView] = useState("chat"); // chat | settings
-  const [mode, setMode] = useState("general"); // lifted: rail, sidebar footer, chat header and composer all read it
   const [settingsTab, setSettingsTab] = useState("general");
   const [paletteOpen, setPaletteOpen] = useState(false);
   // The Model hub is an overlay, not a view: it floats over whatever screen
@@ -33,6 +32,17 @@ export default function App() {
   const [booted, setBooted] = useState(false);
   const [bootError, setBootError] = useState(null);
   const { phase, status, startPolling } = useBackend();
+
+  // MODE BELONGS TO THE CONVERSATION, not to the app.
+  //
+  // It used to be useState here, which meant a chat had no mode of its own --
+  // it was whatever the rail happened to point at while you were looking at
+  // it, and a reload turned every conversation back into General. Reading it
+  // off the active conversation makes "this is a Code chat" a durable fact,
+  // and makes the folder bound beside it meaningful.
+  const activeId = useConversations((s) => s.activeId);
+  const conversations = useConversations((s) => s.list);
+  const mode = conversations.find((c) => c.id === activeId)?.mode || "general";
   const researchStage = useResearch((s) => s.stage);
   const researchWide =
     view === "chat" && mode === "research" && (researchStage === "run" || researchStage === "report");
@@ -93,7 +103,11 @@ export default function App() {
     <div className="app">
       <ModeRail
         mode={mode}
-        setMode={setMode}
+        // Clicking a mode STARTS A CHAT in it rather than re-flagging the one
+        // you are reading. Re-flagging is what made this confusing: a
+        // conversation full of staged edits could silently become a General
+        // chat with no file tools, and nothing on screen said why.
+        onStart={(m) => useConversations.getState().createNew({ mode: m })}
         settingsActive={view === "settings"}
         onOpenSettings={() => { setSettingsTab("general"); setView("settings"); }}
         hubActive={hubOpen}
@@ -115,7 +129,7 @@ export default function App() {
               // chat: an investigation has stages, lanes and a document, none of
               // which fit in a message list.
               ? <ResearchView onOpenIntegrations={() => { setSettingsTab("integrations"); setView("settings"); }} />
-              : <ChatView mode={mode} setMode={setMode} />}
+              : <ChatView mode={mode} />}
         </ErrorBoundary>
       </div>
       {hubOpen && <ModelHub onClose={() => setHubOpen(false)} />}
@@ -135,7 +149,14 @@ export default function App() {
             setPaletteOpen(false);
           }}
           onOpenHub={() => { setHubOpen(true); setPaletteOpen(false); }}
-          onSetMode={(m) => { setMode(m); setView("chat"); setPaletteOpen(false); }}
+          // The palette's mode entries start a chat too, same as the rail —
+          // "Code mode" as a command means "work on code", and the only way to
+          // do that now is in a chat that IS a Code chat.
+          onSetMode={(m) => {
+            useConversations.getState().createNew({ mode: m });
+            setView("chat");
+            setPaletteOpen(false);
+          }}
           onNewChat={() => { useConversations.getState().createNew(); setView("chat"); setPaletteOpen(false); }}
         />
       )}

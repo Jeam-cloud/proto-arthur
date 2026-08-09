@@ -17,7 +17,7 @@ import { useFileDrop } from "../../lib/useFileDrop";
 // Model selection lives in the composer bar (ModelMenu inside Composer),
 // mode-aware recommendations, Claude-bar style. The header stays clean.
 
-export default function ChatView({ mode, setMode }) {
+export default function ChatView({ mode }) {
   const { activeId, list, createNew } = useConversations();
   const conv = list.find((c) => c.id === activeId);
   const slice = useChat((s) => s.slice(activeId || ""));
@@ -164,7 +164,7 @@ export default function ChatView({ mode, setMode }) {
 
       {mode === "code" && <ChangesPanel conversationId={activeId} />}
 
-      <Composer conversationId={activeId} mode={mode} setMode={setMode} />
+      <Composer conversationId={activeId} mode={mode} />
     </>
   );
 }

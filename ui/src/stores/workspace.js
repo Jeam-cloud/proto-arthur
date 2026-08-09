@@ -9,7 +9,7 @@
 // migration 2 and _conversation_workspace in core/api/routes.py). Switching
 // chats must not show you the previous chat's folder.
 import { create } from "zustand";
-import { getTree, getWorkspace, setWorkspace } from "../api/workspace";
+import { getRecentFolders, getTree, getWorkspace, setWorkspace } from "../api/workspace";
 import { useToasts } from "./toasts";
 
 export const useWorkspace = create((set, get) => ({
@@ -58,6 +58,32 @@ export const useWorkspace = create((set, get) => ({
     }
   },
 
+  recents: [],
+
+  async loadRecents() {
+    try {
+      const res = await getRecentFolders();
+      set({ recents: res.recents || [] });
+    } catch {
+      set({ recents: [] });   // the OS picker still works; recents are a shortcut
+    }
+  },
+
+  // Bind an already-known folder. Separate from choose() because the whole
+  // point of the recents menu is NOT opening the OS dialog.
+  async pick(root) {
+    const { conversationId } = get();
+    if (!conversationId || !root) return;
+    try {
+      await setWorkspace(conversationId, root);
+      set({ root, bound: true, exists: true });
+      await get().refreshTree();
+      await get().loadRecents();
+    } catch (e) {
+      useToasts.getState().push(e.message || "Could not use that folder.", "error");
+    }
+  },
+
   // Opens the OS folder picker and binds the result to this conversation.
   async choose() {
     const { conversationId } = get();
@@ -72,6 +98,7 @@ export const useWorkspace = create((set, get) => ({
       await setWorkspace(conversationId, folder);
       set({ root: folder, bound: true, exists: true });
       await get().refreshTree();
+      await get().loadRecents();
       useToasts.getState().push("Folder set for this chat.", "success");
     } catch (e) {
       useToasts.getState().push(e.message || "Could not set that folder.", "error");

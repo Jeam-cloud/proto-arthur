@@ -21,9 +21,15 @@ async def test_migrations_are_idempotent(settings):
 async def test_an_existing_database_upgrades_without_losing_data(settings):
     """The migration path real users take, not the fresh-install one.
 
-    Migration 2 adds a column to `conversations`. Anyone upgrading has rows in
-    that table already, so the test that matters is that they survive and the
-    new column arrives NULL rather than the table being rebuilt.
+    Migrations 2 and 5 add columns to `conversations`. Anyone upgrading has rows
+    in that table already, so the test that matters is that they survive, and
+    that the new columns arrive with sane values rather than the table being
+    rebuilt underneath them.
+
+    The old row is inserted with RAW SQL rather than ConversationStore: the
+    store is current-version code and writes the current-version columns, so
+    using it here would simulate old data with new code — which is not a state
+    any real install passes through.
     """
     db = Database(settings.db_path)
     # Stop one step short of the newest migration to simulate an older install.
@@ -31,17 +37,21 @@ async def test_an_existing_database_upgrades_without_losing_data(settings):
     try:
         MIGRATIONS[:] = db_migrations_backup[:-1]
         await db.connect()
-        store = ConversationStore(db)
-        convo = await store.create()
-        await store.rename(convo["id"], "Existing chat")
+        await db.write(
+            "INSERT INTO conversations(id, title, created_at, updated_at) VALUES(?,?,?,?)",
+            ("old-1", "Existing chat", 1.0, 1.0),
+        )
         await db.close()
 
         MIGRATIONS[:] = db_migrations_backup  # now "ship" the new version
         db2 = Database(settings.db_path)
         await db2.connect()
-        row = await db2.fetch_one("SELECT * FROM conversations WHERE id=?", (convo["id"],))
+        row = await db2.fetch_one("SELECT * FROM conversations WHERE id=?", ("old-1",))
         assert row["title"] == "Existing chat"
         assert row["workspace_root"] is None
+        # Existing chats keep behaving exactly as they did — General, not a
+        # mode they were never in.
+        assert row["mode"] == "general"
         await db2.close()
     finally:
         MIGRATIONS[:] = db_migrations_backup

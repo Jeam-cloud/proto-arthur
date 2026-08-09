@@ -26,7 +26,7 @@ import { useRecorder } from "./useRecorder";
 // explicit rather than silently granting tools.
 const EMAIL_INTENT = /\b(e-?mail|send (an? )?e-?mail|reply to .*e-?mail|check my inbox|unread e-?mails?)\b/i;
 
-export default function Composer({ conversationId, mode, setMode }) {
+export default function Composer({ conversationId, mode }) {
   const [text, setText] = useState("");
   const textareaRef = useRef(null);
   // Mirror of `text` for callbacks that outlive a render (the recorder's
@@ -84,15 +84,19 @@ export default function Composer({ conversationId, mode, setMode }) {
     // appeared enabled and did nothing at all.
     if ((!trimmed && !useAttachments.getState().items.length) || streaming) return false;
 
-    let sendMode = mode;
+    // The email-intent nudge used to silently switch this chat to Email mode
+    // mid-conversation. That is exactly the behaviour we removed: a chat's mode
+    // is fixed at creation, so changing it under the user would make the mode
+    // badge, the tools and the transcript disagree with each other. Point at
+    // the rail instead and let them decide.
+    const sendMode = mode;
     if (mode === "general" && EMAIL_INTENT.test(trimmed)) {
-      if (status?.email_configured) {
-        sendMode = "email";
-        setMode("email");
-        pushToast("Switched to Email mode for this request.", "info");
-      } else {
-        pushToast("Email isn't set up yet, add it in Settings, Integrations tab.", "error");
-      }
+      pushToast(
+        status?.email_configured
+          ? "Sending email needs an Email chat — start one from the left rail."
+          : "Email isn't set up yet, add it in Settings, Integrations tab.",
+        "info",
+      );
     }
 
     send(conversationId, trimmed, {

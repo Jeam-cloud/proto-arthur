@@ -1849,3 +1849,29 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
 .receipt-card > svg { color: var(--green); flex-shrink: 0; margin-top: 1px; }
 .receipt-title { font-size: 13.5px; font-weight: 600; margin-bottom: 7px; }
 .receipt-note { font-size: 12.5px; color: var(--tmut); line-height: 1.6; }
+
+/* Recent-projects menu on the folder bar. Switching projects is one click;
+   the OS dialog is the fallback, not the default path. */
+.ws-menu { position: relative; flex-shrink: 0; }
+.ws-menu-pop {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 40; min-width: 240px;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 11px;
+  padding: 5px; box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
+}
+.ws-menu-head {
+  font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--tmut); padding: 7px 9px 5px;
+}
+.ws-menu-item {
+  display: flex; flex-direction: column; gap: 1px; width: 100%; text-align: left;
+  padding: 7px 9px; border: 0; background: none; border-radius: 8px; cursor: pointer;
+  color: var(--text); font-size: 13px; font-family: inherit;
+}
+.ws-menu-item:hover:not(:disabled) { background: var(--muted); }
+.ws-menu-item.gone { opacity: 0.45; cursor: not-allowed; }
+.ws-menu-name { font-weight: 500; }
+.ws-menu-path { font-size: 11px; color: var(--tmut); font-family: var(--mono); }
+.ws-menu-item.browse { border-top: 1px solid var(--border); border-radius: 0 0 8px 8px; margin-top: 4px; padding-top: 9px; }
+/* A tick when the folder is bound to THIS chat rather than inherited — the
+   distinction the "inherited" pill already makes, said positively. */
+.ws-bound { color: var(--green); flex-shrink: 0; }

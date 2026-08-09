@@ -4,10 +4,17 @@
 // changes what the sidebar footer, chat header badge, and composer all show),
 // not something that should reset when you switch conversations.
 //
-// WHY it stays a controlled prop from App.jsx rather than its own store: mode
-// is read by three siblings (ModeRail, ChatView/Composer, Sidebar's status
-// label) that all need to re-render together. Lifting a single small piece of
-// state to their shared parent is simpler than adding a store for one value.
+// THE RAIL IS A LAUNCHER, NOT A SWITCH.
+//
+// Clicking a mode starts a NEW chat in it; it does not re-flag the chat you are
+// currently reading. Mode is a property of the conversation now (migration 5),
+// so re-flagging would mean a conversation could change what tools it has
+// mid-thread -- and a Code chat holding staged edits could quietly become a
+// General chat that cannot apply them.
+//
+// The highlighted icon therefore shows what the CURRENT chat is, which is also
+// what you would get by clicking it. Those two readings agree, so one highlight
+// serves both.
 import React from "react";
 import {
   MessageSquare, Search, Code2, Mail, LineChart, Monitor, PenTool, Settings, Box,
@@ -52,7 +59,7 @@ export const MODES = [
   { id: "design", label: "Design", icon: PenTool },
 ];
 
-export default function ModeRail({ mode, setMode, onOpenSettings, settingsActive, onOpenHub, hubActive }) {
+export default function ModeRail({ mode, onStart, onOpenSettings, settingsActive, onOpenHub, hubActive }) {
   const { status } = useBackend();
   const dockerOff = status && !status.docker_up;
   const emailOff = status && !status.email_configured;
@@ -63,7 +70,8 @@ export default function ModeRail({ mode, setMode, onOpenSettings, settingsActive
   const renderMode = (m) => {
     const disabled = (m.needsDocker && dockerOff) || (m.needsEmail && emailOff);
     const reason = m.needsDocker && dockerOff ? "Needs Docker running"
-      : m.needsEmail && emailOff ? "Set up email in Settings, Integrations tab" : m.label;
+      : m.needsEmail && emailOff ? "Set up email in Settings, Integrations tab"
+      : `New ${m.label.toLowerCase()} chat`;
     const Icon = m.icon;
     return (
       <button
@@ -71,7 +79,7 @@ export default function ModeRail({ mode, setMode, onOpenSettings, settingsActive
         className={`rail-btn ${mode === m.id ? "active" : ""}`}
         disabled={disabled}
         title={reason}
-        onClick={() => setMode(m.id)}
+        onClick={() => onStart(m.id)}
       >
         <Icon size={20} strokeWidth={1.8} />
       </button>

@@ -132,6 +132,21 @@ class WorkspaceRequest(BaseModel):
     root: str | None = Field(default=None, max_length=500)
 
 
+class NewConversation(BaseModel):
+    """Mode and folder, decided when the chat is created.
+
+    Both are optional so `POST /conversations` with no body still works — that
+    is what every non-Code entry point does, and it produces a General chat
+    exactly as before.
+
+    `mode` is a plain string validated against TaskMode at use, not an enum
+    here: the API should reject an unknown mode the same way the registry does
+    (by granting no tools), not with a 422 that reads like a bug in the app.
+    """
+    mode: str = Field(default="general", max_length=20)
+    workspace_root: str | None = Field(default=None, max_length=500)
+
+
 class ChangesRequest(BaseModel):
     """Which staged files to apply or discard.
 

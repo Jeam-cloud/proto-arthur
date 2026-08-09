@@ -15,3 +15,10 @@ export function getTree(conversationId) {
   const q = conversationId ? `?conversation_id=${encodeURIComponent(conversationId)}` : "";
   return api.get(`/workspace/tree${q}`);
 }
+
+// Recently used project folders, most recent first, each flagged with whether
+// it is still there. Exists so switching projects is one click instead of an
+// OS dialog -- the friction that kept everyone on a single folder.
+export function getRecentFolders() {
+  return api.get("/workspace/recents");
+}
