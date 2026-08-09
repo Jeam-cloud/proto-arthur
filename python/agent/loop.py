@@ -37,6 +37,21 @@ log = logging.getLogger(__name__)
 Emit = Callable[[str, dict[str, Any]], Awaitable[None]]
 
 
+def _call_key(call: dict[str, Any]) -> str:
+    """Identity of a call, for spotting an exact repeat within one turn.
+
+    Arguments are included and key-sorted: reading two different files is two
+    pieces of work, reading the same file twice is a loop.
+    """
+    import json
+
+    try:
+        args = json.dumps(call.get("arguments") or {}, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        args = str(call.get("arguments"))
+    return f"{call.get('name')}:{args}"
+
+
 def _call_shape(obj: Any) -> dict[str, Any] | None:
     """{"name": str, arguments: dict} -> a normalised call, else None.
 
@@ -432,6 +447,7 @@ class AgentLoop:
 
         final_text_parts: list[str] = []
         forced = 0
+        executed: set[str] = set()
 
         for _iteration in range(limit):
             tokens: list[str] = []
@@ -513,6 +529,23 @@ class AgentLoop:
                 if not tool_calls and forced < MAX_FORCED:
                     forced += 1
                     call = await self._forced_tool_call(model, messages, text, tools)
+                    # NEVER FORCE A CALL THAT ALREADY RAN THIS TURN.
+                    #
+                    # After a tool succeeds, the model's next message is usually
+                    # its ANSWER — "I see three items in your workspace… anything
+                    # specific you'd like me to do?" — which contains no tool
+                    # call because none is needed. Forcing there asked a small
+                    # model "which tool did you mean?", it picked the one it had
+                    # just used, list_files ran a second time, and the model
+                    # repeated its answer verbatim. On screen: the same
+                    # paragraph twice, for no reason.
+                    #
+                    # Comparing against what actually executed is the precise
+                    # test. It still allows forcing a DIFFERENT next step, which
+                    # is the whole point on a multi-file task.
+                    if call and _call_key(call) in executed:
+                        log.info("skipped a forced repeat of %s", call["name"])
+                        call = None
                     if call and self._registry.get_granted(call["name"], mode):
                         tool_calls = [call]
 
@@ -531,6 +564,7 @@ class AgentLoop:
             })
 
             for call in tool_calls:
+                executed.add(_call_key(call))
                 result_msg = await self._execute_one(call, mode, ctx, emit)
                 messages.append(result_msg)
 

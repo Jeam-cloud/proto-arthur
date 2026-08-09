@@ -517,6 +517,43 @@ class TestForcedToolCall:
         # it stops rather than spending the whole iteration budget.
         assert len([c for c in llm.calls if "schema" in c]) <= MAX_FORCED
 
+    async def test_never_forces_a_repeat_of_a_call_that_already_ran(self, db, settings):
+        """Observed loop: list_files ran, the model answered "I see three items…
+        anything specific you'd like me to do?", the forced check asked "which
+        tool did you mean?", it picked list_files again — and the same paragraph
+        appeared on screen twice."""
+        tool = EchoTool()
+        llm = FakeLLM([
+            {"tokens": ["Let me look."]},
+            {"tokens": ["I see three items. Anything specific?"]},
+            {"tokens": ["I see three items. Anything specific?"]},
+        ])
+        # First force picks echo; the second would pick the SAME call again.
+        llm.json_turns = [
+            {"tool": "echo"}, {"text": "listing"},
+            {"tool": "echo"}, {"text": "listing"},
+        ]
+        loop, _ = make_loop(db, settings, llm, [tool])
+        await loop.run("m", [], TaskMode.GENERAL, CTX, CollectingEmit())
+        assert tool.executions == ["listing"]     # ran once, not twice
+
+    async def test_a_different_next_step_is_still_forced(self, db, settings):
+        """Deduping must not block multi-step work: a second, DIFFERENT call is
+        exactly what a multi-file task needs."""
+        tool = EchoTool()
+        llm = FakeLLM([
+            {"tokens": ["Let me look."]},
+            {"tokens": ["Now the other one."]},
+            {"tokens": ["done"]},
+        ])
+        llm.json_turns = [
+            {"tool": "echo"}, {"text": "first"},
+            {"tool": "echo"}, {"text": "second"},
+        ]
+        loop, _ = make_loop(db, settings, llm, [tool])
+        await loop.run("m", [], TaskMode.GENERAL, CTX, CollectingEmit())
+        assert tool.executions == ["first", "second"]
+
     async def test_no_forcing_in_a_mode_with_no_tools(self, db, settings):
         llm = FakeLLM([{"tokens": ["I would use echo if I could."]}])
         loop, _ = make_loop(db, settings, llm, [EchoTool()])
