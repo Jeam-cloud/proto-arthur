@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -213,6 +214,7 @@ class ChatService:
             # None, and the file tools refuse to write without one.
             changes = (self._changesets.get(conversation_id, workspace_root)
                        if self._changesets is not None and mode is TaskMode.CODE else None)
+            staged_before = len(changes.paths()) if changes is not None else 0
             ctx = ToolContext(conversation_id=conversation_id,
                               workspace_root=workspace_root, services=services,
                               changes=changes)
@@ -226,6 +228,8 @@ class ChatService:
             # staged file is noise the user cannot act on yet.
             if changes is not None and not changes.is_empty():
                 await emit(events.CHANGES_UPDATED, changes.totals())
+            if changes is not None and len(changes.paths()) == staged_before:
+                await self._warn_if_code_was_only_printed(final_text, emit)
 
         # 6. sanitize + persist assistant turn
         final_text = await self._gateway.scan_model_output(final_text)
@@ -244,6 +248,35 @@ class ChatService:
         if conv["title"] == "New chat":
             self._spawn(self._generate_title(conversation_id, user_text, model, emit))
         self._spawn(self._extract_memories(conversation_id, user_text, model))
+
+    # A fenced block big enough to be a file rather than an inline example.
+    _CODE_BLOCK = re.compile(r"```[a-zA-Z]*\n(.*?)```", re.DOTALL)
+    _MIN_BLOCK_LINES = 5
+
+    async def _warn_if_code_was_only_printed(self, text: str, emit: Emit) -> None:
+        """Say plainly when a Code turn produced code but changed nothing.
+
+        THE FAILURE THIS CATCHES is the most dangerous one in the app. A model
+        printed a whole CSS file into the chat — content it had invented, for a
+        file it never read — the user replied "go ahead and apply it", and it
+        printed the same invented file again. Nothing was ever staged, so the
+        review panel stayed empty and there was no diff to contradict it. The
+        only signal that the work had not happened was an ABSENCE, and absence
+        is exactly what a person scrolling a convincing answer does not notice.
+
+        So the absence gets stated. This does not detect fabrication — nothing
+        here can know whether the content was real — but it removes the silence
+        that let fabrication pass for work, and it points at the one thing that
+        would have revealed it: there is no diff.
+        """
+        blocks = self._CODE_BLOCK.findall(text or "")
+        if not any(len(b.splitlines()) >= self._MIN_BLOCK_LINES for b in blocks):
+            return
+        await emit(events.STATUS, {
+            "text": ("Nothing was staged this turn — that code was written into the chat, "
+                     "not into your files. Ask Arthur to make the change with edit_file so "
+                     "you get a diff to review."),
+        })
 
     def _iteration_cap(self, mode: TaskMode) -> int:
         """How many tool calls this mode is allowed in one message.
