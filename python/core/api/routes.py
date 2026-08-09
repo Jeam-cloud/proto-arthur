@@ -280,6 +280,15 @@ async def chat_stream(request: Request, body: ChatRequest) -> EventSourceRespons
             )
         except ArthurError as e:
             await emit(events.ERROR, {"code": e.code, "message": e.message, **e.detail})
+        except asyncio.CancelledError:
+            # NOT an error, and NOT caught by `except Exception` — CancelledError
+            # is a BaseException. This is the path a reply takes when the client
+            # goes away mid-stream: the Stop button, a closed window, or the dev
+            # server hot-reloading the renderer. It reaches the UI as a reply
+            # that simply stops with no explanation, which is indistinguishable
+            # from a crash unless it is logged HERE.
+            log.info("chat stream cancelled (client disconnected or Stop pressed)")
+            raise
         except Exception:
             log.exception("chat stream crashed")
             await emit(events.ERROR, {"code": "internal_error",

@@ -214,8 +214,16 @@ function Message({ message }) {
         {message.role === "assistant"
           ? <Markdown>{message.content}</Markdown>
           : message.content}
+        {/* The stream ended without a `done` event. "stopped early" was too
+            vague to act on — it reads like the model chose to stop, when it
+            actually means the connection to the backend ended mid-reply
+            (Stop pressed, window closed, dev server reloaded, backend crashed).
+            Naming the cause is what tells you whether to retry or go look at a
+            log. */}
         {message.partial && (
-          <div style={{ fontSize: 11, color: "var(--tmut)", marginTop: 6 }}>stopped early</div>
+          <div style={{ fontSize: 11, color: "var(--tmut)", marginTop: 6 }}>
+            Cut off — the connection to Arthur ended before this reply finished.
+          </div>
         )}
       </div>
     </div>

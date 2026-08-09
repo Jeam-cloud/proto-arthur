@@ -361,6 +361,12 @@ def _with_capability_note(
 # nothing to run spin.
 MAX_FORCED = 2
 
+# Much shorter than chat_json's 150s default. This is a RECOVERY path: the user
+# already has the model's text, and waiting two minutes to maybe upgrade it into
+# a tool call is worse than not trying. A turn that appears to hang is the one
+# failure people cannot tell apart from a crash.
+FORCE_TIMEOUT_S = 25.0
+
 PICK_PROMPT = (
     "You described a step but did not call a tool, so nothing happened. "
     "Which tool did you mean to use? Answer with its name, or \"none\" if you were "
@@ -581,6 +587,7 @@ class AgentLoop:
                 {"type": "object",
                  "properties": {"tool": {"type": "string", "enum": [*names, "none"]}},
                  "required": ["tool"]},
+                timeout_s=FORCE_TIMEOUT_S,
             )
             name = (pick or {}).get("tool")
             # "none" is a real answer, not a failure: a model may name a tool
@@ -592,6 +599,7 @@ class AgentLoop:
                 model,
                 [*history, {"role": "user", "content": ARGS_PROMPT.format(name=name)}],
                 tool.Args.model_json_schema(),
+                timeout_s=FORCE_TIMEOUT_S,
             )
         except Exception as e:
             # Never let this break the turn. Without it the user still gets the
