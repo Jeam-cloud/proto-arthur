@@ -23,7 +23,7 @@ from core.config import Settings
 from core.errors import SecurityBlockError
 from security.audit import AuditLog
 from security.scanners import Scanner, redact_secrets
-from security.spotlight import spotlight
+from security.spotlight import spotlight, strip_spotlight_markers
 
 
 class SecurityGateway:
@@ -95,4 +95,14 @@ class SecurityGateway:
         text, hits = redact_secrets(text)
         if hits:
             await self._audit.record("model_output_secrets_redacted", "warning", count=hits)
+        # Spotlight delimiters must never survive in model output. See
+        # strip_spotlight_markers -- a transcript containing them is a template
+        # for escaping a wrapper, and a model that emits them is fabricating
+        # tool output rather than calling a tool. Audited rather than silent:
+        # it means something upstream is going wrong.
+        text, marker_hits = strip_spotlight_markers(text)
+        if marker_hits:
+            await self._audit.record(
+                "model_output_spotlight_markers_stripped", "warning", count=marker_hits,
+            )
         return text

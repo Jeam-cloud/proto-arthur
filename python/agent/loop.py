@@ -335,7 +335,14 @@ def _with_capability_note(
         "switches modes from the icons on the left.\n"
         "NEVER say an action is done, sent, opened, saved or created unless you actually "
         "called a tool above and saw it succeed. Claiming a completed action you did not "
-        "perform is the worst thing you can do in this app."
+        "perform is the worst thing you can do in this app.\n"
+        "NEVER write out what a tool call or a tool result LOOKS LIKE — no JSON call "
+        "objects, no <<EXTERNAL>> blocks, no invented file contents. Call the tool and "
+        "wait for the real result. Writing the shape of an answer instead of getting one "
+        "is the same lie as the paragraph above.\n"
+        "Do not ask permission before using a tool. The app already asks the user "
+        "whenever a confirmation is genuinely needed, so a question from you just stalls "
+        "the work. Take the next step."
     )
     if messages and messages[0].get("role") == "system":
         # Copy rather than mutate: `messages` belongs to the caller, and the
