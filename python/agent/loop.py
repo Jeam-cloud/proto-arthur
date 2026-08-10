@@ -782,7 +782,8 @@ class AgentLoop:
                     # apply it, don't show me the code" switched the safety net
                     # off — see _CLAIMED_CHANGE.
                     block = _largest_code_block(text)
-                    call = (await self._force_write(model, messages, text, tools, block, ctx)
+                    call = (await self._force_write(model, messages, text, tools, block,
+                                                    ctx, seen_files)
                             if block or claims_a_file_change(text) else None)
                     if call is None:
                         call = await self._forced_tool_call(model, messages, text, tools)
@@ -1020,6 +1021,7 @@ class AgentLoop:
     async def _force_write(
         self, model: str, messages: list[dict[str, Any]], said: str,
         tools: list[Any], block: str | None, ctx: ToolContext,
+        seen: dict[str, str] | None = None,
     ) -> dict[str, Any] | None:
         """Turn code printed into the chat into a real file change.
 
@@ -1081,6 +1083,42 @@ class AgentLoop:
             log.info("forced write: cannot read %s: %s", path, e)
             return None
 
+        # PRINTING A FILE BACK IS NOT A REQUEST TO SAVE IT.
+        #
+        # THE BUG THIS FIXES, observed on a bare "scan the folder": the model
+        # read kanban.py and printed it so the user could see it. This recovery
+        # asked "which file?", got kanban.py, and saved the block over the
+        # original — an activity row reading "Rewrote kanban.py +0 −1", because
+        # the fence had eaten the trailing newline. The user asked to LOOK at
+        # their project and got an edit to it.
+        #
+        # Comparing content is the exact test: showing someone a file produces
+        # the file, and an edit by definition does not. Normalised on trailing
+        # whitespace because a fenced block always loses the final newline, and
+        # "your file, minus one invisible character" is the most pointless diff
+        # it is possible to stage.
+        if block is not None and current is not None and block.rstrip() == current.rstrip():
+            log.info("not forcing a write of %s: the block is the file, unchanged", path)
+            return None
+
+        # A FILE IT NEVER OPENED: send it to read, do not send it to write.
+        #
+        # Observed: asked to recolour login.css, the model skipped read_file and
+        # printed a confident, entirely invented stylesheet — none of the real
+        # selectors, and the background image the user asked to keep silently
+        # gone. The read-before-write guard already refuses that, but refusing
+        # was the whole response: the turn ended with nothing staged and no next
+        # step, so the user tried twice more and got the same nothing.
+        #
+        # Forcing read_file instead turns a dead end into the step that was
+        # missing. The model comes back with the real file in hand, and the same
+        # printed-block path then works normally.
+        if (current is not None and seen is not None
+                and _seen_key(path) not in seen
+                and self._registry.get_granted("read_file", TaskMode.CODE) is not None):
+            log.info("forcing read_file for %s: written but never read", path)
+            return {"name": "read_file", "arguments": {"path": path}}
+
         # NO BLOCK AT ALL means the model asserted the change in prose ("Changes
         # staged for review") without showing anything. There is no content to
         # write, so the only honest move is to make it produce a real edit --
@@ -1088,7 +1126,11 @@ class AgentLoop:
         if block is not None and (current is None or len(block) >= len(current) * WHOLE_FILE_RATIO):
             # A new file, or a block big enough to plausibly BE the file.
             log.info("forced write_file for %s after the model only printed it", path)
-            return {"name": "write_file", "arguments": {"path": path, "content": block}}
+            # Trailing newline restored: every text file ends with one, the fence
+            # syntax swallowed it, and without this every forced write shows a
+            # spurious "-1 line" against a file it did not really shorten.
+            content = block if block.endswith("\n") else block + "\n"
+            return {"name": "write_file", "arguments": {"path": path, "content": content}}
 
         if edit is None:
             return None

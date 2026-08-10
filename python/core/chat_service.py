@@ -354,14 +354,19 @@ class ChatService:
         claimed = claims_a_file_change(text)
         if not printed and not claimed:
             return
+        # THE ADVICE HAS TO MATCH HOW WRITING ACTUALLY WORKS NOW.
+        #
+        # This used to end "ask Arthur to make the change with edit_file", which
+        # was true when a tool call was the only way in. Files are saved by
+        # printing them with their path, so that sentence sent the user to ask
+        # for the mechanism least likely to work — and named an internal tool at
+        # a person who should never have to know one exists.
         await emit(events.STATUS, {
             "text": ("Nothing reached your files this turn — Arthur described the change "
-                     "but never made it. Ask it to edit the file again, or check the "
-                     "folder is still set."
+                     "but never made it. Ask it to read the file first, then make the edit."
                      if claimed and not printed else
-                     "Nothing was staged this turn — that code was written into the chat, "
-                     "not into your files. Ask Arthur to make the change with edit_file so "
-                     "you get a diff to review."),
+                     "Nothing was saved — that code went into the chat, not into your files. "
+                     "Ask Arthur to read the file first and then save the change."),
         })
 
     def _iteration_cap(self, mode: TaskMode) -> int:

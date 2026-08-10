@@ -111,7 +111,7 @@ class TestItStillTellsTheTruth:
         exact moment it did."""
         _, emit = await run_turn(app_state, project, write_turns())
         text = " ".join(d["text"] for d in emit.of(events.STATUS))
-        assert "Nothing was staged" not in text
+        assert "Nothing was saved" not in text
 
     async def test_a_turn_that_only_printed_code_is_still_called_out(
         self, app_state, project,
@@ -119,7 +119,7 @@ class TestItStillTellsTheTruth:
         css = "\n".join(["```css", "a{}", "b{}", "c{}", "d{}", "e{}", "```"])
         _, emit = await run_turn(app_state, project, [{"tokens": [f"Here you go:\n{css}"]}])
         text = " ".join(d["text"] for d in emit.of(events.STATUS))
-        assert "Nothing was staged" in text
+        assert "Nothing was saved" in text
         assert not emit.of(events.CHANGES_APPLIED)
 
     async def test_a_conflicted_file_is_left_pending_and_reported(

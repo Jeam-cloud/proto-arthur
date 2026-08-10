@@ -703,6 +703,71 @@ class TestForceWriteAfterPrintedFile:
                        self.code_ctx(tmp_path, {"login.css": self.FILE}), CollectingEmit())
         assert write.writes == []
 
+    async def test_showing_a_file_back_is_not_an_edit(self, db, settings, tmp_path):
+        """THE PHANTOM WRITE. On a bare "scan the folder", the model read
+        kanban.py and printed it so the user could SEE it. This recovery asked
+        "which file?", got kanban.py, and saved the block over the original —
+        an activity row reading "Rewrote kanban.py +0 -1", because the fence had
+        eaten the trailing newline. The user asked to look at their project and
+        got an edit to it.
+
+        Comparing content is the exact test: showing someone a file produces the
+        file, and an edit by definition does not."""
+        write = RealWriteFileTool()
+        llm = FakeLLM([
+            {"tool_calls": [{"name": "read_file", "arguments": {"path": "kanban.py"}}]},
+            {"tokens": [f"Here's what it contains:\n```python\n{self.FILE}```"]},
+            {"tokens": ["What would you like to do next?"]},
+        ])
+        llm.json_turns = [{"path": "kanban.py"}, {"tool": "none"}]
+        loop, _ = make_loop(db, settings, llm, [write, RealReadFileTool()], max_iterations=6)
+        ctx = self.code_ctx(tmp_path, {"kanban.py": self.FILE})
+        await loop.run("m", [], TaskMode.CODE, ctx, CollectingEmit())
+        assert ctx.changes.is_empty()
+
+    async def test_a_forced_write_keeps_the_trailing_newline(self, db, settings, tmp_path):
+        """A fence always swallows the final newline. Without restoring it every
+        forced write shows a spurious "-1 line" against a file it did not
+        actually shorten."""
+        write = RealWriteFileTool()
+        llm = FakeLLM([
+            {"tool_calls": [{"name": "read_file", "arguments": {"path": "login.css"}}]},
+            {"tokens": [f"```\n{self.WHOLE}\n```"]},
+            {"tokens": ["done"]},
+        ])
+        llm.json_turns = [{"path": "login.css"}]
+        loop, _ = make_loop(db, settings, llm, [write, RealReadFileTool()], max_iterations=6)
+        ctx = self.code_ctx(tmp_path, {"login.css": self.FILE})
+        await loop.run("m", [], TaskMode.CODE, ctx, CollectingEmit())
+        assert ctx.changes.read("login.css")[0].endswith("\n")
+
+    async def test_printing_a_file_it_never_read_sends_it_to_read_first(
+        self, db, settings, tmp_path,
+    ):
+        """Observed: asked to recolour login.css, the model skipped read_file and
+        printed a confident, entirely invented stylesheet. The read-before-write
+        guard refused it — correctly — but refusing was the WHOLE response, so
+        the turn ended with nothing staged and no next step, and the user tried
+        twice more and got the same nothing.
+
+        Forcing the read turns a dead end into the step that was missing."""
+        invented = "\n".join(f"invented {i}" for i in range(40))
+        llm = FakeLLM([
+            {"tokens": [f"```css\n{invented}\n```"]},
+            {"tokens": ["now with the real file"]},
+        ])
+        llm.json_turns = [{"path": "login.css"}]
+        loop, _ = make_loop(db, settings, llm, [RealWriteFileTool(), RealReadFileTool()],
+                            max_iterations=4)
+        ctx = self.code_ctx(tmp_path, {"login.css": self.FILE})
+        await loop.run("m", [], TaskMode.CODE, ctx, CollectingEmit())
+
+        assert ctx.changes.is_empty()          # the invention never landed
+        # and the model was handed the real file rather than left with nothing
+        history = " ".join(str(m.get("content", ""))
+                           for c in llm.calls for m in c.get("messages", []))
+        assert "Contents of login.css" in history
+
     async def test_falls_back_to_the_general_picker_without_write_file(self, db, settings):
         """No write_file granted this mode -> nothing to force; the ordinary
         PICK-with-"none" flow still runs so a genuinely toolless turn isn't

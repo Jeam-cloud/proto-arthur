@@ -45,8 +45,8 @@ class TestPrintedCodeWarning:
         emit = CollectingEmit()
         await service._warn_if_code_was_only_printed(f"Here is the update:\n{CSS}", emit)
         text = warnings_from(emit)
-        assert "Nothing was staged" in text
-        assert "edit_file" in text  # points at the fix, not just the problem
+        assert "Nothing was saved" in text
+        assert "read the file first" in text  # points at the fix, not just the problem
 
     async def test_silent_for_a_short_inline_snippet(self, service):
         """A two-line example in an explanation is not a file. Warning about it
@@ -90,7 +90,7 @@ class TestPrintedCodeWarning:
             conversation_id=conv["id"], user_text="make it blue",
             mode=TaskMode.CODE, model="m", emit=emit, workspace_root=str(root),
         )
-        assert "Nothing was staged" not in warnings_from(emit)
+        assert "Nothing was saved" not in warnings_from(emit)
 
     async def test_warning_fires_through_the_real_stream(self, app_state, tmp_path):
         from tests.fakes import CollectingEmit
@@ -105,4 +105,4 @@ class TestPrintedCodeWarning:
             conversation_id=conv["id"], user_text="make it blue",
             mode=TaskMode.CODE, model="m", emit=emit, workspace_root=str(root),
         )
-        assert "Nothing was staged" in warnings_from(emit)
+        assert "Nothing was saved" in warnings_from(emit)
