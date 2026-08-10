@@ -170,7 +170,14 @@ class ConversationStore:
     async def history_for_model(
         self, cid: str, char_budget: int = 24_000, exclude_id: str | None = None,
     ) -> list[dict]:
-        """Most recent turns that fit a rough character budget (~6k tokens).
+        """Most recent turns that fit a rough character budget.
+
+        The DEFAULT here is a fallback for callers that have no settings to hand
+        (tests, background jobs). The chat path passes a budget derived from the
+        model's context window — see core/context_budget.py — because a fixed
+        number here and a separate fixed num_ctx elsewhere is two halves of one
+        decision that can silently disagree.
+
         WHY chars not tokens: an exact tokenizer per local model isn't worth
         the dependency — the budget only guards against blowing the context
         window, and 4 chars/token is a safe planning number. Tool messages are

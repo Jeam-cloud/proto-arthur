@@ -185,6 +185,41 @@ def _path_from_first_line(body: str) -> tuple[str, str] | None:
     return path, rest.lstrip("\n")
 
 
+# The tool name used AS the fence tag, with the path on the first line of the
+# body:
+#
+#     ```write_file
+#     app/static/login.css
+#     ...the whole file...
+#     ```
+#
+# A THIRD ACCEPTED SHAPE, on purpose. Different local models emit different
+# things, and every format we refuse is a correct answer thrown away over
+# punctuation. This particular one is what a model reaches for once it has seen
+# `write_file` in its tool list but cannot produce the JSON call — which is the
+# exact failure this whole module exists for.
+_TOOL_FENCE_TAGS = frozenset({"write_file", "writefile", "write", "create_file", "file"})
+
+
+def _path_from_tool_fence(info: str, body: str) -> tuple[str, str] | None:
+    """(path, body-without-the-path-line) for a ```write_file style fence."""
+    tag = info.strip().split()[0].lower() if info.strip() else ""
+    if tag not in _TOOL_FENCE_TAGS:
+        return None
+    first, sep, rest = body.partition("\n")
+    if not sep:
+        return None
+    path = _clean(first)
+    # The path line must be ONLY a path. A model that wrote prose there was not
+    # using this format, and guessing would create a file named after a
+    # sentence.
+    if not path or not _LOOKS_LIKE_PATH.match(path):
+        return None
+    if not ("/" in path or "\\" in path or "." in path[1:]):
+        return None
+    return path, rest
+
+
 def parse_file_blocks(text: str) -> list[FileBlock]:
     """Every fenced block in `text` that named a file, in order.
 
@@ -199,8 +234,14 @@ def parse_file_blocks(text: str) -> list[FileBlock]:
     """
     out: list[FileBlock] = []
     for m in _FENCE.finditer(text or ""):
-        body = m.group("body")
-        path = _path_from_info(m.group("info"))
+        info, body = m.group("info"), m.group("body")
+        # Tool-name fence FIRST: ```write_file has a path-shaped first body line
+        # too, and _path_from_info would otherwise read "write_file" as a path.
+        tool_shaped = _path_from_tool_fence(info, body)
+        if tool_shaped:
+            out.append(FileBlock(path=tool_shaped[0], content=tool_shaped[1]))
+            continue
+        path = _path_from_info(info)
         if not path:
             labelled = _path_from_first_line(body)
             if not labelled:
@@ -224,9 +265,11 @@ def strip_file_blocks(text: str) -> str:
         return text
     out, last = [], 0
     for m in _FENCE.finditer(text):
-        # Both labelling conventions, or the block that was saved via a comment
-        # label stays on screen as raw text next to its own diff.
-        if not _path_from_info(m.group("info")) and not _path_from_first_line(m.group("body")):
+        # Every labelling convention, or a block saved via one of them stays on
+        # screen as raw text next to its own diff.
+        info, body = m.group("info"), m.group("body")
+        if not (_path_from_info(info) or _path_from_first_line(body)
+                or _path_from_tool_fence(info, body)):
             continue
         out.append(text[last:m.start()])
         last = m.end()

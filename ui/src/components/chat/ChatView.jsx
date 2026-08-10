@@ -6,6 +6,7 @@ import Composer from "./Composer";
 import ModeBadge from "./ModeBadge";
 import Markdown from "./Markdown";
 import ActivityFeed from "./ActivityFeed";
+import AskUser from "./AskUser";
 import WorkspaceBar from "../code/WorkspaceBar";
 import FileTree from "../code/FileTree";
 import ChangesPanel from "../code/ChangesPanel";
@@ -163,6 +164,10 @@ export default function ChatView({ mode }) {
       )}
 
       {mode === "code" && <ChangesPanel conversationId={activeId} />}
+
+      {/* Directly above the composer: the question is about what to type next,
+          so it belongs where typing happens rather than up in the transcript. */}
+      <AskUser conversationId={activeId} mode={mode} />
 
       <Composer conversationId={activeId} mode={mode} />
     </>

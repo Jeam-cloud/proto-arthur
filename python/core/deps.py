@@ -35,7 +35,8 @@ from security.gateway import SecurityGateway
 from security.scanners import build_scanner
 from security.vault import SecretsVault
 from tools.coding import (
-    DeleteFileTool, EditFileTool, ListDirTool, ReadFileTool, RunPythonTool, WriteFileTool,
+    ApplyPatchTool, DeleteFileTool, EditFileTool, ListDirTool, ReadFileTool, RunPythonTool,
+    WriteFileTool,
 )
 from tools.computer import ClickTool, OpenAppTool, PressKeysTool, ScreenshotTool, TypeTextTool
 from tools.interaction import AskUserTool
@@ -125,6 +126,7 @@ async def build_state(settings: Settings) -> AppState:
         StockQuoteTool(sandbox),
         StockHistoryTool(sandbox),
         ReadFileTool(), ListDirTool(), WriteFileTool(), EditFileTool(), DeleteFileTool(),
+        ApplyPatchTool(),
         SearchFilesTool(), FindFilesTool(), RunPythonTool(sandbox),
         OpenAppTool(), ScreenshotTool(), ClickTool(), TypeTextTool(), PressKeysTool(),
         EmailSendTool(email_router), EmailListTool(email_router), EmailSearchTool(email_router),

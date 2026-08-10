@@ -9,7 +9,6 @@ which is the failure mode this whole mode exists to avoid.
 
 from __future__ import annotations
 
-import pytest
 
 from research.engine import ResearchEngine
 from research.providers import (

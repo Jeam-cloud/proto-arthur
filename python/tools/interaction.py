@@ -61,12 +61,11 @@ class AskUserArgs(BaseModel):
 
 class AskUserTool(Tool):
     name = "ask_user"
+    # Short on purpose: this tool is granted in EVERY mode, so its schema is
+    # paid for on every request the app makes.
     description = (
-        "Ask the user a short multiple-choice question when their request is "
-        "genuinely ambiguous and guessing would waste their time. Give 2-6 "
-        "concrete options. Use this INSTEAD of asking in prose — a question in "
-        "your reply cannot be answered, this one can. Do not use it to ask "
-        "permission for something you can just do."
+        "Ask a short multiple-choice question when the request is genuinely "
+        "ambiguous. 2-6 concrete options. Not for asking permission."
     )
     Args = AskUserArgs
     # SAFE: it touches nothing. The turn stopping is not a risk, it is the point.

@@ -29,6 +29,7 @@ from agent.loop import AgentLoop, claims_a_file_change
 from core import events
 from core.code_apply import apply_changeset
 from core.config import Settings
+from core.context_budget import history_char_budget
 from core.conversations import ConversationStore
 from core import model_kind
 from core.errors import ArthurError
@@ -99,6 +100,8 @@ MODE_GUIDANCE = {
         "including the parts you are not changing — a partial block is rejected, because "
         "saving it would delete the rest. Never tell the user to copy or paste anything: "
         "printing the block with its path IS how you save it.\n"
+        "FOR A LONG FILE, use apply_patch instead of reprinting it — a patch carries only "
+        "the lines that change. Its context must match the file exactly.\n"
         "ALWAYS read_file first when changing a file that already exists. You cannot "
         "rewrite a file you have not read — Arthur rejects it — and a file you have not "
         "read is one you would be inventing. Use search_files for text inside files and "
@@ -216,8 +219,13 @@ class ChatService:
             # Exclude the turn just persisted at step 2 -- otherwise history
             # ends with it and _build_messages appends it again, sending the
             # same question twice with only the second copy carrying images.
+            # Derived from the context window rather than hardcoded, so the two
+            # numbers cannot drift apart: raising num_ctx now actually buys more
+            # history, and lowering it does not silently overflow. See
+            # core/context_budget.py.
             await self._conversations.history_for_model(
                 conversation_id, exclude_id=user_message_id,
+                char_budget=history_char_budget(self._settings.num_ctx),
             ),
             mode=mode, attachments=attachments, vision=vision,
         )

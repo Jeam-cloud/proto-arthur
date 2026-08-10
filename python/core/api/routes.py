@@ -542,8 +542,15 @@ async def research_find_sources(request: Request, body: ResearchFindSourcesReque
 
 
 @router.post("/research/export")
-async def research_export(request: Request, body: ResearchExportRequest) -> Response:
+async def export_research_paper(request: Request, body: ResearchExportRequest) -> Response:
     """Render the finished paper to .docx or .pdf and return the bytes.
+
+    NAMED NOT-research_export ON PURPOSE. It used to be, which silently shadowed
+    `from research import export as research_export` at module level — so by the
+    time this function ran, every `research_export.to_pdf` inside it resolved to
+    THIS FUNCTION and raised AttributeError. Export was broken for every user, in
+    both formats, and it surfaced only as "Failed to fetch" in the browser. Ruff
+    had been reporting it as F811 the whole time.
 
     Returns a file rather than writing to disk so the browser can hand it to
     the OS save dialog -- a research paper belongs wherever the person keeps

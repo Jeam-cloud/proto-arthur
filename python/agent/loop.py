@@ -31,7 +31,7 @@ from core import events
 from core.ollama_client import OllamaClient
 from security.approvals import ApprovalBroker
 from security.gateway import SecurityGateway
-from tools.base import Risk, TaskMode, ToolContext
+from tools.base import Risk, TaskMode, ToolContext, ToolResult
 
 log = logging.getLogger(__name__)
 
@@ -64,6 +64,39 @@ def _seen_key(path: str) -> str:
     understand, versus refusing one it definitely did.
     """
     return path.replace("\\", "/").lstrip("/").removeprefix("./").casefold()
+
+
+def _repair_path(path: str, changes: Any, seen: dict[str, str] | None) -> str:
+    """Point a half-remembered path at the file the model actually read.
+
+    THE CASE THIS FIXES: the model reads `app/static/login.css`, then labels its
+    block `login.css` — the name it has been saying in prose all turn. Taken
+    literally that creates a NEW file in the project root, leaving the real one
+    untouched and the user staring at a change that did nothing.
+
+    DELIBERATELY NARROW. The only paths it will repair to are ones the model
+    READ this turn, matched on basename, and only when the literal path does not
+    already exist. That rules out the dangerous version of this idea — guessing
+    at any similarly-named file in the project — because "you opened it a moment
+    ago" is evidence of intent, and "the names look alike" is not. Creating new
+    files therefore still works: a genuinely new name matches nothing read.
+    """
+    if not seen or not path:
+        return path
+    try:
+        if changes.exists(path):
+            return path
+    except Exception:
+        return path     # unresolvable; let the caller's own guard report it
+    base = path.replace("\\", "/").rsplit("/", 1)[-1].casefold()
+    matches = {orig for key, orig in seen.items() if key.rsplit("/", 1)[-1] == base}
+    # Exactly one, or it is not a repair, it is a coin toss.
+    if len(matches) == 1:
+        repaired = matches.pop()
+        if repaired != path:
+            log.info("repaired file block path %r -> %r (read this turn)", path, repaired)
+        return repaired
+    return path
 
 
 def _call_shape(obj: Any) -> dict[str, Any] | None:
@@ -384,49 +417,45 @@ def _with_capability_note(
     # of contradicting the tools beside it.
     missing = [label for label, owners in OTHER_CAPABILITIES.items() if not (owners & granted)]
     cannot = ", ".join(missing) if missing else "anything outside the list above"
+    # WRITTEN TIGHT ON PURPOSE, and re-tightened after measuring.
+    #
+    # This note is rebuilt and sent on EVERY turn, so its length is a tax on
+    # every request. Measured at ~500 tokens it was the second-largest piece of
+    # scaffolding after the tool schemas, and most of the excess was the same
+    # instruction said three ways — each sentence added the day a different bug
+    # was fixed, none ever removed. The rules below are the same rules; what
+    # went is the repetition, the justifications (the model does not need to
+    # know WHY, only what), and the mode-switching tutorial that mattered in one
+    # mode and was sent in all of them.
     note = (
-        f"CAPABILITIES — you are in {mode.value.upper()} mode and your ONLY available "
-        f"actions this turn are: {names}.\n"
-        "Arthur separates capabilities by mode on purpose, and you have no way to reach "
-        f"a tool that is not listed above. You CANNOT do these here: {cannot}. If the "
-        "user asks for one, say so plainly in one sentence and name the mode that can "
-        "(General, Research, Code, Email, Finance, Computer, Design); the user "
-        "switches modes from the icons on the left.\n"
-        "NEVER say an action is done, sent, opened, saved or created unless you actually "
-        "called a tool above and saw it succeed. Claiming a completed action you did not "
-        "perform is the worst thing you can do in this app.\n"
-        "NEVER write out what a tool call or a tool RESULT looks like — no JSON call "
-        "objects, no <<EXTERNAL>> blocks, no invented output from a tool you did not "
-        "run. Call the tool and wait for the real result. Writing the shape of an answer "
-        "instead of getting one is the same lie as the paragraph above.\n"
-        # THE CARVE-OUT MATTERS. This sentence used to end "...no invented file
+        f"CAPABILITIES — {mode.value.upper()} mode. Your only actions this turn: {names}.\n"
+        f"You cannot do these here: {cannot}. If asked for one, say so in one sentence "
+        "and name the mode that can (General, Research, Code, Email, Finance, Computer, "
+        "Design).\n"
+        "NEVER say an action is done, sent, saved or created unless you called a tool "
+        "above and saw it succeed. Never write out what a tool call or tool result looks "
+        "like — no JSON call objects, no <<EXTERNAL>> blocks, no invented tool output.\n"
+        # THE CARVE-OUT MATTERS. The rule above used to end "...no invented file
         # contents", which flatly contradicts Code mode, where printing a file
         # with its path is HOW a file gets saved. The last contradiction of this
         # kind (a hardcoded "you cannot edit files" shown to the mode built for
         # editing files) got believed by the model and cost a day, so the
         # exception is stated where the prohibition is, not left to be inferred.
-        + ("Printing a file inside a fenced block labelled with its path is NOT covered "
-           "by that rule — it is how you save a file here, and Arthur really does save "
-           "it.\n" if "write_file" in granted else "")
-        + (
-            "Do not ask permission before using a tool. The app already asks the user "
-            "whenever a confirmation is genuinely needed, so a question from you just "
-            "stalls the work. Take the next step.\n"
-            # PERMISSION vs INFORMATION. The line above is right for "may I?" and
-            # wrong for "which one?", and a model given only the prohibition
-            # guesses. The distinction is only real because ask_user exists, so
-            # it is stated only when ask_user is actually granted.
-            + ("Asking for INFORMATION is different from asking permission: when the "
-               "request is genuinely ambiguous and guessing would waste the user's "
-               "time, call ask_user with 2-6 concrete options. A question written in "
-               "your reply cannot be answered — only that tool can.\n"
-               if "ask_user" in granted else "")
-            +
-            "YOU are the one who runs these tools — the user cannot. Never write a plan "
-            "that tells them which tool to use, never say 'let me know what you find', "
-            "and never ask them to report a result back to you. If you catch yourself "
-            "describing a step, make the call instead."
-        )
+        + ("Printing a file in a fenced block labelled with its path is NOT covered by "
+           "that — it is how you save a file here, and Arthur really does save it.\n"
+           if "write_file" in granted else "")
+        + "Do not ask permission before using a tool; the app confirms when it needs to. "
+        "YOU run these tools, not the user: never write a plan telling them which tool to "
+        "use, never say 'let me know what you find'. If you catch yourself describing a "
+        "step, make the call instead.\n"
+        # PERMISSION vs INFORMATION. The line above is right for "may I?" and
+        # wrong for "which one?", and a model given only the prohibition
+        # guesses. The distinction is only real because ask_user exists, so it
+        # is stated only when ask_user is actually granted.
+        + ("Asking for INFORMATION is different from asking permission: when the request "
+           "is genuinely ambiguous, call ask_user with 2-6 concrete options. A question "
+           "written in your reply cannot be answered — only that tool can.\n"
+           if "ask_user" in granted else "")
     )
     if messages and messages[0].get("role") == "system":
         # Copy rather than mutate: `messages` belongs to the caller, and the
@@ -609,9 +638,11 @@ class AgentLoop:
         forced = 0
         block_retries = 0
         executed: set[str] = set()
-        # Files read THIS RUN, canonicalised. Gates rewriting an existing file —
-        # see the read-before-write guard in _stage_file_blocks.
-        seen_files: set[str] = set()
+        # Files read THIS RUN: {normalised key -> the path as it was read}.
+        # Gates rewriting an existing file (see the read-before-write guard in
+        # _stage_file_blocks) and doubles as the only safe source for repairing
+        # a half-remembered path.
+        seen_files: dict[str, str] = {}
 
         for _iteration in range(limit):
             tokens: list[str] = []
@@ -800,7 +831,7 @@ class AgentLoop:
                 if call["name"] == "read_file" and result_msg["content"].startswith("Contents of"):
                     path = (call.get("arguments") or {}).get("path")
                     if isinstance(path, str):
-                        seen_files.add(_seen_key(path))
+                        seen_files[_seen_key(path)] = path
                 messages.append(result_msg)
                 if result is not None and result.ask:
                     asked = result.ask
@@ -893,7 +924,7 @@ class AgentLoop:
 
     async def _stage_file_blocks(
         self, text: str, mode: TaskMode, ctx: ToolContext, emit: Emit,
-        seen: set[str] | None = None,
+        seen: dict[str, str] | None = None,
     ) -> tuple[list[str], list[str]]:
         """Stage every fenced block that named a file. Returns (staged, refused).
 
@@ -918,6 +949,7 @@ class AgentLoop:
         staged: list[str] = []
         refused: list[str] = []
         for block in parse_file_blocks(text):
+            block.path = _repair_path(block.path, changes, seen)
             try:
                 current, _state = changes.read(block.path)
             except Exception as e:
@@ -976,7 +1008,7 @@ class AgentLoop:
                 # follow-up edit to the same file in the same turn does not have
                 # to go back and read its own work.
                 if seen is not None:
-                    seen.add(_seen_key(block.path))
+                    seen[_seen_key(block.path)] = block.path
             else:
                 # The tool refused it (size cap, pending-file limit, a path that
                 # validated here and failed there). Not silently dropped: an

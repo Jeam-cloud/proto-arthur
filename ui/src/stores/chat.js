@@ -31,6 +31,9 @@ import { useConversations } from "./conversations";
 // every empty slice silently.
 const EMPTY_SLICE = Object.freeze({
   messages: [], draft: null, activity: [], memoryUsed: [],
+  // A pending ask_user question, or null. Not a message: it is a live control,
+  // and answering it replaces it with the user's own message.
+  ask: null,
   streaming: false, error: null, loaded: false, startedAt: null,
 });
 
@@ -92,7 +95,11 @@ export const useChat = create((set, get) => ({
       // than derived: a turn that takes four minutes needs a clock, and the
       // only honest starting point is when the request actually went out.
       startedAt: Date.now(),
-      activity: [], memoryUsed: [], streaming: true, error: null,
+      // `ask` cleared here rather than when a choice is clicked, so it also
+      // clears when the user ignores the question and types something else —
+      // a stale question offering choices about a finished topic is worse than
+      // no question at all.
+      activity: [], memoryUsed: [], ask: null, streaming: true, error: null,
     });
 
     // A new turn is not cut short until it says so; leaving the banner up would
@@ -158,6 +165,14 @@ export const useChat = create((set, get) => ({
           // half a change is the mistake that screen exists to prevent.
           case "tool_limit":
             if (data.mode === "code") useChanges.getState().markCapped();
+            break;
+          // The model asked a question and the turn ENDED. Held on the slice
+          // rather than pushed into `messages`: it is a live control the user
+          // acts on, and once they answer it is replaced by their own message.
+          // Clearing it on the next send is what stops a stale question sitting
+          // under the transcript offering choices about a finished topic.
+          case "ask_user":
+            get()._patch(cid, { ask: data });
             break;
           case "memory_used":
             get()._patch(cid, { memoryUsed: data.items });

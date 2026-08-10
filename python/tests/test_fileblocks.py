@@ -123,6 +123,34 @@ class TestCommentLabels:
         assert blocks[0].content == "# app/other.py\nx = 1\n"
 
 
+class TestToolNameFences:
+    """A third accepted shape, borrowed from how Odysseus invokes tools: the
+    tool NAME as the fence tag, path on the first body line. It is what a model
+    reaches for once it has seen `write_file` in its tool list but cannot
+    produce the JSON call — which is the exact failure this module exists for.
+    Every format we refuse is a correct answer thrown away over punctuation."""
+
+    def test_a_write_file_fence(self):
+        blocks = parse_file_blocks(f"```write_file\napp/static/login.css\n{CSS}\n```")
+        assert blocks[0].path == "app/static/login.css"
+        assert blocks[0].content.startswith(".label")
+
+    def test_the_aliases(self):
+        for tag in ("writefile", "write", "create_file", "file"):
+            blocks = parse_file_blocks(f"```{tag}\napp/a.css\n{CSS}\n```")
+            assert [b.path for b in blocks] == ["app/a.css"], tag
+
+    def test_the_tag_is_not_mistaken_for_the_path(self):
+        blocks = parse_file_blocks(f"```write_file\napp/a.css\n{CSS}\n```")
+        assert blocks[0].path != "write_file"
+
+    def test_prose_on_the_path_line_is_refused(self):
+        """A model that wrote a sentence there was not using this format, and
+        guessing would create a file named after it."""
+        assert parse_file_blocks(
+            f"```write_file\nHere is the updated stylesheet for you\n{CSS}\n```") == []
+
+
 class TestStripping:
     def test_the_saved_block_comes_off_the_screen(self):
         """It is visible as a diff, which is a better rendering of the same

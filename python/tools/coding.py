@@ -30,7 +30,9 @@ import logging
 
 from pydantic import BaseModel, Field
 
+from coding.patches import PatchError, apply_hunks, parse_patch
 from coding.paths import SKIP_DIRS, safe_path
+from core.errors import ArthurError
 from sandbox.runner import SandboxRunner
 from tools.base import Risk, TaskMode, Tool, ToolContext, ToolResult
 
@@ -307,6 +309,107 @@ class EditFileTool(Tool):
             ok=True,
             content=f"Edited {args.path} in {where} (+{adds}/-{dels}), staged for review.",
             summary=f"Edited {args.path.rsplit('/', 1)[-1]}", detail=_counts(adds, dels),
+        )
+
+
+class ApplyPatchArgs(BaseModel):
+    patch: str = Field(
+        min_length=1, max_length=400_000,
+        description="A patch in the *** Begin Patch / *** Update File: ... format",
+    )
+
+
+class ApplyPatchTool(Tool):
+    name = "apply_patch"
+    # The format example lives here rather than in the mode prompt because it is
+    # only paid for when apply_patch is actually granted, and it cannot drift
+    # away from the parser that reads it.
+    description = (
+        "Change parts of one or more long files without reprinting them. Format:\n"
+        "*** Update File: path\n@@\n unchanged line\n-removed\n+added\n"
+        "Also '*** Add File: path' with '+' lines, and '*** Delete File: path'. "
+        "Context must match exactly, and match one place only."
+    )
+    Args = ApplyPatchArgs
+    risk = Risk.SAFE          # stages only; the gate is the diff, as with every write
+    modes = {TaskMode.CODE}
+
+    def approval_summary(self, args: ApplyPatchArgs) -> str:
+        return f"Apply a patch ({len(args.patch.splitlines())} lines)"
+
+    async def execute(self, args: ApplyPatchArgs, ctx: ToolContext) -> ToolResult:
+        cs = _changes(ctx)
+        if cs is None:
+            return ToolResult(ok=False, content=_NO_CHANGESET, summary="staging unavailable")
+
+        try:
+            ops = parse_patch(args.patch)
+        except PatchError as e:
+            return ToolResult(ok=False, content=f"apply_patch: {e}", summary="bad patch")
+
+        # EVERYTHING IS COMPUTED BEFORE ANYTHING IS STAGED.
+        #
+        # A patch that half-applies is worse than one that fails: the file is
+        # left in a state neither the user nor the model asked for, and the
+        # model's next move is reasoning about a version that never existed.
+        # So the whole patch is resolved against current content first, and one
+        # failure anywhere abandons all of it.
+        planned: list[tuple[str, str, str | None]] = []   # (kind, path, new text)
+        for op in ops:
+            try:
+                text, state = cs.read(op.path)
+            except (ArthurError, ValueError, OSError) as e:
+                # Containment refused the path (traversal, absolute, no folder).
+                # Reported as a normal tool result rather than left to raise: the
+                # model can act on a sentence, and a crash here would read to the
+                # user as Arthur breaking rather than Arthur refusing. Nothing is
+                # staged until the whole patch resolves, so bailing here leaves
+                # the changeset exactly as it was.
+                return ToolResult(ok=False, summary="path refused",
+                                  content=f"apply_patch: {e} Nothing was changed.")
+            if op.kind == "add":
+                if state != "missing":
+                    return ToolResult(
+                        ok=False, summary="already exists",
+                        content=(f"apply_patch: {op.path} already exists. Use '*** Update File:' "
+                                 "to change it, or pick a different name."),
+                    )
+                planned.append(("add", op.path, op.content))
+                continue
+            if state == "missing":
+                return ToolResult(
+                    ok=False, summary="not found",
+                    content=(f"apply_patch: no such file: {op.path}. Nothing was changed. "
+                             "Use find_files to locate it, or '*** Add File:' to create it."),
+                )
+            if op.kind == "delete":
+                planned.append(("delete", op.path, None))
+                continue
+            if text is None:
+                return ToolResult(ok=False, summary="binary file",
+                                  content=f"apply_patch: {op.path} is not a text file.")
+            try:
+                planned.append(("update", op.path, apply_hunks(text, op.hunks, op.path)))
+            except PatchError as e:
+                return ToolResult(
+                    ok=False, summary="patch did not match",
+                    content=f"apply_patch: {e} Nothing was changed.",
+                )
+
+        adds = dels = 0
+        for kind, path, new_text in planned:
+            change = cs.stage_delete(path) if kind == "delete" else cs.stage_write(path, new_text)
+            a, d = change.stats()
+            adds += a
+            dels += d
+
+        names = ", ".join(p.rsplit("/", 1)[-1] for _k, p, _t in planned)
+        return ToolResult(
+            ok=True,
+            content=(f"Patched {len(planned)} file(s): {names} (+{adds}/-{dels}), "
+                     "staged for review."),
+            summary=f"Patched {names}" if len(planned) <= 2 else f"Patched {len(planned)} files",
+            detail=_counts(adds, dels),
         )
 
 

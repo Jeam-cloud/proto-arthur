@@ -35,6 +35,7 @@ import imaplib
 import logging
 import smtplib
 from email.message import EmailMessage
+from pathlib import Path
 from typing import Protocol
 
 from pydantic import BaseModel, EmailStr, Field
@@ -67,7 +68,7 @@ NOT_CONFIGURED_MSG = (
 class EmailBackend(Protocol):
     async def send(self, to: list[str], subject: str, body: str,
                    cc: list[str] | None = None, bcc: list[str] | None = None,
-                   attachments: "list[Attachment] | None" = None) -> str: ...
+                   attachments: list[Attachment] | None = None) -> str: ...
     async def list_recent(self, count: int, unread_only: bool) -> str: ...
     async def search(self, query: str) -> str: ...
 
@@ -91,9 +92,7 @@ class Attachment:
         self.mimetype = mimetype
 
 
-def _allowed_roots(workspace_root: str | None, home: "Path | None" = None) -> "list[Path]":
-    from pathlib import Path
-
+def _allowed_roots(workspace_root: str | None, home: Path | None = None) -> list[Path]:
     home = home or Path.home()
     roots = []
     if workspace_root:
@@ -102,12 +101,10 @@ def _allowed_roots(workspace_root: str | None, home: "Path | None" = None) -> "l
     return [r.resolve() for r in roots]
 
 
-def resolve_attachment(raw: str, workspace_root: str | None, home=None) -> "Path":
+def resolve_attachment(raw: str, workspace_root: str | None, home=None) -> Path:
     """Find `raw` inside the allowed roots; raise with a clear message
     otherwise. Relative names are searched root by root, so 'report.pdf'
     finds ~/Documents/report.pdf without the user speaking full paths."""
-    from pathlib import Path
-
     roots = _allowed_roots(workspace_root, home)
     candidate = Path(raw).expanduser()
     tried = []

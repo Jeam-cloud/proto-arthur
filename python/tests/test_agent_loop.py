@@ -920,6 +920,50 @@ class TestFileBlocksAreThePrimaryWritePath:
         # copy of the filename on every round trip.
         assert ctx.changes.read("app/hello.py")[0] == "print('Hello Arthur')\n"
 
+    async def test_a_half_remembered_path_is_repaired_to_the_file_it_read(
+        self, db, settings, tmp_path,
+    ):
+        """It reads app/static/login.css, then labels its block `login.css` —
+        the name it has been saying in prose all turn. Taken literally that
+        creates a new file in the project root and leaves the real one
+        untouched, which looks to the user like a change that did nothing."""
+        root = tmp_path / "proj"
+        root.mkdir()
+        (root / "app").mkdir()
+        (root / "app" / "login.css").write_text(self.FILE)
+        ctx = ToolContext(conversation_id="conv1", workspace_root=str(root),
+                          changes=ChangeSet(root=str(root)))
+        llm = FakeLLM([
+            {"tool_calls": [{"name": "read_file", "arguments": {"path": "app/login.css"}}]},
+            {"tokens": [f"```css login.css\n{self.NEW}\n```"]},
+            {"tokens": ["done"]},
+        ])
+        loop, _ = make_loop(db, settings, llm, [RealWriteFileTool(), RealReadFileTool()],
+                            max_iterations=6)
+        await loop.run("m", [], TaskMode.CODE, ctx, CollectingEmit())
+        assert ctx.changes.paths() == ["app/login.css"]
+
+    async def test_a_genuinely_new_name_is_not_repaired_onto_something_read(
+        self, db, settings, tmp_path,
+    ):
+        """Creating files has to keep working. A new name matches nothing read,
+        so nothing is repaired — this is why the match is against files the
+        model OPENED, not against everything in the project."""
+        root = tmp_path / "proj"
+        root.mkdir()
+        (root / "login.css").write_text(self.FILE)
+        ctx = ToolContext(conversation_id="conv1", workspace_root=str(root),
+                          changes=ChangeSet(root=str(root)))
+        llm = FakeLLM([
+            {"tool_calls": [{"name": "read_file", "arguments": {"path": "login.css"}}]},
+            {"tokens": ["```css styles/theme.css\nbody { color: blue; }\nh1 { margin: 0; }\n```"]},
+            {"tokens": ["done"]},
+        ])
+        loop, _ = make_loop(db, settings, llm, [RealWriteFileTool(), RealReadFileTool()],
+                            max_iterations=6)
+        await loop.run("m", [], TaskMode.CODE, ctx, CollectingEmit())
+        assert ctx.changes.paths() == ["styles/theme.css"]
+
     async def test_a_new_file_is_created_from_a_short_block(self, db, settings, tmp_path):
         llm = FakeLLM([
             {"tokens": ["```py hello.py\nprint('hi')\n```"]},
@@ -1065,7 +1109,7 @@ class TestCapabilityNote:
         await loop.run("m", [{"role": "system", "content": "x"}], TaskMode.CODE, CTX,
                        CollectingEmit())
         note = llm.calls[0]["messages"][0]["content"]
-        cannot = note.split("You CANNOT do these here:")[1]
+        cannot = note.split("You cannot do these here:")[1]
         assert "edit_file" in note                 # granted
         assert "editing files" not in cannot       # and not forbidden in the same breath
         assert "sending or reading email" in cannot
@@ -1075,7 +1119,7 @@ class TestCapabilityNote:
         loop, _ = make_loop(db, settings, llm, [EchoTool()])
         await loop.run("m", [{"role": "system", "content": "x"}], TaskMode.GENERAL, CTX,
                        CollectingEmit())
-        cannot = llm.calls[0]["messages"][0]["content"].split("You CANNOT do these here:")[1]
+        cannot = llm.calls[0]["messages"][0]["content"].split("You cannot do these here:")[1]
         assert "reading or editing files" in cannot
 
     async def test_note_says_none_when_the_mode_has_no_tools(self, db, settings):
@@ -1084,7 +1128,7 @@ class TestCapabilityNote:
         # EchoTool is GENERAL/RESEARCH only, so Code mode grants nothing.
         await loop.run("m", [{"role": "system", "content": "x"}], TaskMode.CODE, CTX,
                        CollectingEmit())
-        assert "actions this turn are: none" in llm.calls[0]["messages"][0]["content"]
+        assert "actions this turn: none" in llm.calls[0]["messages"][0]["content"]
 
     async def test_callers_message_list_is_not_mutated(self, db, settings):
         """The note is per-turn. Mutating in place would stack a copy onto the
