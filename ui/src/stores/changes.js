@@ -148,6 +148,10 @@ export const useChanges = create((set, get) => ({
         useToasts.getState().push(`Could not write ${f.path}: ${f.error}`, "error");
       }
       await get().load(conversationId);
+      // Undo is offered after a manual Apply too. The snapshot is taken by the
+      // same backend helper either way, and a review-first user who applies
+      // something they regret needs the way back just as much.
+      await get().loadReceipt(conversationId);
       await useWorkspace.getState().refreshTree();   // files may have appeared or gone
       if (!get().changes.length) set({ capped: false });
     } catch (e) {
