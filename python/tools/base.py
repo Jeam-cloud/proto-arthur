@@ -56,6 +56,12 @@ class ToolResult:
     images_b64: list[str] | None = None  # screenshots -> multimodal models
     external: bool = False            # True => content is untrusted, gateway must spotlight it
     source: str = ""                  # label for the spotlight wrapper
+    # A question for the user: {question, options: [{label, description}], multi}.
+    # Set, the agent loop ENDS THE TURN after this tool — the model has nothing
+    # useful to do until the person answers, and a model that keeps going after
+    # asking is a model that answered its own question. Typed as a plain dict so
+    # this module, the contract every tool depends on, stays free of UI types.
+    ask: dict[str, Any] | None = None
 
 
 class Tool:
