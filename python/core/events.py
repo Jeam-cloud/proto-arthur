@@ -28,6 +28,13 @@ DONE = "done"                      # {message_id, conversation_id}
 # stream, because a multi-file diff is far too big to belong in an SSE frame
 # and the user may never open the panel.
 CHANGES_UPDATED = "changes_updated"  # {files, additions, deletions}
+# The turn's edits were written to disk. This is the DEFAULT ending for a Code
+# turn now: Arthur writes, then reports. Distinct from CHANGES_UPDATED because
+# the two mean opposite things to the panel -- "here is something to decide on"
+# versus "here is what already happened, with a way back". Carries `undo_id`
+# (None when no snapshot could be saved, so the UI can say undo is unavailable
+# instead of showing a button that will fail).
+CHANGES_APPLIED = "changes_applied"  # {applied[], conflicts[], failed[], undo_id, receipt}
 # The turn stopped because it ran out of tool calls, not because it finished.
 # Its own event rather than a `status` line the UI would have to string-match:
 # in Code mode this means the changeset on screen is PARTIAL, and a review panel

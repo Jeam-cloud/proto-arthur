@@ -60,6 +60,20 @@ class Settings(BaseSettings):
     # button remains the actual backstop -- a human watching is a better limiter
     # than a number that cannot tell progress from a loop.
     max_agent_iterations_code: int = 40
+
+    # WHERE THE REVIEW GATE SITS IN CODE MODE.
+    #
+    # False (default) = Arthur writes the files when the turn ends and shows a
+    # receipt with an Undo button. True = the old behaviour, where edits sit in
+    # the review panel until the user clicks Apply.
+    #
+    # The default flipped because the gate was paying for itself in the wrong
+    # currency: every good edit cost a click to catch the rare bad one, and a
+    # prompt answered forty times a day stops being read. The protection did not
+    # go away, it moved to the other side of the write -- see coding/undo.py.
+    # Kept as a setting because "nothing lands without my say-so" is a
+    # legitimate way to want to work, and it costs one branch to honour it.
+    code_review_before_apply: bool = False
     approval_timeout_s: float = 120.0  # unanswered confirmation = denied
     tool_output_max_chars: int = 16_000
 
@@ -88,6 +102,16 @@ class Settings(BaseSettings):
     @property
     def log_dir(self) -> Path:
         return self.data_dir / "logs"
+
+    @property
+    def undo_dir(self) -> Path:
+        """Snapshots of files as they were before each apply.
+
+        In the data dir, never in the user's project: an undo file inside the
+        folder being edited would show up in their diffs, their search results
+        and their commits — Arthur's safety net is not their code.
+        """
+        return self.data_dir / "undo"
 
 
 @lru_cache

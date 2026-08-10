@@ -27,6 +27,7 @@ from typing import Any
 
 from agent.loop import AgentLoop
 from core import events
+from core.code_apply import apply_changeset
 from core.config import Settings
 from core.conversations import ConversationStore
 from core import model_kind
@@ -136,6 +137,8 @@ class ChatService:
         byok_router=None,  # optional BYOKRouter — cloud requests bypass tools by design
         attachments=None,  # optional AttachmentStore; None = attachments disabled
         changesets=None,   # optional ChangeSetStore; None = Code mode staging disabled
+        undos=None,        # optional UndoStore; None = applies land without a way back
+        audit=None,        # optional AuditLog; applies are recorded when present
     ):
         self._settings = settings
         self._llm = llm
@@ -147,6 +150,8 @@ class ChatService:
         self._byok = byok_router
         self._attachments = attachments
         self._changesets = changesets
+        self._undos = undos
+        self._audit = audit
         self._background: set[asyncio.Task] = set()
 
     async def stream_reply(
@@ -222,13 +227,28 @@ class ChatService:
                 model, messages, mode, ctx, emit,
                 max_iterations=self._iteration_cap(mode),
             )
-            # Tell the UI to open/refresh the review panel. Emitted once after
-            # the turn rather than per tool call: mid-run the changeset is a
-            # half-finished thought, and a diff panel that redraws on every
-            # staged file is noise the user cannot act on yet.
+            # WHETHER THE TURN STAGED ANYTHING IS READ BEFORE APPLYING.
+            #
+            # Auto-apply empties the changeset, so asking "is it still the size
+            # it was?" afterwards is always true and would fire the "nothing was
+            # staged" warning on every successful edit -- telling the user
+            # nothing reached their files at the exact moment it did.
+            staged_this_turn = len(changes.paths()) != staged_before if changes is not None else False
+
+            # THE TURN ENDS BY WRITING, NOT BY ASKING.
+            #
+            # Done once after the turn rather than per tool call: mid-run the
+            # changeset is a half-finished thought, and applying (or redrawing a
+            # panel) on every staged file is churn the user cannot act on yet.
+            # Waiting for the end also means one undo entry covers the whole
+            # task, which is the unit people actually want to reverse -- "put
+            # back what that message did", not "put back edit 3 of 7".
             if changes is not None and not changes.is_empty():
-                await emit(events.CHANGES_UPDATED, changes.totals())
-            if changes is not None and len(changes.paths()) == staged_before:
+                if self._settings.code_review_before_apply:
+                    await emit(events.CHANGES_UPDATED, changes.totals())
+                else:
+                    await self._apply_now(changes, conversation_id, workspace_root, emit)
+            if changes is not None and not staged_this_turn:
                 await self._warn_if_code_was_only_printed(final_text, emit)
 
         # 6. sanitize + persist assistant turn
@@ -248,6 +268,41 @@ class ChatService:
         if conv["title"] == "New chat":
             self._spawn(self._generate_title(conversation_id, user_text, model, emit))
         self._spawn(self._extract_memories(conversation_id, user_text, model))
+
+    async def _apply_now(self, changes, conversation_id: str,
+                         root: str | None, emit: Emit) -> None:
+        """Write this turn's edits and report what landed.
+
+        Failure here is reported, never raised. The turn has already produced an
+        answer and the user is watching it finish; turning a disk error into a
+        broken stream would lose the reply as well as the edit. Anything that
+        did not land stays in the changeset, so the review panel still has it
+        and "Apply anyway" remains possible.
+        """
+        try:
+            result = await apply_changeset(
+                changes, conversation_id=conversation_id, root=root,
+                conversations=self._conversations, undos=self._undos, audit=self._audit,
+            )
+        except Exception:
+            log.exception("auto-apply failed for conversation %s", conversation_id)
+            await emit(events.STATUS, {
+                "text": ("Could not write the changes to your folder — they are still "
+                         "listed below, so you can apply them yourself."),
+            })
+            await emit(events.CHANGES_UPDATED, changes.totals())
+            return
+
+        await emit(events.CHANGES_APPLIED, {
+            "applied": result["applied"], "conflicts": result["conflicts"],
+            "failed": result["failed"], "undo_id": result.get("undo_id"),
+            "receipt": result.get("receipt"),
+        })
+        # A conflict means a file was left untouched, which is the one outcome
+        # the user has to act on -- the rest of the message says work happened,
+        # and without this the skipped file looks like it succeeded.
+        if result["conflicts"]:
+            await emit(events.CHANGES_UPDATED, changes.totals())
 
     # A fenced block big enough to be a file rather than an inline example.
     _CODE_BLOCK = re.compile(r"```[a-zA-Z]*\n(.*?)```", re.DOTALL)

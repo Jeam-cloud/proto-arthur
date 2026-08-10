@@ -253,11 +253,19 @@ class ChangeSet:
         silently destroy their edit, so those files are SKIPPED and reported.
         Everything clean still applies; a conflict in one file should not block
         the other nine.
+
+        `snapshots` is the pre-apply state of everything that DID land, handed
+        to the caller for the undo record. It has to be collected here because
+        this method is also the only place that discards it: a PendingChange is
+        popped the moment it applies, taking `before` — the only copy of the
+        user's previous file — with it. Returning it rather than writing it
+        keeps this module free of storage concerns (see coding/undo.py).
         """
         targets = self.paths() if paths is None else [p for p in paths if p in self._pending]
         applied: list[str] = []
         conflicts: list[str] = []
         failed: list[dict] = []
+        snapshots: list[dict] = []
 
         for key in targets:
             change = self._pending[key]
@@ -274,12 +282,13 @@ class ChangeSet:
                     p.parent.mkdir(parents=True, exist_ok=True)
                     p.write_text(change.after, encoding="utf-8")
                 applied.append(key)
+                snapshots.append({"path": key, "before": change.before, "after": change.after})
                 self._pending.pop(key, None)
             except OSError as e:
                 failed.append({"path": key, "error": str(e)})
 
         return {"applied": applied, "conflicts": conflicts, "failed": failed,
-                "remaining": len(self._pending)}
+                "remaining": len(self._pending), "snapshots": snapshots}
 
     @staticmethod
     def _on_disk(p: Path) -> str | None:

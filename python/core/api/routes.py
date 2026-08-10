@@ -32,8 +32,9 @@ from core.api.schemas import (
     ApprovalDecision, ArchiveRequest, ChatRequest, MemoryCreate, MemoryUpdate, PersonaBody,
     PullRequest, RenameRequest, ResearchExportRequest, ResearchFindSourcesRequest,
     ResearchPlanRequest, ResearchRunRequest, ResearchSynthesizeRequest, SecretBody, SettingsPatch,
-    AttachPathsRequest, ChangesRequest, NewConversation, WorkspaceRequest,
+    AttachPathsRequest, ChangesRequest, NewConversation, UndoRequest, WorkspaceRequest,
 )
+from core.code_apply import apply_changeset
 from research import citations as research_citations
 from research import engine as research_engine
 from research import export as research_export
@@ -741,39 +742,13 @@ async def apply_changes(request: Request, cid: str, body: ChangesRequest) -> dic
     cs = s.changesets.peek(cid)
     if cs is None or cs.is_empty():
         return {"applied": [], "conflicts": [], "failed": [], "remaining": 0}
-    result = cs.apply(body.paths)
-    # Audited because this is the moment the agent's work becomes real. If a
-    # user later finds a file they did not expect to change, the trail says
-    # which conversation applied it and when.
-    await s.audit.record(
-        "code.changes_applied", "info",
-        conversation_id=cid,
-        applied=", ".join(result["applied"]),
-        conflicts=", ".join(result["conflicts"]),
+    # Shared with the auto-apply path in chat_service so the undo snapshot and
+    # the receipt cannot exist in one and not the other -- see core/code_apply.py.
+    return await apply_changeset(
+        cs, conversation_id=cid, root=await _conversation_workspace(s, cid),
+        conversations=s.conversations, undos=s.undos, audit=s.audit,
+        paths=body.paths,
     )
-
-    # A RECEIPT in the transcript.
-    #
-    # Applying is the only moment in Code mode that changes the user's disk, and
-    # until now it left no trace: a toast, then silence. Scrolling back through a
-    # conversation you would see Arthur propose edits and never learn whether
-    # they landed. The receipt is written as its own role so it is visible in the
-    # transcript but NEVER replayed to the model -- history_for_model selects
-    # only 'user' and 'assistant', so this is a note to the human, not a turn the
-    # model can be confused by or made to imitate.
-    if result["applied"]:
-        n = len(result["applied"])
-        root = await _conversation_workspace(s, cid)
-        text = f"Wrote {n} {'file' if n == 1 else 'files'} to {root or 'your folder'}."
-        if result["conflicts"]:
-            text += (f" {len(result['conflicts'])} left alone — "
-                     "changed on disk since Arthur read them.")
-        result["receipt"] = {
-            "id": await s.conversations.add_message(cid, "receipt", text),
-            "role": "receipt",
-            "content": text,
-        }
-    return result
 
 
 @router.post("/conversations/{cid}/changes/discard")
@@ -784,6 +759,72 @@ async def discard_changes(request: Request, cid: str, body: ChangesRequest) -> d
         return {"discarded": [], "remaining": 0}
     discarded = cs.discard(body.paths)
     return {"discarded": discarded, "remaining": len(cs.paths())}
+
+
+# ---------- code mode: undo ----------
+#
+# The other half of writing files directly. With edits landing automatically,
+# these two routes ARE the safety model -- what the Apply button used to be,
+# moved to the far side of the write.
+
+
+@router.get("/conversations/{cid}/undo")
+async def list_undos(request: Request, cid: str) -> dict:
+    """What can still be put back for this chat, most recent first.
+
+    Scoped to the conversation because that is how the user thinks about it
+    ("undo what this chat just did"), and because two chats can be editing two
+    different projects — offering one chat's undo inside the other would apply
+    a snapshot to a folder it was never taken from.
+    """
+    s = state(request)
+    entries = s.undos.list(cid)
+    return {"undos": entries, "latest": entries[0] if entries else None}
+
+
+@router.post("/conversations/{cid}/undo")
+async def undo_apply(request: Request, cid: str, body: UndoRequest) -> dict:
+    """Restore the files an apply replaced.
+
+    `id` omitted means the most recent apply in this chat, which is the button
+    in the receipt. Files the user has edited since are SKIPPED, not
+    overwritten: undo reverses Arthur's write, and a file that no longer matches
+    what Arthur wrote holds someone else's work. An undo that destroys is not an
+    undo.
+    """
+    s = state(request)
+    target = body.id or (s.undos.latest(cid) or {}).get("id")
+    if not target:
+        return {"restored": [], "skipped": [], "failed": [],
+                "error": "There is nothing to undo in this chat."}
+
+    # Belongs-to check: an id is a client-supplied string, and a snapshot taken
+    # in another conversation was taken against another folder.
+    if not any(u["id"] == target for u in s.undos.list(cid)):
+        return {"restored": [], "skipped": [], "failed": [],
+                "error": "That change is no longer undoable."}
+
+    result = s.undos.undo(target)
+    await s.audit.record(
+        "code.changes_undone", "info",
+        conversation_id=cid,
+        restored=", ".join(result["restored"]),
+        skipped=", ".join(result["skipped"]),
+    )
+
+    if result["restored"]:
+        n = len(result["restored"])
+        text = (f"Put back {result['restored'][0]}." if n == 1
+                else f"Put back {n} files.")
+        if result["skipped"]:
+            text += (f" {len(result['skipped'])} left alone — "
+                     "you have edited them since.")
+        result["receipt"] = {
+            "id": await s.conversations.add_message(cid, "receipt", text),
+            "role": "receipt",
+            "content": text,
+        }
+    return result
 
 
 # ---------- attachments ----------

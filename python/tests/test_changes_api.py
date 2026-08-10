@@ -160,7 +160,10 @@ class TestApply:
         cid = await new_conversation(client)
         stage(app_state, cid, project, "app.py", "x = 2\n")
         res = await client.post(f"/conversations/{cid}/changes/apply", json={"paths": None})
-        assert "Wrote 1 file" in res.json()["receipt"]["content"]
+        # NAMES the file rather than counting it. "Wrote 1 file" is not
+        # checkable at a glance; "Wrote app.py" is, and being checkable is the
+        # entire job of a receipt now that edits land without being approved.
+        assert "app.py" in res.json()["receipt"]["content"]
 
         rows = (await client.get(f"/conversations/{cid}/messages")).json()
         assert [r["role"] for r in rows] == ["receipt"]
@@ -185,6 +188,75 @@ class TestApply:
         cid = await new_conversation(client)
         res = await client.post(f"/conversations/{cid}/changes/apply", json={"paths": None})
         assert res.json()["applied"] == []
+
+
+class TestUndoRoutes:
+    """With edits landing automatically, these routes ARE the safety model —
+    what the Apply button used to be, moved to the far side of the write."""
+
+    async def test_the_button_undoes_the_last_apply_without_being_told_which(
+        self, client, app_state, project,
+    ):
+        cid = await new_conversation(client)
+        stage(app_state, cid, project, "app.py", "x = 2\n")
+        await client.post(f"/conversations/{cid}/changes/apply", json={"paths": None})
+
+        res = await client.post(f"/conversations/{cid}/undo", json={})
+        print("STATUS", res.status_code, res.json())
+        assert res.json()["restored"] == ["app.py"]
+        assert (project / "app.py").read_text() == "x = 1\n"
+
+    async def test_an_apply_advertises_its_undo_id(self, client, app_state, project):
+        cid = await new_conversation(client)
+        stage(app_state, cid, project, "app.py", "x = 2\n")
+        res = await client.post(f"/conversations/{cid}/changes/apply", json={"paths": None})
+        assert res.json()["undo_id"]
+
+    async def test_listing_shows_what_can_still_be_put_back(self, client, app_state, project):
+        cid = await new_conversation(client)
+        stage(app_state, cid, project, "app.py", "x = 2\n")
+        await client.post(f"/conversations/{cid}/changes/apply", json={"paths": None})
+        body = (await client.get(f"/conversations/{cid}/undo")).json()
+        assert body["latest"]["files"] == ["app.py"]
+
+    async def test_undo_writes_its_own_receipt(self, client, app_state, project):
+        cid = await new_conversation(client)
+        stage(app_state, cid, project, "app.py", "x = 2\n")
+        await client.post(f"/conversations/{cid}/changes/apply", json={"paths": None})
+        res = await client.post(f"/conversations/{cid}/undo", json={})
+        assert "app.py" in res.json()["receipt"]["content"]
+
+    async def test_undo_is_audited(self, client, app_state, project):
+        cid = await new_conversation(client)
+        stage(app_state, cid, project, "app.py", "x = 2\n")
+        await client.post(f"/conversations/{cid}/changes/apply", json={"paths": None})
+        await client.post(f"/conversations/{cid}/undo", json={})
+        kinds = [e["kind"] for e in await app_state.audit.recent()]
+        assert "code.changes_undone" in kinds
+
+    async def test_another_chats_snapshot_cannot_be_undone_here(
+        self, client, app_state, project,
+    ):
+        """An id is a client-supplied string, and a snapshot taken in another
+        conversation was taken against another folder."""
+        owner = await new_conversation(client)
+        stage(app_state, owner, project, "app.py", "x = 2\n")
+        applied = await client.post(f"/conversations/{owner}/changes/apply", json={"paths": None})
+        stolen = applied.json()["undo_id"]
+
+        other = await new_conversation(client)
+        res = await client.post(f"/conversations/{other}/undo", json={"id": stolen})
+        assert res.json()["restored"] == [] and res.json()["error"]
+        assert (project / "app.py").read_text() == "x = 2\n"   # untouched
+
+    async def test_nothing_to_undo_says_so_plainly(self, client):
+        cid = await new_conversation(client)
+        res = await client.post(f"/conversations/{cid}/undo", json={})
+        assert res.json()["restored"] == [] and res.json()["error"]
+
+    async def test_requires_auth(self, anon):
+        res = await anon.post("/conversations/anything/undo", json={})
+        assert res.status_code == 401
 
 
 class TestDiscard:

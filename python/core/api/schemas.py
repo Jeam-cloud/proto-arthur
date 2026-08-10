@@ -160,6 +160,17 @@ class ChangesRequest(BaseModel):
     paths: list[str] | None = Field(default=None, max_length=200)
 
 
+class UndoRequest(BaseModel):
+    """Which apply to reverse.
+
+    `None` means the most recent one in this conversation — the Undo button on
+    the receipt, which is the only case that matters in practice. An explicit
+    id exists so a user who has scrolled back can reverse an older apply, and
+    it is checked against that conversation's own snapshots before it is used.
+    """
+    id: str | None = Field(default=None, max_length=64)
+
+
 class MemoryCreate(BaseModel):
     text: str = Field(min_length=3, max_length=500)
     category: str = Field(default="other", pattern="^(profile|preference|project|other)$")

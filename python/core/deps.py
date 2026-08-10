@@ -16,6 +16,7 @@ from agent.loop import AgentLoop
 from agent.registry import ToolRegistry
 from byok.router import BYOKRouter
 from coding.changeset import ChangeSetStore
+from coding.undo import UndoStore
 from core.chat_service import ChatService
 from core.config import Settings
 from core.attachments import AttachmentStore
@@ -64,6 +65,7 @@ class AppState:
     conversations: ConversationStore
     attachments: AttachmentStore
     changesets: ChangeSetStore
+    undos: UndoStore
     registry: ToolRegistry
     agent: AgentLoop
     chat: ChatService
@@ -101,6 +103,10 @@ async def build_state(settings: Settings) -> AppState:
     # Deliberately process-lifetime and in-memory: unapplied edits should not
     # survive a restart. See the module docstring in coding/changeset.py.
     changesets = ChangeSetStore()
+    # The mirror image, and on disk for the opposite reason: an APPLIED edit
+    # already touched the user's files, so the way back has to outlive the
+    # process. See coding/undo.py.
+    undos = UndoStore(settings.undo_dir)
 
     # One backend: SMTP/IMAP with an app password. MS Graph was removed --
     # see the module docstring in tools/email_service.py for why.
@@ -125,7 +131,7 @@ async def build_state(settings: Settings) -> AppState:
     byok = BYOKRouter(vault)
     chat = ChatService(settings, llm, conversations, personas, memory, gateway, agent,
                        byok_router=byok, attachments=attachment_store,
-                       changesets=changesets)
+                       changesets=changesets, undos=undos, audit=audit)
     # Research mode does NOT go through the agent loop: an investigation is a
     # fixed Python state machine, not a model deciding what to do next. It
     # reuses the same vault/sandbox/embedder/gateway so the trust boundaries are
@@ -137,7 +143,7 @@ async def build_state(settings: Settings) -> AppState:
         settings=settings, db=db, llm=llm, vault=vault, audit=audit, gateway=gateway,
         approvals=approvals, sandbox=sandbox, memory=memory, personas=personas,
         conversations=conversations, attachments=attachment_store,
-        changesets=changesets, registry=registry, agent=agent, chat=chat,
+        changesets=changesets, undos=undos, registry=registry, agent=agent, chat=chat,
         email_router=email_router, transcriber=Transcriber(), byok=byok,
         research=research,
     )
