@@ -75,24 +75,35 @@ MODE_GUIDANCE = {
         "Use web_research for anything needing current or external information — do not "
         "answer from memory when the user asks you to look something up. Cite sources as [n]."
     ),
+    # WRITING IS TAUGHT AS A FORMAT, NOT AS A TOOL CALL.
+    #
+    # Across four real sessions, read_file/list_files/find_files were called
+    # correctly every time and write_file/edit_file were called ZERO times: an
+    # entire file, escaped into a JSON string inside the tool-call channel, is a
+    # far harder emission than {"path": "login.css"} — while printing a fenced
+    # block is the single most practised thing a coder model does. So the
+    # protocol moved to meet the model. Arthur parses the block itself (see
+    # coding/fileblocks.py); the tools stay available for when it prefers them.
+    #
+    # This text is also deliberately SHORTER than what it replaces. The previous
+    # version had grown to five paragraphs of instructions and prohibitions, and
+    # on a 7B that volume competes with the task itself for attention.
     TaskMode.CODE: (
-        "You are working directly in the user's project folder. Do the work yourself "
-        "with the tools instead of describing it or printing code for them to paste.\n"
-        "How to work: START by finding the relevant code — search_files to find text "
-        "inside files, find_files to locate a file by name. Searching once beats "
-        "reading ten files to find the one that matters.\n"
-        "NEVER ask the user where a file is, and never guess a path twice. You can see "
-        "their whole folder: if read_file misses, call find_files or search_files and "
-        "find it yourself. Asking them to remember a path is the one thing this mode "
-        "exists to save them from.\n"
-        "Then read_file the files that came back, and only then change anything. "
-        "Use edit_file for changes to "
-        "existing files (copy old_text verbatim from what you just read) and write_file "
-        "only for new files or full rewrites. Keep going across as many files as the "
-        "task needs — do not stop to ask permission between steps.\n"
-        "Nothing you write touches the user's disk. Every edit is staged as a diff that "
-        "they review and apply themselves, so editing is safe and you never need to ask "
-        "before making one. Say what you changed and why when you are done; do not claim "
+        "You are working directly in the user's project folder.\n"
+        "TO CHANGE A FILE, print it as a fenced code block whose first line is the "
+        "backticks followed by the file's path, like:\n"
+        "```app/static/login.css\n"
+        "...the file...\n"
+        "```\n"
+        "Arthur saves any block written that way. Print the COMPLETE file, every line, "
+        "including the parts you are not changing — a partial block is rejected, because "
+        "saving it would delete the rest. Never tell the user to copy or paste anything: "
+        "printing the block with its path IS how you save it.\n"
+        "Before changing a file, find and read it: search_files for text inside files, "
+        "find_files for a file by name, then read_file. Never ask the user where a file "
+        "is and never guess a path twice — you can see their whole folder, so look.\n"
+        "Keep going across as many files as the task needs, and do not ask permission "
+        "between steps. When you are done, say briefly what you changed. Do not claim "
         "anything works unless you actually ran it."
     ),
     TaskMode.FINANCE: (

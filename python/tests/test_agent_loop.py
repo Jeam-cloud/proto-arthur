@@ -27,6 +27,7 @@ from tests.fakes import (
     WriteFileTool,
 )
 from tools.base import TaskMode, ToolContext
+from tools.coding import WriteFileTool as RealWriteFileTool
 
 
 def make_loop(db, settings, llm, tools, max_iterations=4, timeout=0.05):
@@ -733,6 +734,144 @@ class TestForceWriteAfterPrintedFile:
         loop, _ = make_loop(db, settings, llm, [tool])
         await loop.run("m", [], TaskMode.CODE, self.code_ctx(tmp_path), CollectingEmit())
         assert tool.writes == []
+
+
+class TestFileBlocksAreThePrimaryWritePath:
+    """The reversal. Everything in the two classes below this one is a RESCUE —
+    ways to catch a model that failed to emit a tool call. This is the model
+    doing exactly what it was asked, in the format it is fluent in, and Arthur
+    reading it.
+
+    Four sessions of evidence: reads always called, write_file/edit_file never
+    called once. Printing a fenced block is what it does instead, every time."""
+
+    FILE = "\n".join(f"line {i}" for i in range(40)) + "\n"
+    NEW = "\n".join(f"changed {i}" for i in range(40))
+
+    @staticmethod
+    def code_ctx(tmp_path, contents=None):
+        root = tmp_path / "proj"
+        root.mkdir(exist_ok=True)
+        for name, text in (contents or {}).items():
+            (root / name).write_text(text)
+        return ToolContext(conversation_id="conv1", workspace_root=str(root),
+                           changes=ChangeSet(root=str(root)))
+
+    async def test_a_labelled_block_is_staged(self, db, settings, tmp_path):
+        llm = FakeLLM([
+            {"tokens": [f"Recoloured it:\n```css login.css\n{self.NEW}\n```"]},
+            {"tokens": ["Changed the three colour rules to blue."]},
+        ])
+        loop, _ = make_loop(db, settings, llm, [RealWriteFileTool()], max_iterations=6)
+        ctx = self.code_ctx(tmp_path, {"login.css": self.FILE})
+        await loop.run("m", [], TaskMode.CODE, ctx, CollectingEmit())
+
+        assert ctx.changes.paths() == ["login.css"]
+        assert ctx.changes.read("login.css")[0].rstrip("\n") == self.NEW
+
+    async def test_the_file_is_never_asked_for_through_a_schema(self, db, settings, tmp_path):
+        """THE ORIGINAL BUG, structurally prevented. Getting the file back
+        through constrained decoding — an 80-line stylesheet emitted
+        character-by-character through a grammar — did not finish inside the
+        timeout, so the write silently never happened. This path never asks for
+        file contents at all."""
+        llm = FakeLLM([
+            {"tokens": [f"```css login.css\n{self.NEW}\n```"]},
+            {"tokens": ["done"]},
+        ])
+        loop, _ = make_loop(db, settings, llm, [RealWriteFileTool()], max_iterations=6)
+        ctx = self.code_ctx(tmp_path, {"login.css": self.FILE})
+        await loop.run("m", [], TaskMode.CODE, ctx, CollectingEmit())
+
+        assert ctx.changes.paths() == ["login.css"]
+        asked_for = [set(c["schema"].get("properties", {})) for c in llm.calls if "schema" in c]
+        assert not any("content" in props for props in asked_for)
+
+    async def test_the_file_comes_off_the_screen_once_saved(self, db, settings, tmp_path):
+        """It is visible as a diff instead — better rendering, and it keeps 80
+        lines of CSS out of the history replayed on the next turn."""
+        llm = FakeLLM([
+            {"tokens": [f"Here it is:\n```css login.css\n{self.NEW}\n```\nAll set."]},
+            {"tokens": ["Done."]},
+        ])
+        loop, _ = make_loop(db, settings, llm, [RealWriteFileTool()], max_iterations=6)
+        text = await loop.run("m", [], TaskMode.CODE,
+                              self.code_ctx(tmp_path, {"login.css": self.FILE}), CollectingEmit())
+        assert "changed 12" not in text
+        assert "Here it is:" in text
+
+    async def test_an_excerpt_is_refused_and_the_model_is_told(self, db, settings, tmp_path):
+        """THE DESTRUCTIVE CASE. It printed two rules of an 82-line file; saving
+        that would delete the rest. It is refused, the model is told why in the
+        same turn, and it gets to reprint the whole thing."""
+        llm = FakeLLM([
+            {"tokens": ["```css login.css\nchanged 0\nchanged 1\n```"]},
+            {"tokens": [f"Sorry — the whole file:\n```css login.css\n{self.NEW}\n```"]},
+            {"tokens": ["done"]},
+        ])
+        loop, _ = make_loop(db, settings, llm, [RealWriteFileTool()], max_iterations=6)
+        ctx = self.code_ctx(tmp_path, {"login.css": self.FILE})
+        await loop.run("m", [], TaskMode.CODE, ctx, CollectingEmit())
+
+        # The retry landed, and the file is the FULL version, not the two lines.
+        assert ctx.changes.read("login.css")[0].rstrip("\n") == self.NEW
+        told = llm.calls[1]["messages"][-1]["content"]
+        assert "NOT SAVED" in told and "COMPLETE file" in told
+
+    async def test_it_stops_asking_after_two_excerpts(self, db, settings, tmp_path):
+        """A model that cannot comply must not burn the whole iteration budget
+        arriving at the same place."""
+        stub = "```css login.css\nchanged 0\nchanged 1\n```"
+        llm = FakeLLM([{"tokens": [stub]} for _ in range(6)])
+        loop, _ = make_loop(db, settings, llm, [RealWriteFileTool()], max_iterations=6)
+        ctx = self.code_ctx(tmp_path, {"login.css": self.FILE})
+        emit = CollectingEmit()
+        await loop.run("m", [], TaskMode.CODE, ctx, emit)
+
+        assert ctx.changes.is_empty()          # nothing was ever flattened
+        assert any("only part of the file" in d["text"] for d in emit.of(events.STATUS))
+
+    async def test_a_new_file_is_created_from_a_short_block(self, db, settings, tmp_path):
+        llm = FakeLLM([
+            {"tokens": ["```py hello.py\nprint('hi')\n```"]},
+            {"tokens": ["done"]},
+        ])
+        loop, _ = make_loop(db, settings, llm, [RealWriteFileTool()], max_iterations=6)
+        ctx = self.code_ctx(tmp_path)
+        await loop.run("m", [], TaskMode.CODE, ctx, CollectingEmit())
+        assert ctx.changes.paths() == ["hello.py"]
+
+    async def test_a_path_outside_the_folder_is_refused(self, db, settings, tmp_path):
+        llm = FakeLLM([
+            {"tokens": [f"```css ../../etc/passwd\n{self.NEW}\n```"]},
+            {"tokens": ["done"]},
+        ])
+        loop, _ = make_loop(db, settings, llm, [RealWriteFileTool()], max_iterations=6)
+        ctx = self.code_ctx(tmp_path, {"login.css": self.FILE})
+        await loop.run("m", [], TaskMode.CODE, ctx, CollectingEmit())
+        assert ctx.changes.is_empty()
+
+    async def test_an_unlabelled_block_is_left_to_the_rescue_paths(self, db, settings, tmp_path):
+        """No path means no block protocol — that is the older, less reliable
+        route, and it must still be reachable rather than swallowed here."""
+        llm = FakeLLM([{"tokens": [f"```css\n{self.NEW}\n```"]}, {"tokens": ["done"]}])
+        llm.json_turns = [{"path": "login.css"}]
+        loop, _ = make_loop(db, settings, llm, [RealWriteFileTool()], max_iterations=6)
+        ctx = self.code_ctx(tmp_path, {"login.css": self.FILE})
+        await loop.run("m", [], TaskMode.CODE, ctx, CollectingEmit())
+        assert ctx.changes.paths() == ["login.css"]   # via the forced-write fallback
+
+    async def test_nothing_happens_outside_code_mode(self, db, settings, tmp_path):
+        """write_file is not granted elsewhere, so a labelled block in General
+        mode is just text — a user asking for example code must not have files
+        written at them."""
+        llm = FakeLLM([{"tokens": [f"```css login.css\n{self.NEW}\n```"]}])
+        llm.json_turns = [{"tool": "none"}]
+        loop, _ = make_loop(db, settings, llm, [EchoTool()])
+        ctx = self.code_ctx(tmp_path, {"login.css": self.FILE})
+        text = await loop.run("m", [], TaskMode.GENERAL, ctx, CollectingEmit())
+        assert ctx.changes.is_empty()
+        assert "changed 12" in text     # and it stays on screen, as ordinary code
 
 
 class TestForceAfterAClaimedChange:

@@ -26,6 +26,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from agent.registry import ToolRegistry
+from coding.fileblocks import is_excerpt, parse_file_blocks, strip_file_blocks
 from core import events
 from core.ollama_client import OllamaClient
 from security.approvals import ApprovalBroker
@@ -381,17 +382,28 @@ def _with_capability_note(
         "NEVER say an action is done, sent, opened, saved or created unless you actually "
         "called a tool above and saw it succeed. Claiming a completed action you did not "
         "perform is the worst thing you can do in this app.\n"
-        "NEVER write out what a tool call or a tool result LOOKS LIKE — no JSON call "
-        "objects, no <<EXTERNAL>> blocks, no invented file contents. Call the tool and "
-        "wait for the real result. Writing the shape of an answer instead of getting one "
-        "is the same lie as the paragraph above.\n"
-        "Do not ask permission before using a tool. The app already asks the user "
-        "whenever a confirmation is genuinely needed, so a question from you just stalls "
-        "the work. Take the next step.\n"
-        "YOU are the one who runs these tools — the user cannot. Never write a plan that "
-        "tells them which tool to use, never say 'let me know what you find', and never "
-        "ask them to report a result back to you. If you catch yourself describing a "
-        "step, make the call instead."
+        "NEVER write out what a tool call or a tool RESULT looks like — no JSON call "
+        "objects, no <<EXTERNAL>> blocks, no invented output from a tool you did not "
+        "run. Call the tool and wait for the real result. Writing the shape of an answer "
+        "instead of getting one is the same lie as the paragraph above.\n"
+        # THE CARVE-OUT MATTERS. This sentence used to end "...no invented file
+        # contents", which flatly contradicts Code mode, where printing a file
+        # with its path is HOW a file gets saved. The last contradiction of this
+        # kind (a hardcoded "you cannot edit files" shown to the mode built for
+        # editing files) got believed by the model and cost a day, so the
+        # exception is stated where the prohibition is, not left to be inferred.
+        + ("Printing a file inside a fenced block labelled with its path is NOT covered "
+           "by that rule — it is how you save a file here, and Arthur really does save "
+           "it.\n" if "write_file" in granted else "")
+        + (
+            "Do not ask permission before using a tool. The app already asks the user "
+            "whenever a confirmation is genuinely needed, so a question from you just "
+            "stalls the work. Take the next step.\n"
+            "YOU are the one who runs these tools — the user cannot. Never write a plan "
+            "that tells them which tool to use, never say 'let me know what you find', "
+            "and never ask them to report a result back to you. If you catch yourself "
+            "describing a step, make the call instead."
+        )
     )
     if messages and messages[0].get("role") == "system":
         # Copy rather than mutate: `messages` belongs to the caller, and the
@@ -450,6 +462,11 @@ def claims_a_file_change(text: str) -> bool:
 # to convert a plan into action without letting a model that genuinely has
 # nothing to run spin.
 MAX_FORCED = 2
+
+# How many times one turn may tell the model "that was only part of the file".
+# Two is enough for a model that can comply; a third costs the user another
+# thirty seconds to reach the same answer.
+MAX_BLOCK_RETRIES = 2
 
 # ONLY THE PATH IS ASKED FOR. The content is taken from the block already on
 # screen.
@@ -567,6 +584,7 @@ class AgentLoop:
 
         final_text_parts: list[str] = []
         forced = 0
+        block_retries = 0
         executed: set[str] = set()
 
         for _iteration in range(limit):
@@ -583,6 +601,47 @@ class AgentLoop:
             text = "".join(tokens)
             if text:
                 final_text_parts.append(text)
+
+            # FILE BLOCKS: the primary way files get written in Code mode.
+            #
+            # Handled BEFORE any of the rescue paths below, because it is not a
+            # rescue — it is the protocol. Everything after this point exists to
+            # catch a model that failed to emit a tool call; this catches a model
+            # that did exactly what it was asked to do, in the format it is
+            # fluent in. See coding/fileblocks.py for why that reversal matters.
+            staged, refused = await self._stage_file_blocks(text, mode, ctx, emit)
+            if refused and block_retries >= MAX_BLOCK_RETRIES:
+                # Asked twice and still getting excerpts. Stop asking: another
+                # round costs the user thirty seconds to arrive at the same
+                # place, and the turn still has an answer worth returning.
+                await emit(events.STATUS, {"text": (
+                    "Arthur kept printing only part of the file, so nothing was saved. "
+                    "Try asking for one specific change, or for the complete file."
+                )})
+                refused = []
+            elif refused:
+                block_retries += 1
+            if staged or refused:
+                cleaned = strip_file_blocks(text)
+                final_text_parts[-1:] = [cleaned] if cleaned else []
+                await emit(events.DRAFT_REPLACE, {"content": "".join(final_text_parts)})
+                messages.append({"role": "assistant", "content": cleaned or text})
+                # Refusals go back as a user-role message rather than a tool
+                # result: no tool was called, so there is no call for a tool
+                # result to answer, and some chat templates drop a tool message
+                # that follows no tool_calls. What matters is that the model is
+                # TOLD, in the same turn, so it can reprint the whole file.
+                if refused:
+                    messages.append({"role": "user", "content": "\n".join(refused)})
+                    continue
+                if not tool_calls:
+                    # Files landed and nothing else was asked for. Let the model
+                    # see the result and say what it did.
+                    messages.append({"role": "user", "content": (
+                        "Those files are staged. Briefly tell the user what you changed. "
+                        "Do NOT print the files again."
+                    )})
+                    continue
 
             if not tool_calls and tools:
                 # Second chance: did the model write the call as text?
@@ -783,6 +842,70 @@ class AgentLoop:
             return None
         log.info("forced a structured call to %s after the model described it", name)
         return {"name": name, "arguments": args if isinstance(args, dict) else {}}
+
+    async def _stage_file_blocks(
+        self, text: str, mode: TaskMode, ctx: ToolContext, emit: Emit,
+    ) -> tuple[list[str], list[str]]:
+        """Stage every fenced block that named a file. Returns (staged, refused).
+
+        THE PRIMARY WRITE PATH IN CODE MODE, not a fallback. The model prints a
+        file the way it prints files; this turns that into a staged change with
+        no JSON, no grammar and no tool-call channel involved. See
+        coding/fileblocks.py for the evidence that made this the primary path.
+
+        Staging goes THROUGH write_file rather than straight to the changeset:
+        the tool already does path validation, the size cap and the pending-file
+        limit, and running it emits the same activity rows as any other tool, so
+        the user sees "Wrote login.css" in the run block exactly as they would
+        have. A second way to write files would be a second way to get them
+        wrong.
+        """
+        changes = getattr(ctx, "changes", None)
+        # Outside Code mode `write_file` is not granted, so this is a no-op
+        # everywhere else without needing to name the mode.
+        if changes is None or self._registry.get_granted("write_file", mode) is None:
+            return [], []
+
+        staged: list[str] = []
+        refused: list[str] = []
+        for block in parse_file_blocks(text):
+            try:
+                current, _state = changes.read(block.path)
+            except Exception as e:
+                # A path outside the workspace, or unreadable. safe_path has
+                # already refused it; the model is told plainly so it can name a
+                # real file instead of repeating itself.
+                refused.append(f"{block.path} could not be written: {e}")
+                continue
+
+            if current is not None and current == block.content:
+                continue     # identical to what is already there: not a change
+
+            if is_excerpt(block, current):
+                refused.append(
+                    f"NOT SAVED: the block you printed for {block.path} is only part of the "
+                    f"file ({len(block.content.splitlines())} lines, against "
+                    f"{len(current.splitlines())} in the file). Saving it would delete "
+                    "everything you left out. Print the COMPLETE file — every line, "
+                    "including the parts you did not change — in one block whose first "
+                    f"line is ```{block.path}"
+                )
+                continue
+
+            await self._execute_one(
+                {"name": "write_file",
+                 "arguments": {"path": block.path, "content": block.content}},
+                mode, ctx, emit,
+            )
+            if block.path in changes.paths():
+                staged.append(block.path)
+            else:
+                # The tool refused it (size cap, pending-file limit, a path that
+                # validated here and failed there). Not silently dropped: an
+                # edit the user believes happened is the failure this whole
+                # module exists to end.
+                refused.append(f"{block.path} was not saved. Check the path and try again.")
+        return staged, refused
 
     async def _force_write(
         self, model: str, messages: list[dict[str, Any]], said: str,
