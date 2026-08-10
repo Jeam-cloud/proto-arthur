@@ -745,9 +745,8 @@ async def apply_changes(request: Request, cid: str, body: ChangesRequest) -> dic
     # Shared with the auto-apply path in chat_service so the undo snapshot and
     # the receipt cannot exist in one and not the other -- see core/code_apply.py.
     return await apply_changeset(
-        cs, conversation_id=cid, root=await _conversation_workspace(s, cid),
-        conversations=s.conversations, undos=s.undos, audit=s.audit,
-        paths=body.paths,
+        cs, conversation_id=cid, conversations=s.conversations,
+        undos=s.undos, audit=s.audit, paths=body.paths,
     )
 
 

@@ -202,7 +202,6 @@ class TestUndoRoutes:
         await client.post(f"/conversations/{cid}/changes/apply", json={"paths": None})
 
         res = await client.post(f"/conversations/{cid}/undo", json={})
-        print("STATUS", res.status_code, res.json())
         assert res.json()["restored"] == ["app.py"]
         assert (project / "app.py").read_text() == "x = 1\n"
 

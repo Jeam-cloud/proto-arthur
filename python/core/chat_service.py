@@ -247,7 +247,7 @@ class ChatService:
                 if self._settings.code_review_before_apply:
                     await emit(events.CHANGES_UPDATED, changes.totals())
                 else:
-                    await self._apply_now(changes, conversation_id, workspace_root, emit)
+                    await self._apply_now(changes, conversation_id, emit)
             if changes is not None and not staged_this_turn:
                 await self._warn_if_code_was_only_printed(final_text, emit)
 
@@ -269,8 +269,7 @@ class ChatService:
             self._spawn(self._generate_title(conversation_id, user_text, model, emit))
         self._spawn(self._extract_memories(conversation_id, user_text, model))
 
-    async def _apply_now(self, changes, conversation_id: str,
-                         root: str | None, emit: Emit) -> None:
+    async def _apply_now(self, changes, conversation_id: str, emit: Emit) -> None:
         """Write this turn's edits and report what landed.
 
         Failure here is reported, never raised. The turn has already produced an
@@ -281,7 +280,7 @@ class ChatService:
         """
         try:
             result = await apply_changeset(
-                changes, conversation_id=conversation_id, root=root,
+                changes, conversation_id=conversation_id,
                 conversations=self._conversations, undos=self._undos, audit=self._audit,
             )
         except Exception:
