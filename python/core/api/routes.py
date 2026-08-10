@@ -1084,6 +1084,8 @@ async def get_settings_route(request: Request) -> dict:
         "default_model": await s.db.get_setting("default_model", ""),
         "workspace_root": await s.db.get_setting("workspace_root", None),
         "allow_unsandboxed_network_tools": await s.db.get_setting("allow_unsandboxed_network_tools", False),
+        "code_review_before_apply": await s.db.get_setting(
+            "code_review_before_apply", s.settings.code_review_before_apply),
         "memory_enabled": await s.db.get_setting("memory_enabled", True),
         "font_scale": await s.db.get_setting("font_scale", 1.0),
         "email_address": await s.db.get_setting("email_address", None),
@@ -1101,6 +1103,13 @@ async def patch_settings(request: Request, body: SettingsPatch) -> dict:
     s = state(request)
     for key, value in body.model_dump(exclude_none=True).items():
         await s.db.set_setting(key, value)
+        # MIRRORED ONTO THE LIVE SETTINGS OBJECT, not just stored. The chat turn
+        # reads this on every message to decide whether to write files or stage
+        # them; leaving it in the DB alone would mean the toggle did nothing
+        # until the app was restarted -- the worst way for a safety switch to
+        # behave, because it looks like it worked.
+        if key == "code_review_before_apply":
+            s.settings.code_review_before_apply = bool(value)
         # security-relevant settings leave a trace in the event log
         if key == "allow_unsandboxed_network_tools" or (key == "scanner_mode" and value != "standard"):
             await s.audit.record("setting_changed", "warning", key=key, value=value)

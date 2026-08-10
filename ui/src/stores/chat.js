@@ -145,6 +145,14 @@ export const useChat = create((set, get) => ({
           case "changes_updated":
             useChanges.getState().load(cid);
             break;
+          // The turn WROTE the files. The normal ending for a Code turn now:
+          // the panel becomes a receipt with an Undo button rather than a
+          // decision waiting to be made. The receipt message is appended here
+          // so it lands in the transcript in the same tick as the answer.
+          case "changes_applied":
+            useChanges.getState().applied(data);
+            if (data.receipt) get().appendMessage(cid, data.receipt);
+            break;
           // The turn ran out of tool calls rather than finishing, so whatever
           // is staged is PARTIAL. The panel says so above the files; applying
           // half a change is the mistake that screen exists to prevent.

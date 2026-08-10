@@ -1,8 +1,16 @@
-// The review gate, rendered.
+// What happened to your files, rendered.
 //
 // This panel is Code mode's version of a citation. Research mode earns trust by
-// showing you where a claim came from; Code mode earns it by showing you
-// exactly what will change before it changes.
+// showing you where a claim came from; Code mode earns it by showing you what
+// actually changed on disk — and, crucially, by being generated FROM the write
+// rather than from the model's account of it. A model can say "Done, I updated
+// login.css"; it cannot fake a receipt.
+//
+// IT HAS TWO FACES, and which one shows is the whole design:
+//   * RECEIPT (the default) — the edits already landed. One line saying what
+//     was written, and Undo. No decision to make, so nothing asks for one.
+//   * REVIEW — pending edits waiting on the user. Only reached when
+//     `code_review_before_apply` is on, or when a conflict left a file behind.
 //
 // Built to the approved design (Arthur.dc prototype, 7 Aug). Three things in it
 // are not decoration and should survive any restyle:
@@ -15,7 +23,7 @@
 //     approval is convenient is not a review.
 import React from "react";
 import {
-  AlertCircle, Check, ChevronRight, FileDiff, FileMinus2, FilePlus2, X,
+  AlertCircle, Check, ChevronRight, FileDiff, FileMinus2, FilePlus2, Undo2, X,
 } from "lucide-react";
 import { useChanges } from "../../stores/changes";
 
@@ -30,15 +38,28 @@ export default function ChangesPanel({ conversationId }) {
     changes, files, additions, deletions, expanded, busy, capped, flash,
     diffOpen, toggleOpen, toggleDiff, toggleSelected, selected, selectedPaths,
     apply, discard, reread, continueRun, registerCard,
+    receipt, undoing, undo,
   } = useChanges();
 
-  if (!files) return null;
+  // Nothing pending: either report what landed, or say nothing at all. An empty
+  // panel sitting under the composer would be a permanent reminder of a
+  // decision the user no longer has to make.
+  if (!files) {
+    if (!receipt) return null;
+    return <Receipt receipt={receipt} undoing={undoing} onUndo={() => undo(conversationId)} />;
+  }
 
   const chosen = selectedPaths();
   const partial = chosen.length !== changes.length;
   const applyLabel = busy ? "Applying…"
     : capped ? "Apply anyway"
     : partial ? `Apply ${chosen.length} of ${changes.length}` : "Apply all";
+
+  // EVERYTHING HERE IS A LEFTOVER CONFLICT. That is the usual reason this
+  // panel appears now, and it needs different words: "3 files to review /
+  // nothing has been saved yet" reads as though the whole turn is waiting,
+  // when in fact the rest of it landed and only these were held back.
+  const allConflicted = changes.length > 0 && changes.every((c) => c.conflict);
 
   return (
     <div className={`changes-panel${expanded ? " expanded" : ""}`}>
@@ -47,11 +68,15 @@ export default function ChangesPanel({ conversationId }) {
         <span className="changes-title">
           {capped
             ? `${files} ${files === 1 ? "file" : "files"} staged so far`
-            : `${files} ${files === 1 ? "file" : "files"} to review`}
+            : allConflicted
+              ? `${files} ${files === 1 ? "file" : "files"} left alone`
+              : `${files} ${files === 1 ? "file" : "files"} to review`}
         </span>
         <span className="diff-stat add">+{additions}</span>
         <span className="diff-stat del">−{deletions}</span>
-        <span className="changes-hint">nothing has been saved yet</span>
+        <span className="changes-hint">
+          {allConflicted ? "your version was kept" : "nothing has been saved yet"}
+        </span>
       </button>
 
       {expanded && (
@@ -163,6 +188,45 @@ export default function ChangesPanel({ conversationId }) {
             </span>
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+// The default ending for a Code turn: it already happened, here is the way back.
+//
+// Deliberately ONE LINE and not expandable. The diff is in the transcript where
+// the work was described; repeating it here would turn a receipt back into a
+// review and re-introduce the thing being removed — a screen the user feels
+// obliged to read before carrying on.
+//
+// The files are NAMED. "Wrote 2 files" is not checkable at a glance and
+// "login.css, app.py" is, and being checkable is the entire job of this strip
+// now that nothing was approved on the way in.
+function Receipt({ receipt, undoing, onUndo }) {
+  const { files, undoable } = receipt;
+  const shown = files.slice(0, 3).map((p) => p.slice(p.lastIndexOf("/") + 1));
+  const rest = files.length - shown.length;
+  return (
+    <div className="changes-panel receipt">
+      <span className="receipt-mark"><Check size={13} strokeWidth={2.6} /></span>
+      <span className="receipt-text">
+        Wrote <strong>{shown.join(", ")}</strong>
+        {rest > 0 && ` and ${rest} more`}
+        {" "}to your folder.
+      </span>
+      {undoable ? (
+        <button className="btn tiny" disabled={undoing} onClick={onUndo}>
+          {undoing ? <span className="spinner" /> : <Undo2 size={13} strokeWidth={1.9} />}
+          {undoing ? "Undoing…" : "Undo"}
+        </button>
+      ) : (
+        // Said plainly rather than hidden. A missing button is ambiguous; the
+        // user needs to know this particular change has no way back BEFORE they
+        // decide whether to keep working on top of it.
+        <span className="changes-note" title="The previous versions could not be saved, so this change cannot be reversed from here.">
+          can't be undone
+        </span>
       )}
     </div>
   );

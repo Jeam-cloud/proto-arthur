@@ -8,7 +8,7 @@
 // Keyed by conversation because the changeset is: two chats editing two
 // projects must never share a review queue.
 import { create } from "zustand";
-import { applyChanges, discardChanges, getChanges } from "../api/changes";
+import { applyChanges, discardChanges, getChanges, getUndos, undoApply } from "../api/changes";
 import { useToasts } from "./toasts";
 import { useWorkspace } from "./workspace";
 
@@ -29,14 +29,22 @@ export const useChanges = create((set, get) => ({
   selected: {},         // path -> false for files the user unticked
   diffOpen: {},         // path -> bool, overrides the auto fold for long diffs
 
+  // WHAT ALREADY LANDED, and how to take it back. `receipt` is the last apply
+  // in this chat: {id, files[], undoable}. It is the normal ending for a Code
+  // turn now, so this — not `changes` — is what the panel usually shows.
+  receipt: null,
+  undoing: false,
+
   async load(conversationId) {
     if (!conversationId) {
-      set({ conversationId: null, ...EMPTY, selected: {}, diffOpen: {}, capped: false });
+      set({ conversationId: null, ...EMPTY, selected: {}, diffOpen: {}, capped: false,
+            receipt: null });
       return;
     }
     const switching = get().conversationId !== conversationId;
     if (switching) {
-      set({ conversationId, ...EMPTY, selected: {}, diffOpen: {}, capped: false, flash: null });
+      set({ conversationId, ...EMPTY, selected: {}, diffOpen: {}, capped: false, flash: null,
+            receipt: null });
     }
     try {
       const res = await getChanges(conversationId);
@@ -52,6 +60,37 @@ export const useChanges = create((set, get) => ({
       // which is the safe direction to fail.
       if (get().conversationId === conversationId) set({ ...EMPTY });
     }
+    // Fetched on switch too, so reopening yesterday's chat still offers the
+    // undo — the snapshot outlives the process precisely so it can.
+    if (switching) await get().loadReceipt(conversationId);
+  },
+
+  async loadReceipt(conversationId) {
+    try {
+      const res = await getUndos(conversationId);
+      if (get().conversationId !== conversationId) return;
+      set({
+        receipt: res.latest
+          ? { id: res.latest.id, files: res.latest.files || [], undoable: true }
+          : null,
+      });
+    } catch {
+      // No receipt is the honest fallback: showing an Undo button we cannot
+      // stand behind is worse than showing none.
+      if (get().conversationId === conversationId) set({ receipt: null });
+    }
+  },
+
+  // The turn wrote files. Straight from the SSE event, so the panel updates
+  // without a round trip — the counts are already in hand and a fetch here
+  // would just make the receipt arrive after the text that announced it.
+  applied: ({ applied = [], undo_id: undoId = null, conflicts = [] }) => {
+    if (!applied.length) return;
+    set({
+      receipt: { id: undoId, files: applied, undoable: Boolean(undoId) },
+      expanded: conflicts.length > 0,   // only a conflict needs the panel open
+    });
+    useWorkspace.getState().refreshTree();
   },
 
   // Called when a new message is sent: a fresh turn is not cut short until it
@@ -129,6 +168,42 @@ export const useChanges = create((set, get) => ({
       useToasts.getState().push(e.message || "Could not discard the changes.", "error");
     } finally {
       set({ busy: false });
+    }
+  },
+
+  // PUT IT BACK. The replacement for the Apply button: the decision moved to
+  // the far side of the write, so this is now the user's whole remedy for an
+  // edit they did not want.
+  async undo(conversationId) {
+    const { receipt, undoing } = get();
+    if (!receipt?.undoable || undoing) return;
+    set({ undoing: true });
+    try {
+      const res = await undoApply(conversationId, receipt.id);
+      if (res.error) {
+        useToasts.getState().push(res.error, "error");
+      } else if (res.skipped?.length) {
+        // Named rather than counted: the user has to know WHICH file kept
+        // their own edit, or "1 file was skipped" is a puzzle instead of an
+        // answer.
+        useToasts.getState().push(
+          `Left ${res.skipped.join(", ")} alone — you have edited ${res.skipped.length === 1 ? "it" : "them"} since.`,
+          "info",
+        );
+      }
+      if (res.receipt) {
+        const { useChat } = await import("./chat");
+        useChat.getState().appendMessage(conversationId, res.receipt);
+      }
+      for (const f of res.failed || []) {
+        useToasts.getState().push(`Could not restore ${f.path}: ${f.error}`, "error");
+      }
+      await get().loadReceipt(conversationId);
+      await useWorkspace.getState().refreshTree();
+    } catch (e) {
+      useToasts.getState().push(e.message || "Could not undo the changes.", "error");
+    } finally {
+      set({ undoing: false });
     }
   },
 

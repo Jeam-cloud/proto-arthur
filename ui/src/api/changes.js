@@ -15,3 +15,15 @@ export function applyChanges(conversationId, paths = null) {
 export function discardChanges(conversationId, paths = null) {
   return api.post(`/conversations/${conversationId}/changes/discard`, { paths });
 }
+
+// What can still be put back. With edits landing automatically, this is the
+// safety model rather than a convenience — see python/coding/undo.py.
+export function getUndos(conversationId) {
+  return api.get(`/conversations/${conversationId}/undo`);
+}
+
+// id === null means the most recent apply in this chat, which is the button on
+// the receipt and the only case that matters in practice.
+export function undoApply(conversationId, id = null) {
+  return api.post(`/conversations/${conversationId}/undo`, { id });
+}

@@ -1692,6 +1692,28 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
 .diff-stat.add { color: var(--green); }
 .diff-stat.del { color: var(--red); }
 
+/* THE RECEIPT: one quiet row, not a panel.
+   It reports something already finished, so it must not compete with the
+   composer for attention the way the review gate deliberately did. Low
+   contrast, single line, no border-radius drama -- the Undo button is the only
+   thing here anyone needs to find. */
+.changes-panel.receipt {
+  flex: 0 0 auto; flex-direction: row; align-items: center; gap: 9px;
+  padding: 8px 12px; background: var(--bg2); border-color: var(--border);
+  font-size: 13px; color: var(--tmut);
+}
+.receipt-mark {
+  display: flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; flex-shrink: 0; border-radius: 50%;
+  background: color-mix(in srgb, var(--green) 18%, transparent); color: var(--green);
+}
+/* The filenames stay on one line and the button never moves: this strip is
+   glanced at, not read, and a name long enough to wrap would push Undo out
+   from under the cursor that is already heading for it. */
+.receipt-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.receipt-text strong { color: var(--text); font-weight: 600; }
+.changes-panel.receipt .btn.tiny { flex-shrink: 0; display: inline-flex; align-items: center; gap: 5px; }
+
 .changes-list { flex: 1 1 0; overflow-y: auto; padding: 4px 12px 12px; border-top: 1px solid var(--border); min-height: 0; }
 
 .change {

@@ -209,6 +209,9 @@ class SettingsPatch(BaseModel):
     default_model: str | None = Field(default=None, max_length=100)
     workspace_root: str | None = Field(default=None, max_length=500)
     allow_unsandboxed_network_tools: bool | None = None
+    # Code mode: stage edits for review instead of writing them and offering
+    # Undo. Off by default -- see `code_review_before_apply` in core/config.py.
+    code_review_before_apply: bool | None = None
     memory_enabled: bool | None = None
     font_scale: float | None = Field(default=None, ge=0.8, le=1.5)
     # SMTP/IMAP email (hosts optional — presets fill them from the address domain)

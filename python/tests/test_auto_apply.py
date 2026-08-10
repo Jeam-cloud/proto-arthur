@@ -148,3 +148,23 @@ class TestReviewFirstIsStillAvailable:
 
     async def test_the_default_is_off(self, settings):
         assert settings.code_review_before_apply is False
+
+    async def test_the_toggle_takes_effect_without_a_restart(self, app_state, settings):
+        """It is stored in the DB but READ off the Settings object every turn,
+        so patching has to mirror it across. A safety switch that silently does
+        nothing until relaunch is worse than no switch."""
+        import httpx
+
+        from core.app import create_app
+
+        app = create_app(settings=settings, state=app_state)
+        async with httpx.ASGITransport(app=app) as transport:
+            app.state.arthur = app_state
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://127.0.0.1",
+                headers={"Authorization": "Bearer test-token-123"},
+            ) as c:
+                await c.patch("/settings", json={"code_review_before_apply": True})
+                assert app_state.settings.code_review_before_apply is True
+                body = (await c.get("/settings")).json()
+                assert body["code_review_before_apply"] is True

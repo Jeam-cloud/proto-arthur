@@ -112,6 +112,10 @@ async def build_state(settings: Settings) -> AppState:
     # see the module docstring in tools/email_service.py for why.
     email_router = EmailRouter(SmtpImapBackend(db, vault))
     allow_unsandboxed = bool(await db.get_setting("allow_unsandboxed_network_tools", False))
+    # Stored in the DB, mirrored onto Settings, which is what the chat turn
+    # reads. Without this the toggle would only take effect after a restart.
+    settings.code_review_before_apply = bool(await db.get_setting(
+        "code_review_before_apply", settings.code_review_before_apply))
 
     registry = ToolRegistry()
     for tool in (

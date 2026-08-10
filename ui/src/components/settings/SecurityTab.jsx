@@ -90,6 +90,30 @@ export default function SecurityTab() {
         </div>
       )}
 
+      {values && (
+        <div className="card card-row">
+          <div className="grow">
+            <div className="card-title">Review code changes before saving</div>
+            {/* Described as a trade, not as "safer". Off is the default because
+                the protection did not disappear when the gate did -- it moved
+                to Undo -- and framing this as the safe option would push people
+                toward clicking through a review they have stopped reading. */}
+            <div className="card-sub">
+              Off: Arthur writes files as it works and you can undo. On: edits wait in a
+              diff until you apply them.
+            </div>
+          </div>
+          <label className="switch">
+            <input
+              type="checkbox"
+              checked={!!values.code_review_before_apply}
+              onChange={(e) => update({ code_review_before_apply: e.target.checked })}
+            />
+            <span className="track" /><span className="thumb" />
+          </label>
+        </div>
+      )}
+
       <div className="field-row" style={{ margin: "18px 0 8px" }}>
         <h2 style={{ fontSize: 14 }} className="grow">Event log</h2>
         <button className="btn" style={{ padding: "4px 12px", fontSize: 12 }} onClick={load}>Refresh</button>
