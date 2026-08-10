@@ -419,12 +419,50 @@ def _largest_code_block(text: str) -> str | None:
 # nothing to run spin.
 MAX_FORCED = 2
 
-FORCE_WRITE_ARGS_PROMPT = (
-    "You just printed a file's contents into the chat instead of saving them — "
-    "the user's file is UNCHANGED, no matter what you said. Call write_file now, "
-    "with the same path you were just discussing and that exact content, so it "
-    "actually gets staged."
+# ONLY THE PATH IS ASKED FOR. The content is taken from the block already on
+# screen.
+#
+# THE BUG THIS FIXES. The first version of this asked the model to re-emit the
+# whole file as a JSON string through constrained decoding. An 80-line CSS file
+# emitted character-by-character through a grammar, on a small local model, does
+# not finish inside FORCE_TIMEOUT_S — so the call raised, the recovery returned
+# None, and the turn ended having done nothing. Silent, and indistinguishable
+# from the model simply refusing.
+#
+# Asking for a path is three tokens. And the block the model already committed
+# to on screen is a better source for the content than a second attempt at
+# reproducing it, which small models quietly shorten.
+FORCE_PATH_PROMPT = (
+    "You just printed file contents into the chat instead of saving them — the "
+    "user's file is UNCHANGED, no matter what you said. Which file were you "
+    "editing? Answer with its path relative to the project folder."
 )
+
+# The fragment case: what was printed is only PART of the file, so it has to go
+# in as an edit. The model has the file's real text in this turn's history (it
+# read it), which is what makes copying old_text verbatim a reasonable ask.
+FORCE_EDIT_PROMPT = (
+    "You printed only part of {path}, so it cannot replace the whole file. Give "
+    "the exact snippet to find (old_text, copied character-for-character from "
+    "the file you read) and what to put in its place (new_text)."
+)
+
+# A printed block counts as a whole-file replacement only if it is at least this
+# fraction of the file it claims to replace.
+#
+# WHY A GUARD AT ALL. Observed with qwen2.5-coder:7b: asked to recolour an
+# 82-line stylesheet, it printed the TWO rules it wanted to change. Writing that
+# as the file would have deleted sixty lines of working CSS, including the
+# background image the user explicitly asked to keep. The undo makes that
+# survivable; it does not make it acceptable. A model showing you the part it
+# changed is normal, correct behaviour — the mistake would be ours, in reading
+# an excerpt as a replacement.
+WHOLE_FILE_RATIO = 0.6
+
+# Longer than the path call, shorter than a full generation: an edit re-emits
+# only the changed region, so it is quick, but it is real text and 25s is tight
+# for it on a small local model.
+FORCE_EDIT_TIMEOUT_S = 45.0
 
 # Much shorter than chat_json's 150s default. This is a RECOVERY path: the user
 # already has the model's text, and waiting two minutes to maybe upgrade it into
@@ -591,7 +629,8 @@ class AgentLoop:
                     # So this case is checked and handled before the general
                     # picker ever gets a chance to offer the exit.
                     block = _largest_code_block(text)
-                    call = await self._force_write(model, messages, text, tools, block) if block else None
+                    call = (await self._force_write(model, messages, text, tools, block, ctx)
+                            if block else None)
                     if call is None:
                         call = await self._forced_tool_call(model, messages, text, tools)
                     # NEVER FORCE A CALL THAT ALREADY RAN THIS TURN.
@@ -710,46 +749,93 @@ class AgentLoop:
 
     async def _force_write(
         self, model: str, messages: list[dict[str, Any]], said: str,
-        tools: list[Any], block: str,
+        tools: list[Any], block: str, ctx: ToolContext,
     ) -> dict[str, Any] | None:
-        """Turn a file printed into the chat into an actual write_file call.
+        """Turn code printed into the chat into a real file change.
 
-        Only targets write_file, never edit_file. edit_file's contract is an
-        exact `old_text` snippet copied verbatim from a read_file result — a
-        model reconstructing that from a block it just wrote fresh has nothing
-        reliable to copy it FROM. write_file's contract is "here is the whole
-        file", which is exactly the shape of what the model already produced,
-        so it is the one case where forcing without asking the model to
-        re-derive anything is safe.
+        THE FAILURE THIS EXISTS FOR, verbatim from a session: asked to recolour
+        login.css, the model read the file, printed the updated CSS into the
+        chat, and stopped. The user said "I authorize you, apply it" and got the
+        same block printed again. Three times. Nothing was ever staged.
 
-        No PICK step, unlike _forced_tool_call: there is only one legal answer
-        once a qualifying block exists, and offering "none" is the exact bug
-        this exists to close. If write_file was not granted this mode, there
-        is nothing to force — caller falls back to the general picker.
+        `_forced_tool_call` cannot rescue that, because its PICK step offers
+        "none" as a legal answer — correct for a turn that genuinely needed no
+        tool, wrong here, since a model that just showed the user a finished
+        file believes that WAS the deliverable and answers honestly.
+
+        WHOLE FILE vs FRAGMENT is the decision that matters, and getting it
+        wrong is destructive: a model showing you the two rules it changed is
+        behaving correctly, and treating that excerpt as a replacement would
+        delete the rest of the file. So the printed block is measured against
+        what is actually there, and only a plausible whole-file rewrite goes in
+        through write_file. A fragment goes in as an edit, whose failure mode is
+        safe — a mismatched old_text is refused by the tool with an explanation
+        the model can act on, rather than silently destroying sixty lines.
+
+        No step here re-emits the file. See FORCE_PATH_PROMPT.
         """
-        tool = next((t for t in tools if t.name == "write_file"), None)
-        if tool is None:
+        write = next((t for t in tools if t.name == "write_file"), None)
+        edit = next((t for t in tools if t.name == "edit_file"), None)
+        changes = getattr(ctx, "changes", None)
+        # Without a changeset nothing can be staged anyway, and without it there
+        # is no way to read the current file — so no way to tell a rewrite from
+        # an excerpt. Refusing to guess is the whole point of the guard.
+        if write is None or changes is None:
             return None
+
         history = [*messages, {"role": "assistant", "content": said}]
         try:
-            args = await self._llm.chat_json(
-                model, [*history, {"role": "user", "content": FORCE_WRITE_ARGS_PROMPT}],
-                tool.Args.model_json_schema(),
+            picked = await self._llm.chat_json(
+                model, [*history, {"role": "user", "content": FORCE_PATH_PROMPT}],
+                {"type": "object", "properties": {"path": {"type": "string"}},
+                 "required": ["path"]},
                 timeout_s=FORCE_TIMEOUT_S,
             )
         except Exception as e:
-            # Never let this break the turn — fall back to the general picker.
-            log.info("forced write failed: %s", e)
+            log.info("forced write failed while asking for the path: %s", e)
             return None
-        if not isinstance(args, dict) or not args.get("path"):
+        path = (picked or {}).get("path") if isinstance(picked, dict) else None
+        if not path or not isinstance(path, str):
             return None
-        # Safety net: trust the block the model already committed to over a
-        # second pass at reproducing it, which a small model happily shortens
-        # ("... rest unchanged ...") without meaning to lose anything.
-        if len(args.get("content") or "") < len(block) * 0.8:
-            args["content"] = block
-        log.info("forced write_file after the model only printed the file")
-        return {"name": "write_file", "arguments": args}
+
+        try:
+            current, _state = changes.read(path)
+        except Exception as e:
+            # Broad ON PURPOSE, like every other arm of this recovery path. The
+            # model just invented a path string, so this is where a traversal
+            # attempt ("../../etc/passwd"), an absolute path or an unreadable
+            # file lands. safe_path has already refused it — the only question
+            # left is whether that refusal ends the user's turn, and it must
+            # not: they still have the model's answer, and a forced call that
+            # cannot be made is exactly the old behaviour.
+            log.info("forced write: cannot read %s: %s", path, e)
+            return None
+
+        if current is None or len(block) >= len(current) * WHOLE_FILE_RATIO:
+            # A new file, or a block big enough to plausibly BE the file.
+            log.info("forced write_file for %s after the model only printed it", path)
+            return {"name": "write_file", "arguments": {"path": path, "content": block}}
+
+        if edit is None:
+            return None
+        try:
+            args = await self._llm.chat_json(
+                model,
+                [*history, {"role": "user", "content": FORCE_EDIT_PROMPT.format(path=path)}],
+                edit.Args.model_json_schema(),
+                timeout_s=FORCE_EDIT_TIMEOUT_S,
+            )
+        except Exception as e:
+            log.info("forced edit failed for %s: %s", path, e)
+            return None
+        if not isinstance(args, dict) or not args.get("old_text"):
+            return None
+        # The path is the one already resolved and read, not whatever the second
+        # call decided to repeat. Two chances to name the file is two chances to
+        # name a different one.
+        args["path"] = path
+        log.info("forced edit_file for %s: the printed block was a fragment", path)
+        return {"name": "edit_file", "arguments": args}
 
     async def _execute_one(
         self, call: dict[str, Any], mode: TaskMode, ctx: ToolContext, emit: Emit

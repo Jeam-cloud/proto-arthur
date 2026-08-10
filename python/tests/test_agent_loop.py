@@ -9,6 +9,7 @@ from agent.loop import (
     strip_tool_call_json,
 )
 from agent.registry import ToolRegistry
+from coding.changeset import ChangeSet
 from core import events
 from security.approvals import ApprovalBroker
 from security.audit import AuditLog
@@ -18,6 +19,7 @@ from tests.fakes import (
     ConfirmEchoTool,
     CrashTool,
     EchoTool,
+    EditFileTool,
     ExternalTool,
     FakeLLM,
     FakeScanner,
@@ -572,84 +574,163 @@ class TestForcedToolCall:
 
 
 class TestForceWriteAfterPrintedFile:
-    """Observed failure: asked to recolor login.css, the model read the file,
-    then printed a whole updated CSS file into the CHAT and stopped. The user
-    said "go ahead, I authorize it" and got the identical block printed again
-    — nothing was ever staged, because _forced_tool_call's PICK step offers
-    "none" as an answer, and a model that just showed the user a finished file
-    honestly believes that WAS the deliverable. This closes that gap: a
-    qualifying block goes straight to write_file, no "none" on offer."""
+    """Observed failure, twice, verbatim from real sessions: asked to recolour
+    login.css, the model read the file, printed CSS into the CHAT, and stopped.
+    The user said "I authorize you, apply it" and got the same block printed
+    again. Nothing was ever staged.
 
-    BLOCK = "\n".join(f"line {i}" for i in range(10))
+    `_forced_tool_call` cannot rescue this, because its PICK step offers "none"
+    as a legal answer and a model that just showed the user a finished file
+    honestly believes that WAS the deliverable.
 
-    async def test_a_printed_file_becomes_a_real_write(self, db, settings):
+    The hard part is not forcing the call — it is telling a WHOLE FILE from an
+    EXCERPT. In the second session the model printed only the two rules it
+    changed; writing that as the file would have deleted sixty lines of working
+    CSS, including the background image the user had explicitly asked to keep.
+    """
+
+    # Stands in for a real file: long enough that an excerpt of it is obviously
+    # an excerpt.
+    FILE = "\n".join(f"line {i}" for i in range(40))
+    WHOLE = "\n".join(f"changed {i}" for i in range(40))
+    EXCERPT = "\n".join(f"changed {i}" for i in range(6))
+
+    @staticmethod
+    def code_ctx(tmp_path, contents=None):
+        """A ToolContext with a real changeset over a real folder — the forced
+        write reads the current file to decide rewrite-vs-fragment, so a bare
+        context would skip the interesting half of this class."""
+        root = tmp_path / "proj"
+        root.mkdir(exist_ok=True)
+        for name, text in (contents or {}).items():
+            (root / name).write_text(text)
+        return ToolContext(conversation_id="conv1", workspace_root=str(root),
+                           changes=ChangeSet(root=str(root)))
+
+    async def test_a_printed_file_becomes_a_real_write(self, db, settings, tmp_path):
         tool = WriteFileTool()
         llm = FakeLLM([
-            {"tokens": [f"Here's the updated CSS:\n```css\n{self.BLOCK}\n```\nLet me know!"]},
+            {"tokens": [f"Here's the updated CSS:\n```css\n{self.WHOLE}\n```\nLet me know!"]},
             {"tokens": ["Done — I've updated login.css."]},
         ])
-        llm.json_turns = [{"path": "app/static/login.css", "content": self.BLOCK}]
+        llm.json_turns = [{"path": "login.css"}]
         loop, _ = make_loop(db, settings, llm, [tool])
-        text = await loop.run("m", [], TaskMode.CODE, CTX, CollectingEmit())
-        assert tool.writes == [("app/static/login.css", self.BLOCK)]
+        ctx = self.code_ctx(tmp_path, {"login.css": self.FILE})
+        text = await loop.run("m", [], TaskMode.CODE, ctx, CollectingEmit())
+
+        assert [p for p, _ in tool.writes] == ["login.css"]
+        assert tool.writes[0][1].rstrip("\n") == self.WHOLE
         assert text.endswith("Done — I've updated login.css.")
 
-    async def test_no_pick_step_goes_straight_to_the_tools_own_schema(self, db, settings):
-        """Unlike _forced_tool_call (name from an enum, THEN args -- two
-        chat_json calls), there is only one legal tool once a qualifying block
-        exists, so the very first forced call already asks for write_file's
-        own arguments -- no "which tool did you mean" round trip first."""
-        tool = WriteFileTool()
-        llm = FakeLLM([
-            {"tokens": [f"```css\n{self.BLOCK}\n```"]},
-            {"tokens": ["done"]},
-        ])
-        llm.json_turns = [{"path": "app/static/login.css", "content": self.BLOCK}]
-        loop, _ = make_loop(db, settings, llm, [tool])
-        await loop.run("m", [], TaskMode.CODE, CTX, CollectingEmit())
-        first_schema_call = next(c for c in llm.calls if "schema" in c)
-        assert "tool" not in first_schema_call["schema"].get("properties", {})
-        assert "path" in first_schema_call["schema"]["properties"]
+    async def test_it_never_asks_the_model_to_re_emit_the_file(self, db, settings, tmp_path):
+        """THE BUG THIS FIXES. The first version asked for the whole file back
+        as a JSON string through constrained decoding. An 80-line file emitted
+        character-by-character through a grammar does not finish inside the
+        timeout on a small local model — so the call raised, recovery returned
+        None, and the turn ended having done nothing at all.
 
-    async def test_a_shortened_reproduction_is_replaced_by_the_original_block(self, db, settings):
-        """Small models happily shorten a second reproduction ("... rest
-        unchanged ...") without meaning to lose anything. The block the model
-        already committed to on screen is trusted over that second pass."""
+        Only the path is ever asked for; the content comes from the block that
+        is already on screen."""
         tool = WriteFileTool()
         llm = FakeLLM([
-            {"tokens": [f"```css\n{self.BLOCK}\n```"]},
+            {"tokens": [f"```css\n{self.WHOLE}\n```"]},
             {"tokens": ["done"]},
         ])
-        llm.json_turns = [{"path": "app/static/login.css", "content": "/* rest unchanged */"}]
+        llm.json_turns = [{"path": "login.css"}]
         loop, _ = make_loop(db, settings, llm, [tool])
-        await loop.run("m", [], TaskMode.CODE, CTX, CollectingEmit())
-        # The captured block includes the newline the model put right before
-        # closing the fence -- an artifact of how the block was extracted,
-        # not a lost line, so it's compared against the raw capture.
-        path, content = tool.writes[0]
-        assert path == "app/static/login.css"
-        assert content.rstrip("\n") == self.BLOCK
+        await loop.run("m", [], TaskMode.CODE,
+                       self.code_ctx(tmp_path, {"login.css": self.FILE}), CollectingEmit())
+
+        asked = next(c["schema"] for c in llm.calls if "schema" in c)
+        assert list(asked["properties"]) == ["path"]   # no `content`, no `tool` enum
+
+    async def test_an_excerpt_never_replaces_the_whole_file(self, db, settings, tmp_path):
+        """THE DESTRUCTIVE CASE. Printing just the rules you changed is normal,
+        correct model behaviour. Reading that as a replacement would be our bug,
+        and it would silently delete the rest of the user's file."""
+        write, edit = WriteFileTool(), EditFileTool()
+        llm = FakeLLM([
+            {"tokens": [f"Change these two rules:\n```css\n{self.EXCERPT}\n```"]},
+            {"tokens": ["done"]},
+        ])
+        llm.json_turns = [
+            {"path": "login.css"},
+            {"path": "login.css", "old_text": "line 3", "new_text": "changed 3"},
+        ]
+        loop, _ = make_loop(db, settings, llm, [write, edit])
+        await loop.run("m", [], TaskMode.CODE,
+                       self.code_ctx(tmp_path, {"login.css": self.FILE}), CollectingEmit())
+
+        assert write.writes == []                        # nothing was flattened
+        assert edit.edits == [("login.css", "line 3", "changed 3")]
+
+    async def test_a_brand_new_file_is_written_even_though_it_is_short(
+        self, db, settings, tmp_path,
+    ):
+        """The size guard compares against what is already there. With nothing
+        there, any block is the whole file."""
+        tool = WriteFileTool()
+        block = "\n".join(f"new {i}" for i in range(6))
+        llm = FakeLLM([{"tokens": [f"```py\n{block}\n```"]}, {"tokens": ["done"]}])
+        llm.json_turns = [{"path": "brand_new.py"}]
+        loop, _ = make_loop(db, settings, llm, [tool])
+        await loop.run("m", [], TaskMode.CODE, self.code_ctx(tmp_path), CollectingEmit())
+        assert [p for p, _ in tool.writes] == ["brand_new.py"]
+
+    async def test_the_edit_keeps_the_path_already_resolved(self, db, settings, tmp_path):
+        """Two chances to name the file is two chances to name a different one,
+        and the second call has no better information than the first."""
+        write, edit = WriteFileTool(), EditFileTool()
+        llm = FakeLLM([{"tokens": [f"```css\n{self.EXCERPT}\n```"]}, {"tokens": ["done"]}])
+        llm.json_turns = [
+            {"path": "login.css"},
+            {"path": "SOMETHING_ELSE.css", "old_text": "line 3", "new_text": "x"},
+        ]
+        loop, _ = make_loop(db, settings, llm, [write, edit])
+        await loop.run("m", [], TaskMode.CODE,
+                       self.code_ctx(tmp_path, {"login.css": self.FILE}), CollectingEmit())
+        assert edit.edits[0][0] == "login.css"
+
+    async def test_a_path_outside_the_folder_is_refused(self, db, settings, tmp_path):
+        write = WriteFileTool()
+        llm = FakeLLM([{"tokens": [f"```css\n{self.WHOLE}\n```"]}])
+        llm.json_turns = [{"path": "../../etc/passwd"}, {"tool": "none"}]
+        loop, _ = make_loop(db, settings, llm, [write])
+        await loop.run("m", [], TaskMode.CODE,
+                       self.code_ctx(tmp_path, {"login.css": self.FILE}), CollectingEmit())
+        assert write.writes == []
 
     async def test_falls_back_to_the_general_picker_without_write_file(self, db, settings):
         """No write_file granted this mode -> nothing to force; the ordinary
         PICK-with-"none" flow still runs so a genuinely toolless turn isn't
         broken by this check."""
         tool = EchoTool()
-        llm = FakeLLM([{"tokens": [f"```css\n{self.BLOCK}\n```"]}])
+        llm = FakeLLM([{"tokens": [f"```css\n{self.WHOLE}\n```"]}])
         llm.json_turns = [{"tool": "none"}]
         loop, _ = make_loop(db, settings, llm, [tool])
         await loop.run("m", [], TaskMode.GENERAL, CTX, CollectingEmit())
         schema = next(c["schema"] for c in llm.calls if "schema" in c)
         assert schema["properties"]["tool"]["enum"] == ["echo", "none"]
 
-    async def test_a_short_block_does_not_trigger_forcing(self, db, settings):
+    async def test_no_changeset_means_no_forcing(self, db, settings):
+        """Without one there is nothing to stage into AND no way to read the
+        current file — so no way to tell a rewrite from an excerpt. Refusing to
+        guess is the point of the guard."""
+        tool = WriteFileTool()
+        llm = FakeLLM([{"tokens": [f"```css\n{self.WHOLE}\n```"]}])
+        llm.json_turns = [{"tool": "none"}]
+        loop, _ = make_loop(db, settings, llm, [tool])
+        await loop.run("m", [], TaskMode.CODE, CTX, CollectingEmit())
+        assert tool.writes == []
+
+    async def test_a_short_block_does_not_trigger_forcing(self, db, settings, tmp_path):
         """A small inline example (below _MIN_BLOCK_LINES) is not a file the
         user asked to save, and must not be forced into a write."""
         tool = WriteFileTool()
         llm = FakeLLM([{"tokens": ["```css\n.a { color: red; }\n```"]}])
         llm.json_turns = [{"tool": "none"}]
         loop, _ = make_loop(db, settings, llm, [tool])
-        await loop.run("m", [], TaskMode.CODE, CTX, CollectingEmit())
+        await loop.run("m", [], TaskMode.CODE, self.code_ctx(tmp_path), CollectingEmit())
         assert tool.writes == []
 
 

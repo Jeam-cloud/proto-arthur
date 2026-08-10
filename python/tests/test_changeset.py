@@ -8,7 +8,7 @@ import pytest
 from coding.changeset import ChangeSet, ChangeSetStore
 from core.errors import PathTraversalError
 from tools.base import ToolContext
-from tools.coding import DeleteFileTool, EditFileTool, ReadFileTool, WriteFileTool
+from tools.coding import DeleteFileTool, EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 
 
 @pytest.fixture
@@ -158,6 +158,27 @@ class TestStore:
         store = ChangeSetStore()
         store.get("c1", workspace).stage_write("x.txt", "x")
         assert store.get("c2", workspace).is_empty()
+
+
+class TestWrongToolForTheJob:
+    """A tool error is where the model decides what to do next, so it has to say
+    what went wrong PRECISELY. Observed: list_files was called on
+    'app/static/login.css', got a generic "No such folder", and the model
+    concluded the file did not exist — then asked the user to confirm it was
+    there. The path was right and the file was right in front of it; only the
+    tool was wrong."""
+
+    async def test_a_file_passed_to_list_files_says_so(self, cs):
+        res = await ListDirTool().execute(ListDirTool.Args(path="src/app.py"), ctx_for(cs))
+        assert not res.ok
+        assert "is a file" in res.content and "read_file" in res.content
+        # It must NOT read as "missing" — that is the wrong conclusion to hand a
+        # model that has already located the file.
+        assert "No such" not in res.content
+
+    async def test_a_genuinely_missing_folder_still_says_missing(self, cs):
+        res = await ListDirTool().execute(ListDirTool.Args(path="nope"), ctx_for(cs))
+        assert not res.ok and "No such folder" in res.content
 
 
 class TestTools:

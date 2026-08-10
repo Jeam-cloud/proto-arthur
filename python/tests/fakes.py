@@ -170,6 +170,33 @@ class WriteFileTool(Tool):
         return ToolResult(ok=True, content=f"staged {args.path}", summary=f"wrote {args.path}")
 
 
+class EditFileArgs(BaseModel):
+    path: str = Field(description="Path relative to the workspace folder")
+    old_text: str = Field(min_length=1)
+    new_text: str = ""
+    replace_all: bool = False
+
+
+class EditFileTool(Tool):
+    """Stand-in for tools.coding.EditFileTool: same name and Args shape, no real
+    changeset I/O. Exists so the agent loop can be tested on the FRAGMENT path,
+    where a printed excerpt has to become an edit rather than a whole-file
+    rewrite."""
+
+    name = "edit_file"
+    description = "Replace an exact snippet in a file."
+    Args = EditFileArgs
+    risk = Risk.SAFE
+    modes = {TaskMode.CODE}
+
+    def __init__(self):
+        self.edits: list[tuple[str, str, str]] = []
+
+    async def execute(self, args: EditFileArgs, ctx: ToolContext) -> ToolResult:
+        self.edits.append((args.path, args.old_text, args.new_text))
+        return ToolResult(ok=True, content=f"edited {args.path}", summary=f"edited {args.path}")
+
+
 class CollectingEmit:
     """Callable emit() that records every SSE event for assertions."""
 

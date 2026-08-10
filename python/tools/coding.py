@@ -141,7 +141,11 @@ class ListDirArgs(BaseModel):
 
 class ListDirTool(Tool):
     name = "list_files"
-    description = "List files and folders in the workspace."
+    description = (
+        "List what is inside a FOLDER of the workspace (use '.' for the top "
+        "level). Takes a folder, never a file — to see what is in a file, use "
+        "read_file."
+    )
     Args = ListDirArgs
     risk = Risk.SAFE
     modes = {TaskMode.CODE}
@@ -152,6 +156,20 @@ class ListDirTool(Tool):
     async def execute(self, args: ListDirArgs, ctx: ToolContext) -> ToolResult:
         p = safe_path(ctx.workspace_root, args.path)
         if not p.is_dir():
+            # POINTING A FILE AT THE WRONG TOOL IS ITS OWN ERROR.
+            #
+            # Observed: the model called list_files on 'app/static/login.css',
+            # got "No such folder", and concluded the file did not exist — then
+            # asked the user to confirm it was there. The path was right and the
+            # file was right in front of it; only the tool was wrong. A generic
+            # not-found sends the model looking for something it has already
+            # found.
+            if p.is_file():
+                return ToolResult(
+                    ok=False, summary="that's a file", detail=args.path.rsplit("/", 1)[-1],
+                    content=(f"{args.path} is a file, not a folder — it exists. "
+                             "Call read_file on it to see its contents."),
+                )
             return ToolResult(
                 ok=False, summary="not found", detail=args.path,
                 content=(f"No such folder: {args.path}. Use find_files to locate what you are "
