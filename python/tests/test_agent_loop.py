@@ -5,6 +5,7 @@ import asyncio
 from agent.loop import (
     MAX_FORCED,
     AgentLoop,
+    claims_a_file_change,
     recover_text_tool_call,
     strip_tool_call_json,
 )
@@ -732,6 +733,79 @@ class TestForceWriteAfterPrintedFile:
         loop, _ = make_loop(db, settings, llm, [tool])
         await loop.run("m", [], TaskMode.CODE, self.code_ctx(tmp_path), CollectingEmit())
         assert tool.writes == []
+
+
+class TestForceAfterAClaimedChange:
+    """THE FAILURE THIS EXISTS FOR, verbatim: the user said "go ahead apply it,
+    no need to show the code to me", the model obliged — prose only, no fenced
+    block — and answered "Changes staged for review." Nothing had been staged;
+    it was echoing write_file's own description back.
+
+    Recovery used to require a printed code block, which quietly made the safety
+    net depend on the model being verbose. So the one instruction that most
+    clearly means "just do it" was the one instruction that switched it off."""
+
+    FILE = "\n".join(f"line {i}" for i in range(40))
+
+    @staticmethod
+    def code_ctx(tmp_path, contents=None):
+        root = tmp_path / "proj"
+        root.mkdir(exist_ok=True)
+        for name, text in (contents or {}).items():
+            (root / name).write_text(text)
+        return ToolContext(conversation_id="conv1", workspace_root=str(root),
+                           changes=ChangeSet(root=str(root)))
+
+    async def test_a_claim_with_no_code_block_still_forces_a_real_edit(
+        self, db, settings, tmp_path,
+    ):
+        write, edit = WriteFileTool(), EditFileTool()
+        llm = FakeLLM([
+            {"tokens": ["Sure, I'll edit login.css with the new colors. "
+                        "Changes staged for review."]},
+            {"tokens": ["done"]},
+        ])
+        llm.json_turns = [
+            {"path": "login.css"},
+            {"path": "login.css", "old_text": "line 3", "new_text": "changed 3"},
+        ]
+        loop, _ = make_loop(db, settings, llm, [write, edit])
+        await loop.run("m", [], TaskMode.CODE,
+                       self.code_ctx(tmp_path, {"login.css": self.FILE}), CollectingEmit())
+
+        assert edit.edits == [("login.css", "line 3", "changed 3")]
+        # Nothing was printed, so there is no content to write wholesale — and
+        # inventing one would be exactly the destructive guess this avoids.
+        assert write.writes == []
+
+    async def test_a_stated_plan_is_not_a_claim(self, db, settings, tmp_path):
+        """"I'll edit login.css" is future tense. Forcing there would invent
+        work off a sentence the model had not finished acting on."""
+        write, edit = WriteFileTool(), EditFileTool()
+        llm = FakeLLM([{"tokens": ["I'll edit login.css next, once you confirm."]}])
+        llm.json_turns = [{"tool": "none"}]
+        loop, _ = make_loop(db, settings, llm, [write, edit])
+        await loop.run("m", [], TaskMode.CODE,
+                       self.code_ctx(tmp_path, {"login.css": self.FILE}), CollectingEmit())
+        assert write.writes == [] and edit.edits == []
+
+    async def test_an_ordinary_answer_is_not_a_claim(self, db, settings, tmp_path):
+        write, edit = WriteFileTool(), EditFileTool()
+        llm = FakeLLM([{"tokens": ["That file sets the login page colours."]}])
+        llm.json_turns = [{"tool": "none"}]
+        loop, _ = make_loop(db, settings, llm, [write, edit])
+        await loop.run("m", [], TaskMode.CODE,
+                       self.code_ctx(tmp_path, {"login.css": self.FILE}), CollectingEmit())
+        assert write.writes == [] and edit.edits == []
+
+    def test_the_phrases_it_catches_and_the_ones_it_leaves(self):
+        assert claims_a_file_change("Changes staged for review.")
+        assert claims_a_file_change("I've updated the file.")
+        assert claims_a_file_change("The file has been updated.")
+        assert claims_a_file_change("I have applied the changes")
+        assert not claims_a_file_change("I'll edit login.css")
+        assert not claims_a_file_change("Shall I update it?")
+        assert not claims_a_file_change("Here is what the file does.")
 
 
 class TestCapabilityNote:

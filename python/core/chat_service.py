@@ -25,7 +25,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from agent.loop import AgentLoop
+from agent.loop import AgentLoop, claims_a_file_change
 from core import events
 from core.code_apply import apply_changeset
 from core.config import Settings
@@ -324,10 +324,21 @@ class ChatService:
         would have revealed it: there is no diff.
         """
         blocks = self._CODE_BLOCK.findall(text or "")
-        if not any(len(b.splitlines()) >= self._MIN_BLOCK_LINES for b in blocks):
+        printed = any(len(b.splitlines()) >= self._MIN_BLOCK_LINES for b in blocks)
+        # A CLAIM COUNTS AS MUCH AS A PRINTOUT, and is worse when it stands
+        # alone. Observed: told "just apply it, no need to show me the code",
+        # the model answered "Changes staged for review." and nothing had been.
+        # With no code block there was no warning either, so the reply the user
+        # had least reason to doubt was the one that got no contradiction.
+        claimed = claims_a_file_change(text)
+        if not printed and not claimed:
             return
         await emit(events.STATUS, {
-            "text": ("Nothing was staged this turn — that code was written into the chat, "
+            "text": ("Nothing reached your files this turn — Arthur described the change "
+                     "but never made it. Ask it to edit the file again, or check the "
+                     "folder is still set."
+                     if claimed and not printed else
+                     "Nothing was staged this turn — that code was written into the chat, "
                      "not into your files. Ask Arthur to make the change with edit_file so "
                      "you get a diff to review."),
         })

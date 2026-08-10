@@ -1,14 +1,14 @@
-"""A Code turn ends by WRITING, not by asking.
+"""Auto-apply: a Code turn that ends by WRITING rather than by asking.
 
-The old flow stopped at a review panel and waited for Apply. That put the cost
-on every good edit to catch the rare bad one, and — the failure that actually
-bit — it let "Arthur says it edited login.css" and "login.css changed" be two
-separate facts, which is exactly what a small local model gets wrong.
+Off by default — the review gate is back on, by request, because while the model
+was still failing to emit tool calls an empty review panel was useful evidence
+that nothing had been called. But the path is fully built and fully supported,
+so it stays fully tested: the file really changes, the receipt names it, the
+undo works, and the "nothing was staged" warning does not fire on a turn that
+plainly did stage something.
 
-Now the turn applies its own changeset and reports what landed, with the undo
-snapshot as the safety net. These tests pin the parts a user would notice: the
-file really changes, the receipt names it, and the "nothing was staged" warning
-does not fire on a turn that plainly did stage something.
+The `auto_apply` fixture is what turns the gate off. Tests without it are
+exercising the default.
 """
 
 from __future__ import annotations
@@ -26,6 +26,19 @@ def project(tmp_path):
     root.mkdir()
     (root / "login.css").write_text(".label { background: #FE5654; }\n")
     return root
+
+
+@pytest.fixture
+def auto_apply(app_state, monkeypatch):
+    """Turn the review gate OFF for this test.
+
+    It is on by default (see `code_review_before_apply` in core/config.py) --
+    asked for explicitly while tool-call emission was still unreliable, because
+    an empty review panel is visible evidence that nothing was called. Auto-apply
+    remains fully supported, so it stays fully tested.
+    """
+    monkeypatch.setattr(app_state.settings, "code_review_before_apply", False)
+    return app_state
 
 
 async def run_turn(app_state, project, turns, user_text="make it blue"):
@@ -48,22 +61,22 @@ def write_turns(path="login.css", content=".label { background: #1E88E5; }\n"):
 
 
 class TestTheEditLands:
-    async def test_the_file_changes_without_anyone_clicking_apply(self, app_state, project):
+    async def test_the_file_changes_without_anyone_clicking_apply(self, auto_apply, app_state, project):
         await run_turn(app_state, project, write_turns())
         assert (project / "login.css").read_text() == ".label { background: #1E88E5; }\n"
 
-    async def test_the_changeset_is_empty_afterwards(self, app_state, project):
+    async def test_the_changeset_is_empty_afterwards(self, auto_apply, app_state, project):
         """Nothing is left pending, so the panel cannot show applied work as if
         it were still a decision waiting to be made."""
         cid, _ = await run_turn(app_state, project, write_turns())
         assert app_state.changesets.peek(cid).is_empty()
 
-    async def test_it_announces_what_it_wrote(self, app_state, project):
+    async def test_it_announces_what_it_wrote(self, auto_apply, app_state, project):
         _, emit = await run_turn(app_state, project, write_turns())
         applied = emit.of(events.CHANGES_APPLIED)
         assert applied and applied[0]["applied"] == ["login.css"]
 
-    async def test_the_receipt_names_the_file(self, app_state, project):
+    async def test_the_receipt_names_the_file(self, auto_apply, app_state, project):
         """The receipt is written from the apply result, so it cannot describe
         work that did not happen — which is the whole reason it replaced a
         model-authored 'Done!'."""
@@ -71,7 +84,7 @@ class TestTheEditLands:
         assert "login.css" in emit.of(events.CHANGES_APPLIED)[0]["receipt"]["content"]
 
     async def test_the_receipt_is_in_the_transcript_but_not_the_prompt(
-        self, app_state, project,
+        self, auto_apply, app_state, project,
     ):
         cid, _ = await run_turn(app_state, project, write_turns())
         roles = [m["role"] for m in await app_state.conversations.messages(cid)]
@@ -79,19 +92,19 @@ class TestTheEditLands:
         history = await app_state.conversations.history_for_model(cid)
         assert all(m["role"] != "receipt" for m in history)
 
-    async def test_an_undo_is_available_immediately(self, app_state, project):
+    async def test_an_undo_is_available_immediately(self, auto_apply, app_state, project):
         cid, emit = await run_turn(app_state, project, write_turns())
         assert emit.of(events.CHANGES_APPLIED)[0]["undo_id"]
         assert app_state.undos.latest(cid) is not None
 
-    async def test_undoing_restores_the_original(self, app_state, project):
+    async def test_undoing_restores_the_original(self, auto_apply, app_state, project):
         cid, _ = await run_turn(app_state, project, write_turns())
         app_state.undos.undo(app_state.undos.latest(cid)["id"])
         assert (project / "login.css").read_text() == ".label { background: #FE5654; }\n"
 
 
 class TestItStillTellsTheTruth:
-    async def test_no_nothing_was_staged_warning_after_a_real_edit(self, app_state, project):
+    async def test_no_nothing_was_staged_warning_after_a_real_edit(self, auto_apply, app_state, project):
         """REGRESSION GUARD. Auto-apply empties the changeset, so a naive
         "is it still the size it was?" check reads as "nothing staged" on every
         successful edit — telling the user nothing reached their files at the
@@ -110,7 +123,7 @@ class TestItStillTellsTheTruth:
         assert not emit.of(events.CHANGES_APPLIED)
 
     async def test_a_conflicted_file_is_left_pending_and_reported(
-        self, app_state, project, monkeypatch,
+        self, auto_apply, app_state, project, monkeypatch,
     ):
         """A file the user changed underneath Arthur is skipped, not clobbered.
         It stays in the panel, because a skipped file that vanishes silently
@@ -131,14 +144,16 @@ class TestItStillTellsTheTruth:
         assert emit.of(events.CHANGES_UPDATED)          # still on screen to deal with
 
 
-class TestReviewFirstIsStillAvailable:
-    """"Nothing lands without my say-so" is a legitimate way to want to work,
-    and it costs one branch to honour it."""
+class TestReviewFirstIsTheDefault:
+    """Nothing lands without the user's say-so unless they turn that off.
 
-    async def test_nothing_is_written_when_the_setting_is_on(
-        self, app_state, project, monkeypatch,
-    ):
-        monkeypatch.setattr(app_state.settings, "code_review_before_apply", True)
+    The default was briefly the other way. It came back because while the model
+    was still failing to emit tool calls at all, the review panel was doing a
+    second job: an EMPTY panel is visible evidence that nothing was called,
+    which is precisely the fact a confident "Changes staged for review." hides.
+    """
+
+    async def test_nothing_is_written_by_default(self, app_state, project):
         cid, emit = await run_turn(app_state, project, write_turns())
 
         assert (project / "login.css").read_text() == ".label { background: #FE5654; }\n"
@@ -146,8 +161,8 @@ class TestReviewFirstIsStillAvailable:
         assert emit.of(events.CHANGES_UPDATED)[0]["files"] == 1
         assert not app_state.changesets.peek(cid).is_empty()
 
-    async def test_the_default_is_off(self, settings):
-        assert settings.code_review_before_apply is False
+    async def test_the_default_is_on(self, settings):
+        assert settings.code_review_before_apply is True
 
     async def test_the_toggle_takes_effect_without_a_restart(self, app_state, settings):
         """It is stored in the DB but READ off the Settings object every turn,

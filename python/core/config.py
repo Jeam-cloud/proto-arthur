@@ -63,17 +63,20 @@ class Settings(BaseSettings):
 
     # WHERE THE REVIEW GATE SITS IN CODE MODE.
     #
-    # False (default) = Arthur writes the files when the turn ends and shows a
-    # receipt with an Undo button. True = the old behaviour, where edits sit in
-    # the review panel until the user clicks Apply.
+    # True (default) = edits sit in the review panel until the user clicks
+    # Apply. False = Arthur writes the files when the turn ends and shows a
+    # receipt with an Undo button (see coding/undo.py, which stays wired up
+    # either way -- an applied change is undoable no matter which route it took).
     #
-    # The default flipped because the gate was paying for itself in the wrong
-    # currency: every good edit cost a click to catch the rare bad one, and a
-    # prompt answered forty times a day stops being read. The protection did not
-    # go away, it moved to the other side of the write -- see coding/undo.py.
-    # Kept as a setting because "nothing lands without my say-so" is a
-    # legitimate way to want to work, and it costs one branch to honour it.
-    code_review_before_apply: bool = False
+    # WHY THIS IS TRUE. It was briefly False, on the reasoning that a gate
+    # clicked forty times a day stops being read and Undo protects just as well
+    # for less friction. That reasoning still holds, and it was the wrong change
+    # to make FIRST: while the model was still failing to emit tool calls at all,
+    # removing the review screen removed the place where "Arthur said it edited
+    # the file" and "the file changed" could be compared. rian asked for the
+    # gate back, and until emission is reliable the gate is also a diagnostic --
+    # an empty panel is visible evidence that nothing was called.
+    code_review_before_apply: bool = True
     approval_timeout_s: float = 120.0  # unanswered confirmation = denied
     tool_output_max_chars: int = 16_000
 

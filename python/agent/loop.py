@@ -414,6 +414,38 @@ def _largest_code_block(text: str) -> str | None:
     return max(blocks, key=len) if blocks else None
 
 
+# A reply ASSERTING that a file was changed.
+#
+# WHY THIS EXISTS SEPARATELY FROM THE CODE-BLOCK CHECK. Recovery used to trigger
+# only when the model printed a file into the chat, which quietly made it depend
+# on the model being verbose. Observed: the user said "just apply it, no need to
+# show me the code", the model obliged — prose only, no fenced block — and
+# answered "Changes staged for review." Nothing had been staged; it was echoing
+# write_file's own description back. No block meant no recovery, so the one
+# phrasing that most clearly means "I did the thing" was the one phrasing that
+# turned the safety net off.
+#
+# Past tense only: "I'll edit login.css" is a plan and must not match, while
+# "I've updated" and "changes staged" are claims of completed work. `staged` on
+# its own is included deliberately — it is OUR vocabulary, from our tool
+# descriptions, and a model using it is describing our machinery rather than
+# reporting anything it observed.
+_CLAIMED_CHANGE = re.compile(
+    r"\bstaged\b"
+    r"|\bi(?:'ve| have)?\s+(?:just\s+)?(?:updated|changed|edited|modified|applied|saved|"
+    r"rewritten|replaced)\b"
+    r"|\bchanges?\s+(?:have\s+been\s+|has\s+been\s+|were\s+|was\s+|are\s+|is\s+)?"
+    r"(?:staged|applied|saved|made|written)\b"
+    r"|\b(?:file|it)\s+(?:has\s+been|have\s+been|is\s+now|was|were)\s+"
+    r"(?:updated|changed|edited|saved|written|modified)\b",
+    re.IGNORECASE,
+)
+
+
+def claims_a_file_change(text: str) -> bool:
+    return bool(_CLAIMED_CHANGE.search(text or ""))
+
+
 # How many times one turn may be forced into a structured call. Two is enough
 # to convert a plan into action without letting a model that genuinely has
 # nothing to run spin.
@@ -433,8 +465,8 @@ MAX_FORCED = 2
 # to on screen is a better source for the content than a second attempt at
 # reproducing it, which small models quietly shorten.
 FORCE_PATH_PROMPT = (
-    "You just printed file contents into the chat instead of saving them — the "
-    "user's file is UNCHANGED, no matter what you said. Which file were you "
+    "You did not actually call a tool, so the user's file is UNCHANGED — "
+    "whatever you printed or said about it did not happen. Which file were you "
     "editing? Answer with its path relative to the project folder."
 )
 
@@ -628,9 +660,14 @@ class AgentLoop:
                     #
                     # So this case is checked and handled before the general
                     # picker ever gets a chance to offer the exit.
+                    # EITHER SIGNAL IS ENOUGH: the model printed a file, or it
+                    # said it changed one. Requiring the code block made
+                    # recovery depend on the model being verbose, so "just
+                    # apply it, don't show me the code" switched the safety net
+                    # off — see _CLAIMED_CHANGE.
                     block = _largest_code_block(text)
                     call = (await self._force_write(model, messages, text, tools, block, ctx)
-                            if block else None)
+                            if block or claims_a_file_change(text) else None)
                     if call is None:
                         call = await self._forced_tool_call(model, messages, text, tools)
                     # NEVER FORCE A CALL THAT ALREADY RAN THIS TURN.
@@ -749,7 +786,7 @@ class AgentLoop:
 
     async def _force_write(
         self, model: str, messages: list[dict[str, Any]], said: str,
-        tools: list[Any], block: str, ctx: ToolContext,
+        tools: list[Any], block: str | None, ctx: ToolContext,
     ) -> dict[str, Any] | None:
         """Turn code printed into the chat into a real file change.
 
@@ -811,7 +848,11 @@ class AgentLoop:
             log.info("forced write: cannot read %s: %s", path, e)
             return None
 
-        if current is None or len(block) >= len(current) * WHOLE_FILE_RATIO:
+        # NO BLOCK AT ALL means the model asserted the change in prose ("Changes
+        # staged for review") without showing anything. There is no content to
+        # write, so the only honest move is to make it produce a real edit --
+        # which it can, because it read the file earlier this turn.
+        if block is not None and (current is None or len(block) >= len(current) * WHOLE_FILE_RATIO):
             # A new file, or a block big enough to plausibly BE the file.
             log.info("forced write_file for %s after the model only printed it", path)
             return {"name": "write_file", "arguments": {"path": path, "content": block}}
