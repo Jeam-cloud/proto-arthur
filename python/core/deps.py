@@ -38,6 +38,7 @@ from tools.coding import (
     DeleteFileTool, EditFileTool, ListDirTool, ReadFileTool, RunPythonTool, WriteFileTool,
 )
 from tools.computer import ClickTool, OpenAppTool, PressKeysTool, ScreenshotTool, TypeTextTool
+from tools.interaction import AskUserTool
 from tools.email_service import (
     EmailListTool, EmailRouter, EmailSearchTool, EmailSendTool,
     SmtpImapBackend,
@@ -127,6 +128,7 @@ async def build_state(settings: Settings) -> AppState:
         SearchFilesTool(), FindFilesTool(), RunPythonTool(sandbox),
         OpenAppTool(), ScreenshotTool(), ClickTool(), TypeTextTool(), PressKeysTool(),
         EmailSendTool(email_router), EmailListTool(email_router), EmailSearchTool(email_router),
+        AskUserTool(),
     ):
         registry.register(tool)
 

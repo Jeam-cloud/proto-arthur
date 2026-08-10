@@ -18,6 +18,11 @@ TOOL_RESULT = "tool_result"        # {name, ok, summary, flagged}
 APPROVAL_REQUIRED = "approval_required"  # {id, tool, summary, args_preview}
 APPROVAL_RESOLVED = "approval_resolved"  # {id, approved}
 MEMORY_USED = "memory_used"        # {items: [{id, text}]}
+# The model asked the user a multiple-choice question and the turn ENDED. Its
+# own event rather than a status line because the UI has to render buttons and
+# because it is terminal: nothing else is coming until the person answers. The
+# answer is sent as an ordinary user message, so nothing downstream is special.
+ASK_USER = "ask_user"              # {question, options: [{label, description}], multi}
 TITLE = "title"                    # {conversation_id, title}
 ERROR = "error"                    # {code, message}
 DONE = "done"                      # {message_id, conversation_id}

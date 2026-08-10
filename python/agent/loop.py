@@ -412,6 +412,16 @@ def _with_capability_note(
             "Do not ask permission before using a tool. The app already asks the user "
             "whenever a confirmation is genuinely needed, so a question from you just "
             "stalls the work. Take the next step.\n"
+            # PERMISSION vs INFORMATION. The line above is right for "may I?" and
+            # wrong for "which one?", and a model given only the prohibition
+            # guesses. The distinction is only real because ask_user exists, so
+            # it is stated only when ask_user is actually granted.
+            + ("Asking for INFORMATION is different from asking permission: when the "
+               "request is genuinely ambiguous and guessing would waste the user's "
+               "time, call ask_user with 2-6 concrete options. A question written in "
+               "your reply cannot be answered — only that tool can.\n"
+               if "ask_user" in granted else "")
+            +
             "YOU are the one who runs these tools — the user cannot. Never write a plan "
             "that tells them which tool to use, never say 'let me know what you find', "
             "and never ask them to report a result back to you. If you catch yourself "
@@ -779,9 +789,10 @@ class AgentLoop:
                 ],
             })
 
+            asked = None
             for call in tool_calls:
                 executed.add(_call_key(call))
-                result_msg = await self._execute_one(call, mode, ctx, emit)
+                result_msg, result = await self._execute_one(call, mode, ctx, emit)
                 # A successful read is what unlocks rewriting that file. Keyed
                 # off the RESULT, not the request: read_file answers a miss with
                 # "No such file: …", which teaches the model nothing about the
@@ -791,6 +802,19 @@ class AgentLoop:
                     if isinstance(path, str):
                         seen_files.add(_seen_key(path))
                 messages.append(result_msg)
+                if result is not None and result.ask:
+                    asked = result.ask
+
+            # A QUESTION ENDS THE TURN.
+            #
+            # The model has nothing useful to do until the person answers, and a
+            # model that carries on after asking is a model that answered its own
+            # question — the original guessing failure in a politer costume. The
+            # answer arrives as the next user message, so the next turn picks it
+            # up as ordinary input with no special handling anywhere.
+            if asked:
+                await emit(events.ASK_USER, asked)
+                return "".join(final_text_parts)
 
         # Hitting the cap in Code mode is not the same event as hitting it
         # elsewhere. Everywhere else the turn just ends; here it can end with a
@@ -945,7 +969,7 @@ class AgentLoop:
                 {"name": "write_file",
                  "arguments": {"path": block.path, "content": block.content}},
                 mode, ctx, emit,
-            )
+            )   # result ignored: success is read back off the changeset below
             if block.path in changes.paths():
                 staged.append(block.path)
                 # Having written it, the model knows what is in it — so a
@@ -1057,7 +1081,14 @@ class AgentLoop:
 
     async def _execute_one(
         self, call: dict[str, Any], mode: TaskMode, ctx: ToolContext, emit: Emit
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], ToolResult | None]:
+        """(message for the model, the raw result).
+
+        The result comes back as well as the message because a couple of things
+        are decisions for the LOOP, not content for the model — ask_user ending
+        the turn is the current one. Returning it beats stashing state on self:
+        this method is re-entered for every call in a batch.
+        """
         name, raw_args = call["name"], call.get("arguments") or {}
 
         def tool_msg(content: str) -> dict[str, Any]:
@@ -1066,13 +1097,13 @@ class AgentLoop:
         tool = self._registry.get_granted(name, mode)
         if tool is None:
             await emit(events.TOOL_RESULT, {"name": name, "ok": False, "summary": "not available in this mode", "flagged": False})
-            return tool_msg(f"Error: tool '{name}' is not available in {mode.value} mode.")
+            return tool_msg(f"Error: tool '{name}' is not available in {mode.value} mode."), None
 
         try:
             args = tool.Args.model_validate(raw_args)
         except ValidationError as e:
             await emit(events.TOOL_RESULT, {"name": name, "ok": False, "summary": "invalid arguments", "flagged": False})
-            return tool_msg(f"Error: invalid arguments for '{name}': {e.errors(include_url=False)}. Retry with corrected arguments.")
+            return tool_msg(f"Error: invalid arguments for '{name}': {e.errors(include_url=False)}. Retry with corrected arguments."), None
 
         if tool.risk is Risk.CONFIRM:
             approval = self._approvals.create(
@@ -1094,7 +1125,7 @@ class AgentLoop:
                 return tool_msg(
                     f"The user declined to allow '{name}'. Do not retry it; "
                     "acknowledge and continue without this action."
-                )
+                ), None
             if resolution.edited_args is not None:
                 # The user rewrote the draft before sending it — e.g. reworded
                 # an email or fixed a typo'd address. Re-run it through the
@@ -1109,7 +1140,7 @@ class AgentLoop:
                     return tool_msg(
                         f"The user edited the arguments for '{name}' before approving, but the edit "
                         f"was invalid: {e.errors(include_url=False)}. The action was NOT taken."
-                    )
+                    ), None
 
         await emit(events.TOOL_START, {"name": name, "summary": tool.approval_summary(args)})
         try:
@@ -1117,7 +1148,7 @@ class AgentLoop:
         except Exception as e:  # a tool bug must not kill the chat stream
             log.exception("tool %s failed", name)
             await emit(events.TOOL_RESULT, {"name": name, "ok": False, "summary": str(e)[:200], "flagged": False})
-            return tool_msg(f"Error: '{name}' failed: {e}")
+            return tool_msg(f"Error: '{name}' failed: {e}"), None
 
         content, flagged = result.content, False
         if result.external:
@@ -1136,7 +1167,7 @@ class AgentLoop:
         msg = tool_msg(content)
         if result.images_b64:
             msg["images"] = result.images_b64  # multimodal models see screenshots
-        return msg
+        return msg, result
 
 
 def _preview(args: dict[str, Any], limit: int = 300) -> dict[str, Any]:
