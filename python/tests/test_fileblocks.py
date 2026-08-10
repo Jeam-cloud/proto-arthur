@@ -82,6 +82,47 @@ class TestParsing:
         assert parse_file_blocks(f"```app/a.css\n{CSS}\n```")[0].content == CSS + "\n"
 
 
+class TestCommentLabels:
+    """OBSERVED: asked to save a file, the model wrote ```python and put the
+    path in a comment on the first line of the body. It is a real convention —
+    arguably a nicer one, since the label survives being copied out of the chat
+    — and refusing it discards a correct answer over where the label sat."""
+
+    def test_a_hash_comment(self):
+        blocks = parse_file_blocks("```python\n# app/static/test_arthur.py\nprint('hi')\n```")
+        assert blocks[0].path == "app/static/test_arthur.py"
+
+    def test_a_css_comment(self):
+        blocks = parse_file_blocks(f"```css\n/* app/static/login.css */\n{CSS}\n```")
+        assert blocks[0].path == "app/static/login.css"
+
+    def test_a_slash_comment_and_an_html_comment(self):
+        assert parse_file_blocks("```js\n// src/main.js\nconst x = 1;\n```")[0].path == "src/main.js"
+        assert parse_file_blocks(
+            "```html\n<!-- templates/index.html -->\n<p>hi</p>\n```")[0].path == "templates/index.html"
+
+    def test_the_label_line_is_not_part_of_the_file(self):
+        """Kept, it would prepend a fresh copy of the filename on every round
+        trip — after three edits the file starts with three copies of its name."""
+        blocks = parse_file_blocks("```python\n# app/hello.py\nprint('hi')\n```")
+        assert blocks[0].content == "print('hi')\n"
+
+    def test_prose_about_a_file_is_not_a_label(self):
+        """"# fix the colours in login.css" is a sentence mentioning a file, not
+        a label naming one. Treating it as a label would write to a file nobody
+        asked for."""
+        assert parse_file_blocks(
+            "```css\n/* fix the colours in login.css */\n.a {}\n.b {}\n```") == []
+
+    def test_an_ordinary_leading_comment_is_not_a_label(self):
+        assert parse_file_blocks("```python\n# helper functions\nx = 1\n```") == []
+
+    def test_the_fence_label_wins_when_both_are_present(self):
+        blocks = parse_file_blocks("```python app/real.py\n# app/other.py\nx = 1\n```")
+        assert blocks[0].path == "app/real.py"
+        assert blocks[0].content == "# app/other.py\nx = 1\n"
+
+
 class TestStripping:
     def test_the_saved_block_comes_off_the_screen(self):
         """It is visible as a diff, which is a better rendering of the same

@@ -53,6 +53,19 @@ def _call_key(call: dict[str, Any]) -> str:
     return f"{call.get('name')}:{args}"
 
 
+def _seen_key(path: str) -> str:
+    """Normalised path, for matching "did you read this?" against "are you
+    writing this?".
+
+    Separator and case folding are both needed on Windows, where the model may
+    answer `app\\static\\login.css` having been shown `app/static/login.css`, and
+    where `Login.css` and `login.css` are the same file. Over-matching here is
+    the safe direction: the cost is permitting a write the model probably did
+    understand, versus refusing one it definitely did.
+    """
+    return path.replace("\\", "/").lstrip("/").removeprefix("./").casefold()
+
+
 def _call_shape(obj: Any) -> dict[str, Any] | None:
     """{"name": str, arguments: dict} -> a normalised call, else None.
 
@@ -586,6 +599,9 @@ class AgentLoop:
         forced = 0
         block_retries = 0
         executed: set[str] = set()
+        # Files read THIS RUN, canonicalised. Gates rewriting an existing file —
+        # see the read-before-write guard in _stage_file_blocks.
+        seen_files: set[str] = set()
 
         for _iteration in range(limit):
             tokens: list[str] = []
@@ -609,7 +625,7 @@ class AgentLoop:
             # catch a model that failed to emit a tool call; this catches a model
             # that did exactly what it was asked to do, in the format it is
             # fluent in. See coding/fileblocks.py for why that reversal matters.
-            staged, refused = await self._stage_file_blocks(text, mode, ctx, emit)
+            staged, refused = await self._stage_file_blocks(text, mode, ctx, emit, seen_files)
             if refused and block_retries >= MAX_BLOCK_RETRIES:
                 # Asked twice and still getting excerpts. Stop asking: another
                 # round costs the user thirty seconds to arrive at the same
@@ -766,6 +782,14 @@ class AgentLoop:
             for call in tool_calls:
                 executed.add(_call_key(call))
                 result_msg = await self._execute_one(call, mode, ctx, emit)
+                # A successful read is what unlocks rewriting that file. Keyed
+                # off the RESULT, not the request: read_file answers a miss with
+                # "No such file: …", which teaches the model nothing about the
+                # file's contents and so must not license replacing them.
+                if call["name"] == "read_file" and result_msg["content"].startswith("Contents of"):
+                    path = (call.get("arguments") or {}).get("path")
+                    if isinstance(path, str):
+                        seen_files.add(_seen_key(path))
                 messages.append(result_msg)
 
         # Hitting the cap in Code mode is not the same event as hitting it
@@ -845,6 +869,7 @@ class AgentLoop:
 
     async def _stage_file_blocks(
         self, text: str, mode: TaskMode, ctx: ToolContext, emit: Emit,
+        seen: set[str] | None = None,
     ) -> tuple[list[str], list[str]]:
         """Stage every fenced block that named a file. Returns (staged, refused).
 
@@ -881,6 +906,30 @@ class AgentLoop:
             if current is not None and current == block.content:
                 continue     # identical to what is already there: not a change
 
+            # YOU MAY NOT REWRITE A FILE YOU HAVE NOT READ.
+            #
+            # THE FAILURE THIS STOPS, observed in full: told to recolour
+            # login.css, the model skipped read_file entirely and printed a
+            # confident, complete, ENTIRELY INVENTED stylesheet — `body`,
+            # `.login-container`, `input[type=text]`, none of which existed in
+            # the real file — and dropped the background image the user had
+            # explicitly asked to keep. Every other guard here passes it: it is
+            # well-formed, it names a real path, it is long enough not to look
+            # like an excerpt. Only "you never looked at it" catches it.
+            #
+            # This is the one invariant in the whole write path that does not
+            # depend on the model behaving well, which is why it is worth the
+            # extra round trip it sometimes costs. New files are exempt: there
+            # is nothing to read and nothing to lose.
+            if current is not None and seen is not None and _seen_key(block.path) not in seen:
+                refused.append(
+                    f"NOT SAVED: you have not read {block.path} in this conversation, so "
+                    "what you wrote would replace a file you have never seen. Call "
+                    f"read_file on {block.path} first, then print the complete file with "
+                    "your changes."
+                )
+                continue
+
             if is_excerpt(block, current):
                 refused.append(
                     f"NOT SAVED: the block you printed for {block.path} is only part of the "
@@ -899,6 +948,11 @@ class AgentLoop:
             )
             if block.path in changes.paths():
                 staged.append(block.path)
+                # Having written it, the model knows what is in it — so a
+                # follow-up edit to the same file in the same turn does not have
+                # to go back and read its own work.
+                if seen is not None:
+                    seen.add(_seen_key(block.path))
             else:
                 # The tool refused it (size cap, pending-file limit, a path that
                 # validated here and failed there). Not silently dropped: an

@@ -27,6 +27,7 @@ from tests.fakes import (
     WriteFileTool,
 )
 from tools.base import TaskMode, ToolContext
+from tools.coding import ReadFileTool as RealReadFileTool
 from tools.coding import WriteFileTool as RealWriteFileTool
 
 
@@ -759,10 +760,11 @@ class TestFileBlocksAreThePrimaryWritePath:
 
     async def test_a_labelled_block_is_staged(self, db, settings, tmp_path):
         llm = FakeLLM([
+            {"tool_calls": [{"name": "read_file", "arguments": {"path": "login.css"}}]},
             {"tokens": [f"Recoloured it:\n```css login.css\n{self.NEW}\n```"]},
             {"tokens": ["Changed the three colour rules to blue."]},
         ])
-        loop, _ = make_loop(db, settings, llm, [RealWriteFileTool()], max_iterations=6)
+        loop, _ = make_loop(db, settings, llm, [RealWriteFileTool(), RealReadFileTool()], max_iterations=6)
         ctx = self.code_ctx(tmp_path, {"login.css": self.FILE})
         await loop.run("m", [], TaskMode.CODE, ctx, CollectingEmit())
 
@@ -776,10 +778,11 @@ class TestFileBlocksAreThePrimaryWritePath:
         timeout, so the write silently never happened. This path never asks for
         file contents at all."""
         llm = FakeLLM([
+            {"tool_calls": [{"name": "read_file", "arguments": {"path": "login.css"}}]},
             {"tokens": [f"```css login.css\n{self.NEW}\n```"]},
             {"tokens": ["done"]},
         ])
-        loop, _ = make_loop(db, settings, llm, [RealWriteFileTool()], max_iterations=6)
+        loop, _ = make_loop(db, settings, llm, [RealWriteFileTool(), RealReadFileTool()], max_iterations=6)
         ctx = self.code_ctx(tmp_path, {"login.css": self.FILE})
         await loop.run("m", [], TaskMode.CODE, ctx, CollectingEmit())
 
@@ -805,17 +808,19 @@ class TestFileBlocksAreThePrimaryWritePath:
         that would delete the rest. It is refused, the model is told why in the
         same turn, and it gets to reprint the whole thing."""
         llm = FakeLLM([
+            {"tool_calls": [{"name": "read_file", "arguments": {"path": "login.css"}}]},
             {"tokens": ["```css login.css\nchanged 0\nchanged 1\n```"]},
             {"tokens": [f"Sorry — the whole file:\n```css login.css\n{self.NEW}\n```"]},
             {"tokens": ["done"]},
         ])
-        loop, _ = make_loop(db, settings, llm, [RealWriteFileTool()], max_iterations=6)
+        loop, _ = make_loop(db, settings, llm, [RealWriteFileTool(), RealReadFileTool()], max_iterations=6)
         ctx = self.code_ctx(tmp_path, {"login.css": self.FILE})
         await loop.run("m", [], TaskMode.CODE, ctx, CollectingEmit())
 
         # The retry landed, and the file is the FULL version, not the two lines.
         assert ctx.changes.read("login.css")[0].rstrip("\n") == self.NEW
-        told = llm.calls[1]["messages"][-1]["content"]
+        told = " ".join(str(m.get("content", ""))
+                        for c in llm.calls for m in c.get("messages", []))
         assert "NOT SAVED" in told and "COMPLETE file" in told
 
     async def test_it_stops_asking_after_two_excerpts(self, db, settings, tmp_path):
@@ -830,6 +835,90 @@ class TestFileBlocksAreThePrimaryWritePath:
 
         assert ctx.changes.is_empty()          # nothing was ever flattened
         assert any("only part of the file" in d["text"] for d in emit.of(events.STATUS))
+
+    async def test_a_file_it_never_read_cannot_be_rewritten(self, db, settings, tmp_path):
+        """THE WORST OBSERVED FAILURE. Told to recolour login.css, the model
+        skipped read_file entirely and printed a confident, complete, ENTIRELY
+        INVENTED stylesheet — `body`, `.login-container`, `input[type=text]`,
+        none of which were in the real file — and dropped the background image
+        the user had explicitly asked to keep.
+
+        Every other guard passes it: well-formed, real path, long enough not to
+        look like an excerpt. Only "you never looked at it" catches it. This is
+        the one invariant in the write path that does not depend on the model
+        behaving well."""
+        invented = "\n".join(f"invented {i}" for i in range(40))
+        llm = FakeLLM([
+            {"tokens": [f"```css login.css\n{invented}\n```"]},
+            {"tokens": ["done"]},
+        ])
+        loop, _ = make_loop(db, settings, llm, [RealWriteFileTool(), RealReadFileTool()],
+                            max_iterations=4)
+        ctx = self.code_ctx(tmp_path, {"login.css": self.FILE})
+        await loop.run("m", [], TaskMode.CODE, ctx, CollectingEmit())
+
+        assert ctx.changes.is_empty()
+        told = " ".join(str(m.get("content", ""))
+                        for c in llm.calls for m in c.get("messages", []))
+        assert "have not read" in told
+
+    async def test_reading_it_first_unlocks_the_write(self, db, settings, tmp_path):
+        """The guard must not block ordinary work — read, then rewrite, is the
+        normal shape of an edit and has to pass first time."""
+        llm = FakeLLM([
+            {"tool_calls": [{"name": "read_file", "arguments": {"path": "login.css"}}]},
+            {"tokens": [f"```css login.css\n{self.NEW}\n```"]},
+            {"tokens": ["done"]},
+        ])
+        loop, _ = make_loop(db, settings, llm, [RealWriteFileTool(), RealReadFileTool()],
+                            max_iterations=6)
+        ctx = self.code_ctx(tmp_path, {"login.css": self.FILE})
+        await loop.run("m", [], TaskMode.CODE, ctx, CollectingEmit())
+        assert ctx.changes.paths() == ["login.css"]
+
+    async def test_a_failed_read_does_not_unlock_the_write(self, db, settings, tmp_path):
+        """read_file answering "No such file" teaches the model nothing about
+        the contents, so it must not license replacing them. Keyed off the
+        RESULT, not the request."""
+        llm = FakeLLM([
+            {"tool_calls": [{"name": "read_file", "arguments": {"path": "typo.css"}}]},
+            {"tokens": [f"```css login.css\n{self.NEW}\n```"]},
+            {"tokens": ["done"]},
+        ])
+        loop, _ = make_loop(db, settings, llm, [RealWriteFileTool(), RealReadFileTool()],
+                            max_iterations=6)
+        ctx = self.code_ctx(tmp_path, {"login.css": self.FILE})
+        await loop.run("m", [], TaskMode.CODE, ctx, CollectingEmit())
+        assert ctx.changes.is_empty()
+
+    async def test_a_new_file_is_exempt_from_the_read_guard(self, db, settings, tmp_path):
+        """Nothing to read and nothing to lose."""
+        llm = FakeLLM([
+            {"tokens": ["```py brand_new.py\nprint('hi')\n```"]},
+            {"tokens": ["done"]},
+        ])
+        loop, _ = make_loop(db, settings, llm, [RealWriteFileTool(), RealReadFileTool()],
+                            max_iterations=6)
+        ctx = self.code_ctx(tmp_path)
+        await loop.run("m", [], TaskMode.CODE, ctx, CollectingEmit())
+        assert ctx.changes.paths() == ["brand_new.py"]
+
+    async def test_a_path_labelled_in_a_first_line_comment(self, db, settings, tmp_path):
+        """OBSERVED: told to save a file, the model wrote ```python and put the
+        path in a comment on the first line of the body. That is a real
+        convention and refusing it discards a correct answer over placement."""
+        llm = FakeLLM([
+            {"tokens": ["```python\n# app/hello.py\nprint('Hello Arthur')\n```"]},
+            {"tokens": ["done"]},
+        ])
+        loop, _ = make_loop(db, settings, llm, [RealWriteFileTool()], max_iterations=6)
+        ctx = self.code_ctx(tmp_path)
+        await loop.run("m", [], TaskMode.CODE, ctx, CollectingEmit())
+
+        assert ctx.changes.paths() == ["app/hello.py"]
+        # The label line is NOT part of the file: kept, it would prepend a fresh
+        # copy of the filename on every round trip.
+        assert ctx.changes.read("app/hello.py")[0] == "print('Hello Arthur')\n"
 
     async def test_a_new_file_is_created_from_a_short_block(self, db, settings, tmp_path):
         llm = FakeLLM([

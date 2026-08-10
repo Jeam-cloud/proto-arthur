@@ -144,18 +144,69 @@ def _clean(token: str) -> str:
     return token
 
 
+# A whole first line that is nothing but a comment containing a path:
+#     # app/static/test_arthur.py
+#     /* app/static/login.css */
+#     // src/main.js
+#     <!-- templates/index.html -->
+#
+# OBSERVED, and the reason this exists: told to save a file, the model wrote
+# ```python and put the path in a comment on the first line of the body. That is
+# a real and common convention — arguably a nicer one, since the label survives
+# being copied out of the chat — and refusing to read it means refusing the
+# model's best attempt at doing exactly what was asked.
+#
+# Strict on purpose: the line must be ONLY a comment and ONLY a path. "# fix the
+# colours in login.css" is prose about a file, not a label naming one, and
+# treating it as a label would write to a file nobody named.
+_COMMENT_PATH = re.compile(
+    r"^[ \t]*(?:#|//|/\*|<!--|--|;|%)[ \t]*"
+    r"(?P<path>[\w./\\@+-]+\.[A-Za-z0-9]{1,8})"
+    r"[ \t]*(?:\*/|-->)?[ \t]*$"
+)
+
+
+def _path_from_first_line(body: str) -> tuple[str, str] | None:
+    """(path, body-without-the-label) when the block labels itself in a comment.
+
+    The label line is REMOVED from the content. Leaving it in would append a new
+    `# path/to/file.py` comment to the top of the file on every round trip, and
+    after three edits the file starts with three copies of its own name.
+    """
+    first, sep, rest = body.partition("\n")
+    if not sep:
+        return None
+    m = _COMMENT_PATH.match(first)
+    if not m:
+        return None
+    path = _clean(m.group("path"))
+    if not path or not ("/" in path or "\\" in path or "." in path[1:]):
+        return None
+    return path, rest.lstrip("\n")
+
+
 def parse_file_blocks(text: str) -> list[FileBlock]:
     """Every fenced block in `text` that named a file, in order.
 
-    Blocks without a path are ignored rather than guessed at: an illustrative
-    snippet in an explanation is not a file, and the cost of a false positive
-    here is writing to the user's project.
+    A block names a file either on the fence line (```css app/x.css) or in a
+    comment on its own first line (# app/x.css). Both are conventions models
+    actually use; supporting only the first meant discarding a correct answer
+    because of where the label sat.
+
+    Blocks with no path at all are ignored rather than guessed at: an
+    illustrative snippet in an explanation is not a file, and the cost of a
+    false positive here is writing to the user's project.
     """
     out: list[FileBlock] = []
     for m in _FENCE.finditer(text or ""):
+        body = m.group("body")
         path = _path_from_info(m.group("info"))
-        if path:
-            out.append(FileBlock(path=path, content=m.group("body")))
+        if not path:
+            labelled = _path_from_first_line(body)
+            if not labelled:
+                continue
+            path, body = labelled
+        out.append(FileBlock(path=path, content=body))
     return out
 
 
@@ -173,7 +224,9 @@ def strip_file_blocks(text: str) -> str:
         return text
     out, last = [], 0
     for m in _FENCE.finditer(text):
-        if not _path_from_info(m.group("info")):
+        # Both labelling conventions, or the block that was saved via a comment
+        # label stays on screen as raw text next to its own diff.
+        if not _path_from_info(m.group("info")) and not _path_from_first_line(m.group("body")):
             continue
         out.append(text[last:m.start()])
         last = m.end()
