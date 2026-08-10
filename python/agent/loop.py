@@ -316,6 +316,22 @@ def _unescape(raw: str) -> str:
     )
 
 
+# What each capability is called in plain words, and which tools provide it.
+# Used to tell the model what it CANNOT do this turn, computed from what it was
+# actually granted — see _with_capability_note.
+OTHER_CAPABILITIES = {
+    "sending or reading email": {"email_send", "email_list", "email_search"},
+    "opening or controlling apps on this computer":
+        {"open_app", "screenshot", "mouse_click", "type_text", "press_keys"},
+    "searching the web": {"web_research", "quick_search"},
+    "running code": {"run_python"},
+    "reading or editing files in the user's folder":
+        {"read_file", "list_files", "write_file", "edit_file", "delete_file",
+         "search_files", "find_files"},
+    "looking up market data": {"stock_quote", "stock_history"},
+}
+
+
 def _with_capability_note(
     messages: list[dict[str, Any]], mode: TaskMode, tools: list[Any],
 ) -> list[dict[str, Any]]:
@@ -338,15 +354,29 @@ def _with_capability_note(
     Generated from the registry rather than written by hand, so it cannot drift
     out of date when a tool is added, moved between modes, or removed.
     """
+    granted = {t.name for t in tools}
     names = ", ".join(t.name for t in tools) if tools else "none"
+    # THE "you cannot do this" EXAMPLES ARE DERIVED, NEVER HARDCODED.
+    #
+    # This list used to be a fixed sentence ending "...running code, editing
+    # files — you CANNOT do it here", which is true in most modes and FALSE in
+    # the one mode built for editing files. So Code mode handed the model a
+    # granted `edit_file` tool and, two lines later, told it that editing files
+    # was impossible. Asked to scan a folder, a 7B resolved the contradiction
+    # the way models do — it believed the prohibition and answered "I don't have
+    # access to files or folders on your computer".
+    #
+    # Deriving the list from what is actually MISSING makes the note incapable
+    # of contradicting the tools beside it.
+    missing = [label for label, owners in OTHER_CAPABILITIES.items() if not (owners & granted)]
+    cannot = ", ".join(missing) if missing else "anything outside the list above"
     note = (
         f"CAPABILITIES — you are in {mode.value.upper()} mode and your ONLY available "
         f"actions this turn are: {names}.\n"
         "Arthur separates capabilities by mode on purpose, and you have no way to reach "
-        "a tool that is not listed above. If the user asks for anything else — sending "
-        "email, opening or controlling an app, searching the web, running code, editing "
-        "files — you CANNOT do it here. Say so plainly in one sentence and name the mode "
-        "that can (General, Research, Code, Email, Finance, Computer, Design); the user "
+        f"a tool that is not listed above. You CANNOT do these here: {cannot}. If the "
+        "user asks for one, say so plainly in one sentence and name the mode that can "
+        "(General, Research, Code, Email, Finance, Computer, Design); the user "
         "switches modes from the icons on the left.\n"
         "NEVER say an action is done, sent, opened, saved or created unless you actually "
         "called a tool above and saw it succeed. Claiming a completed action you did not "
@@ -371,10 +401,30 @@ def _with_capability_note(
     return [{"role": "system", "content": note}, *messages]
 
 
+# A fenced block big enough to be a file rather than an inline example. Same
+# shape chat_service._warn_if_code_was_only_printed uses to detect this after
+# the fact — defined again here because the loop needs it BEFORE the turn
+# ends, to prevent the miss instead of just reporting it.
+_CODE_BLOCK = re.compile(r"```[a-zA-Z]*\n(.*?)```", re.DOTALL)
+_MIN_BLOCK_LINES = 5
+
+
+def _largest_code_block(text: str) -> str | None:
+    blocks = [b for b in _CODE_BLOCK.findall(text or "") if len(b.splitlines()) >= _MIN_BLOCK_LINES]
+    return max(blocks, key=len) if blocks else None
+
+
 # How many times one turn may be forced into a structured call. Two is enough
 # to convert a plan into action without letting a model that genuinely has
 # nothing to run spin.
 MAX_FORCED = 2
+
+FORCE_WRITE_ARGS_PROMPT = (
+    "You just printed a file's contents into the chat instead of saving them — "
+    "the user's file is UNCHANGED, no matter what you said. Call write_file now, "
+    "with the same path you were just discussing and that exact content, so it "
+    "actually gets staged."
+)
 
 # Much shorter than chat_json's 150s default. This is a RECOVERY path: the user
 # already has the model's text, and waiting two minutes to maybe upgrade it into
@@ -528,7 +578,22 @@ class AgentLoop:
                 # listings.
                 if not tool_calls and forced < MAX_FORCED:
                     forced += 1
-                    call = await self._forced_tool_call(model, messages, text, tools)
+                    # THE WORST CASE FIRST: the model printed a whole file into
+                    # the chat instead of saving it. _forced_tool_call's own
+                    # PICK_PROMPT offers "none" as a legitimate answer — right
+                    # for a turn that truly needed no tool, wrong here, because
+                    # the model just showed the user a finished-looking file and
+                    # believes THAT was the deliverable. Asked "were you trying
+                    # to use a tool?" it honestly answers "none", and the edit
+                    # never lands — the user sees code, says "go ahead", and
+                    # gets the same invented block printed a second time.
+                    #
+                    # So this case is checked and handled before the general
+                    # picker ever gets a chance to offer the exit.
+                    block = _largest_code_block(text)
+                    call = await self._force_write(model, messages, text, tools, block) if block else None
+                    if call is None:
+                        call = await self._forced_tool_call(model, messages, text, tools)
                     # NEVER FORCE A CALL THAT ALREADY RAN THIS TURN.
                     #
                     # After a tool succeeds, the model's next message is usually
@@ -642,6 +707,49 @@ class AgentLoop:
             return None
         log.info("forced a structured call to %s after the model described it", name)
         return {"name": name, "arguments": args if isinstance(args, dict) else {}}
+
+    async def _force_write(
+        self, model: str, messages: list[dict[str, Any]], said: str,
+        tools: list[Any], block: str,
+    ) -> dict[str, Any] | None:
+        """Turn a file printed into the chat into an actual write_file call.
+
+        Only targets write_file, never edit_file. edit_file's contract is an
+        exact `old_text` snippet copied verbatim from a read_file result — a
+        model reconstructing that from a block it just wrote fresh has nothing
+        reliable to copy it FROM. write_file's contract is "here is the whole
+        file", which is exactly the shape of what the model already produced,
+        so it is the one case where forcing without asking the model to
+        re-derive anything is safe.
+
+        No PICK step, unlike _forced_tool_call: there is only one legal answer
+        once a qualifying block exists, and offering "none" is the exact bug
+        this exists to close. If write_file was not granted this mode, there
+        is nothing to force — caller falls back to the general picker.
+        """
+        tool = next((t for t in tools if t.name == "write_file"), None)
+        if tool is None:
+            return None
+        history = [*messages, {"role": "assistant", "content": said}]
+        try:
+            args = await self._llm.chat_json(
+                model, [*history, {"role": "user", "content": FORCE_WRITE_ARGS_PROMPT}],
+                tool.Args.model_json_schema(),
+                timeout_s=FORCE_TIMEOUT_S,
+            )
+        except Exception as e:
+            # Never let this break the turn — fall back to the general picker.
+            log.info("forced write failed: %s", e)
+            return None
+        if not isinstance(args, dict) or not args.get("path"):
+            return None
+        # Safety net: trust the block the model already committed to over a
+        # second pass at reproducing it, which a small model happily shortens
+        # ("... rest unchanged ...") without meaning to lose anything.
+        if len(args.get("content") or "") < len(block) * 0.8:
+            args["content"] = block
+        log.info("forced write_file after the model only printed the file")
+        return {"name": "write_file", "arguments": args}
 
     async def _execute_one(
         self, call: dict[str, Any], mode: TaskMode, ctx: ToolContext, emit: Emit

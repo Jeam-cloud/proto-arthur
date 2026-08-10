@@ -146,6 +146,30 @@ class CrashTool(EchoTool):
         raise RuntimeError("boom")
 
 
+class WriteFileArgs(BaseModel):
+    path: str = Field(description="Path relative to the workspace folder")
+    content: str = Field(max_length=400_000)
+
+
+class WriteFileTool(Tool):
+    """Stand-in for tools.coding.WriteFileTool: same name and Args shape (path
+    + whole-file content), no real disk/changeset I/O — used to test that the
+    agent loop can force this specific call after a model only PRINTS a file."""
+
+    name = "write_file"
+    description = "Write a file."
+    Args = WriteFileArgs
+    risk = Risk.SAFE
+    modes = {TaskMode.CODE}
+
+    def __init__(self):
+        self.writes: list[tuple[str, str]] = []
+
+    async def execute(self, args: WriteFileArgs, ctx: ToolContext) -> ToolResult:
+        self.writes.append((args.path, args.content))
+        return ToolResult(ok=True, content=f"staged {args.path}", summary=f"wrote {args.path}")
+
+
 class CollectingEmit:
     """Callable emit() that records every SSE event for assertions."""
 

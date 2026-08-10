@@ -3,7 +3,10 @@
 import asyncio
 
 from agent.loop import (
-    MAX_FORCED, AgentLoop, recover_text_tool_call, strip_tool_call_json,
+    MAX_FORCED,
+    AgentLoop,
+    recover_text_tool_call,
+    strip_tool_call_json,
 )
 from agent.registry import ToolRegistry
 from core import events
@@ -11,7 +14,14 @@ from security.approvals import ApprovalBroker
 from security.audit import AuditLog
 from security.gateway import SecurityGateway
 from tests.fakes import (
-    CollectingEmit, ConfirmEchoTool, CrashTool, EchoTool, ExternalTool, FakeLLM, FakeScanner,
+    CollectingEmit,
+    ConfirmEchoTool,
+    CrashTool,
+    EchoTool,
+    ExternalTool,
+    FakeLLM,
+    FakeScanner,
+    WriteFileTool,
 )
 from tools.base import TaskMode, ToolContext
 
@@ -561,6 +571,88 @@ class TestForcedToolCall:
         assert len(llm.calls) == 1
 
 
+class TestForceWriteAfterPrintedFile:
+    """Observed failure: asked to recolor login.css, the model read the file,
+    then printed a whole updated CSS file into the CHAT and stopped. The user
+    said "go ahead, I authorize it" and got the identical block printed again
+    — nothing was ever staged, because _forced_tool_call's PICK step offers
+    "none" as an answer, and a model that just showed the user a finished file
+    honestly believes that WAS the deliverable. This closes that gap: a
+    qualifying block goes straight to write_file, no "none" on offer."""
+
+    BLOCK = "\n".join(f"line {i}" for i in range(10))
+
+    async def test_a_printed_file_becomes_a_real_write(self, db, settings):
+        tool = WriteFileTool()
+        llm = FakeLLM([
+            {"tokens": [f"Here's the updated CSS:\n```css\n{self.BLOCK}\n```\nLet me know!"]},
+            {"tokens": ["Done — I've updated login.css."]},
+        ])
+        llm.json_turns = [{"path": "app/static/login.css", "content": self.BLOCK}]
+        loop, _ = make_loop(db, settings, llm, [tool])
+        text = await loop.run("m", [], TaskMode.CODE, CTX, CollectingEmit())
+        assert tool.writes == [("app/static/login.css", self.BLOCK)]
+        assert text.endswith("Done — I've updated login.css.")
+
+    async def test_no_pick_step_goes_straight_to_the_tools_own_schema(self, db, settings):
+        """Unlike _forced_tool_call (name from an enum, THEN args -- two
+        chat_json calls), there is only one legal tool once a qualifying block
+        exists, so the very first forced call already asks for write_file's
+        own arguments -- no "which tool did you mean" round trip first."""
+        tool = WriteFileTool()
+        llm = FakeLLM([
+            {"tokens": [f"```css\n{self.BLOCK}\n```"]},
+            {"tokens": ["done"]},
+        ])
+        llm.json_turns = [{"path": "app/static/login.css", "content": self.BLOCK}]
+        loop, _ = make_loop(db, settings, llm, [tool])
+        await loop.run("m", [], TaskMode.CODE, CTX, CollectingEmit())
+        first_schema_call = next(c for c in llm.calls if "schema" in c)
+        assert "tool" not in first_schema_call["schema"].get("properties", {})
+        assert "path" in first_schema_call["schema"]["properties"]
+
+    async def test_a_shortened_reproduction_is_replaced_by_the_original_block(self, db, settings):
+        """Small models happily shorten a second reproduction ("... rest
+        unchanged ...") without meaning to lose anything. The block the model
+        already committed to on screen is trusted over that second pass."""
+        tool = WriteFileTool()
+        llm = FakeLLM([
+            {"tokens": [f"```css\n{self.BLOCK}\n```"]},
+            {"tokens": ["done"]},
+        ])
+        llm.json_turns = [{"path": "app/static/login.css", "content": "/* rest unchanged */"}]
+        loop, _ = make_loop(db, settings, llm, [tool])
+        await loop.run("m", [], TaskMode.CODE, CTX, CollectingEmit())
+        # The captured block includes the newline the model put right before
+        # closing the fence -- an artifact of how the block was extracted,
+        # not a lost line, so it's compared against the raw capture.
+        path, content = tool.writes[0]
+        assert path == "app/static/login.css"
+        assert content.rstrip("\n") == self.BLOCK
+
+    async def test_falls_back_to_the_general_picker_without_write_file(self, db, settings):
+        """No write_file granted this mode -> nothing to force; the ordinary
+        PICK-with-"none" flow still runs so a genuinely toolless turn isn't
+        broken by this check."""
+        tool = EchoTool()
+        llm = FakeLLM([{"tokens": [f"```css\n{self.BLOCK}\n```"]}])
+        llm.json_turns = [{"tool": "none"}]
+        loop, _ = make_loop(db, settings, llm, [tool])
+        await loop.run("m", [], TaskMode.GENERAL, CTX, CollectingEmit())
+        schema = next(c["schema"] for c in llm.calls if "schema" in c)
+        assert schema["properties"]["tool"]["enum"] == ["echo", "none"]
+
+    async def test_a_short_block_does_not_trigger_forcing(self, db, settings):
+        """A small inline example (below _MIN_BLOCK_LINES) is not a file the
+        user asked to save, and must not be forced into a write."""
+        tool = WriteFileTool()
+        llm = FakeLLM([{"tokens": ["```css\n.a { color: red; }\n```"]}])
+        llm.json_turns = [{"tool": "none"}]
+        loop, _ = make_loop(db, settings, llm, [tool])
+        await loop.run("m", [], TaskMode.CODE, CTX, CollectingEmit())
+        assert tool.writes == []
+
+
 class TestCapabilityNote:
     """Regression: asked to send an email in Code mode, the model answered
     "Done. Email sent to …" without calling anything. Mode scoping stopped the
@@ -574,6 +666,34 @@ class TestCapabilityNote:
         sent = llm.calls[0]["messages"][0]["content"]
         assert "GENERAL mode" in sent and "echo" in sent
         assert "NEVER say an action is done" in sent
+
+    async def test_the_note_never_forbids_something_it_just_granted(self, db, settings):
+        """THE BUG: the "you cannot do this" examples were a fixed sentence
+        ending "...running code, editing files". True in most modes, FALSE in
+        the one mode built for editing files — so Code mode granted `edit_file`
+        and then told the model editing files was impossible. Asked to scan a
+        folder, a 7B believed the prohibition: "I don't have access to files or
+        folders on your computer."
+        """
+        from tools.coding import EditFileTool, ReadFileTool
+
+        llm = FakeLLM([{"content": "ok"}])
+        loop, _ = make_loop(db, settings, llm, [ReadFileTool(), EditFileTool()])
+        await loop.run("m", [{"role": "system", "content": "x"}], TaskMode.CODE, CTX,
+                       CollectingEmit())
+        note = llm.calls[0]["messages"][0]["content"]
+        cannot = note.split("You CANNOT do these here:")[1]
+        assert "edit_file" in note                 # granted
+        assert "editing files" not in cannot       # and not forbidden in the same breath
+        assert "sending or reading email" in cannot
+
+    async def test_a_mode_without_file_tools_is_still_told_so(self, db, settings):
+        llm = FakeLLM([{"content": "ok"}])
+        loop, _ = make_loop(db, settings, llm, [EchoTool()])
+        await loop.run("m", [{"role": "system", "content": "x"}], TaskMode.GENERAL, CTX,
+                       CollectingEmit())
+        cannot = llm.calls[0]["messages"][0]["content"].split("You CANNOT do these here:")[1]
+        assert "reading or editing files" in cannot
 
     async def test_note_says_none_when_the_mode_has_no_tools(self, db, settings):
         llm = FakeLLM([{"content": "ok"}])
