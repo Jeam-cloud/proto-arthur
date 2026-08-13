@@ -27,6 +27,7 @@ export default function ChatView({ mode }) {
   const requestInsert = useWorkspace((s) => s.requestInsert);
   const loadChanges = useChanges((s) => s.load);
   const pendingFiles = useChanges((s) => s.files);
+  const codeReceipt = useChanges((s) => s.receipt);
   const hasFolder = useWorkspace((s) => !!s.root);
   const reviewGateOn = useSettings((s) => !!s.values?.code_review_before_apply);
   // Just the last segment: "Working in atlas" is the project, "Working in
@@ -232,7 +233,17 @@ export default function ChatView({ mode }) {
           this a first-time user has no way to know Arthur won't just overwrite
           their project — the reassurance only ever arrived once edits were
           already staged, which is the wrong moment to learn it. */}
-      {mode === "code" && hasFolder && !pendingFiles && (
+      {/* `!codeReceipt` is load-bearing. This is a promise about what HAS NOT
+          happened yet, and the receipt directly below it is the announcement
+          that it just did — so with both on screen the app read:
+
+            "Nothing is written until you approve it."
+            "Wrote hello_world.py to your folder."
+
+          stacked, about the same file, at the same moment. The banner is for
+          the idle state only; once something has landed, the receipt is the
+          truthful thing to be showing. */}
+      {mode === "code" && hasFolder && !pendingFiles && !codeReceipt && (
         <div className="code-idle">
           <ShieldCheck size={15} strokeWidth={1.8} />
           <span>

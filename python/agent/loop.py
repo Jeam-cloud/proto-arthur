@@ -578,6 +578,31 @@ PICK_PROMPT = (
 )
 ARGS_PROMPT = "Give the arguments for {name}, based on what you just said you would do."
 
+# WHAT SEPARATES ONE ITERATION'S PROSE FROM THE NEXT.
+#
+# This was "" — the parts were concatenated with nothing between them, so a
+# turn that spoke twice (which is every Code turn: the model narrates, calls a
+# tool, then narrates again) came out as one run-on string:
+#
+#   "...if you need any further assistance!I updated the hello_world.py file"
+#   "Would you like me to add this file?I added a new .py file named ..."
+#
+# A blank line is the right separator because these ARE separate paragraphs:
+# they were written at different times, about different states of the world,
+# with a tool call in between.
+#
+# It has to be emitted as a TOKEN as well as used in the join. The renderer
+# builds its own copy of the reply by appending token events and keeps that
+# copy as the final message, so a separator that existed only in the joined
+# string would make the text visibly re-flow the instant the turn ended.
+_PART_SEP = "\n\n"
+
+
+def _join_parts(parts: list[str]) -> str:
+    """Assemble the turn's prose. Empty/whitespace-only parts are dropped so a
+    model that emits a stray newline between tool calls does not open a gap."""
+    return _PART_SEP.join(p.strip() for p in parts if p.strip())
+
 
 class AgentLoop:
     def __init__(
@@ -634,6 +659,8 @@ class AgentLoop:
             log.info("dropping %d tool schemas for this turn: it carries an image", len(schemas))
             schemas = None
 
+        # One entry per ITERATION that produced prose. Joined with a blank line,
+        # never with "" — see _PART_SEP.
         final_text_parts: list[str] = []
         forced = 0
         block_retries = 0
@@ -650,6 +677,11 @@ class AgentLoop:
 
             async for event in self._llm.chat_stream(model, messages, tools=schemas):
                 if event["type"] == "token" and event["content"]:
+                    # The separator goes out ahead of the first token of any
+                    # FOLLOW-UP block of prose, so the reader sees the paragraph
+                    # break form as it streams rather than appear at the end.
+                    if not tokens and final_text_parts:
+                        await emit(events.TOKEN, {"content": _PART_SEP})
                     tokens.append(event["content"])
                     await emit(events.TOKEN, {"content": event["content"]})
                 elif event["type"] == "tool_calls":
@@ -681,7 +713,7 @@ class AgentLoop:
             if staged or refused:
                 cleaned = strip_file_blocks(text)
                 final_text_parts[-1:] = [cleaned] if cleaned else []
-                await emit(events.DRAFT_REPLACE, {"content": "".join(final_text_parts)})
+                await emit(events.DRAFT_REPLACE, {"content": _join_parts(final_text_parts)})
                 messages.append({"role": "assistant", "content": cleaned or text})
                 # Refusals go back as a user-role message rather than a tool
                 # result: no tool was called, so there is no call for a tool
@@ -719,7 +751,7 @@ class AgentLoop:
                     cleaned = strip_tool_call_json(text)
                     if cleaned != text:
                         final_text_parts[-1:] = [cleaned] if cleaned else []
-                        await emit(events.DRAFT_REPLACE, {"content": "".join(final_text_parts)})
+                        await emit(events.DRAFT_REPLACE, {"content": _join_parts(final_text_parts)})
                     await emit(events.STATUS, {
                         "text": (f"Tried to use {recovered['name']}, which isn't available in "
                                  f"{mode.value} mode — switch modes on the left to allow it."),
@@ -737,7 +769,7 @@ class AgentLoop:
                     # "Read login.css", which is the part that is about them.
                     text = strip_tool_call_json(text)
                     final_text_parts[-1:] = [text] if text else []
-                    await emit(events.DRAFT_REPLACE, {"content": "".join(final_text_parts)})
+                    await emit(events.DRAFT_REPLACE, {"content": _join_parts(final_text_parts)})
                     tool_calls = [recovered]
 
                 # THIRD CHANCE: no call came out, whatever the reason.
@@ -808,7 +840,7 @@ class AgentLoop:
                         tool_calls = [call]
 
             if not tool_calls:
-                return "".join(final_text_parts)
+                return _join_parts(final_text_parts)
 
             # Record the assistant turn that requested the calls (required by
             # the chat template so the model sees its own call in history).
@@ -846,7 +878,7 @@ class AgentLoop:
             # up as ordinary input with no special handling anywhere.
             if asked:
                 await emit(events.ASK_USER, asked)
-                return "".join(final_text_parts)
+                return _join_parts(final_text_parts)
 
         # Hitting the cap in Code mode is not the same event as hitting it
         # elsewhere. Everywhere else the turn just ends; here it can end with a
@@ -859,7 +891,7 @@ class AgentLoop:
             "text": f"Stopped: reached the tool-use limit for one message.{note}",
         })
         await emit(events.TOOL_LIMIT, {"mode": mode.value})
-        return "".join(final_text_parts)
+        return _join_parts(final_text_parts)
 
     async def _forced_tool_call(
         self, model: str, messages: list[dict[str, Any]], said: str, tools: list[Any],
