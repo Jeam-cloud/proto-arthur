@@ -107,14 +107,22 @@ export default function ModelMenu({ conversationId, mode, value, onChange, place
           tag is indistinguishable from a local one at a glance -- same chip,
           same styling -- while every prompt goes to a third party. */}
       <button
-        className={`model-chip${isCloudModel(effective) ? " cloud" : ""}`}
+        className={`model-chip${isCloudModel(effective) ? " cloud" : ""}${open ? " open" : ""}`}
         title={isCloudModel(effective)
           ? `${effective} runs on Ollama's servers, not on this computer`
-          : "Model for this conversation"}
+          : status?.ollama_up
+            ? "Model for this conversation"
+            : "Ollama isn't running — this model can't answer right now"}
         onClick={() => setOpen(!open)}
       >
-        {isCloudModel(effective) && <Cloud size={12} strokeWidth={2} />}
-        {override || `Auto · ${autoLabel}`} <ChevronDown size={12} />
+        {isCloudModel(effective)
+          ? <Cloud size={12} strokeWidth={2} />
+          // Green when the local runtime is up, grey when it isn't. The chip
+          // names a model either way; the dot is what says whether naming it
+          // means anything right now.
+          : <span className={`model-dot${status?.ollama_up ? "" : " off"}`} />}
+        <span className="chip-label">{override || `Auto · ${autoLabel}`}</span>
+        <ChevronDown size={12} />
       </button>
 
       {open && (

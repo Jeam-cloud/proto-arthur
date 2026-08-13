@@ -7,7 +7,7 @@
 // need to show it) -- this component just reads the current mode and shows
 // it as a badge, same as the mockup's composer bar.
 import React, { useEffect, useRef, useState } from "react";
-import { Mic, Paperclip, Send, Square, Loader2 } from "lucide-react";
+import { AlertCircle, Mic, Paperclip, Square, Loader2 } from "lucide-react";
 import { useBackend } from "../../stores/backend";
 import { useChat } from "../../stores/chat";
 import { useToasts } from "../../stores/toasts";
@@ -181,59 +181,94 @@ export default function Composer({ conversationId, mode }) {
           <span>Drop files or folders to attach them</span>
         </div>
       )}
-      <div className="composer">
-        <ModeBadge mode={mode} />
-        <button
-          className="icon-btn"
-          title="Attach files"
-          disabled={uploading}
-          onClick={addFromPicker}
-        >
-          {uploading ? <Loader2 size={16} className="spin" /> : <Paperclip size={16} />}
-        </button>
-        <textarea
-          ref={textareaRef}
-          rows={1}
-          placeholder={
-            mode === "computer"
-              ? "Describe what to do on your computer, every action will ask first..."
-              : "Message Arthur..."
-          }
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={onKeyDown}
-          onPaste={onPaste}
-        />
-        <ModelMenu conversationId={conversationId} mode={mode} />
-        <button
-          className={`icon-btn ${recorder.state === "recording" ? "recording" : ""}`}
-          title={recorder.state === "denied" ? "Mic access denied, see system settings" : "Hold to talk"}
-          onMouseDown={recorder.start}
-          onMouseUp={recorder.stop}
-          onMouseLeave={recorder.stop}
-        >
-          {recorder.state === "transcribing" ? <Loader2 size={16} className="spin" /> : <Mic size={16} />}
-        </button>
-        {streaming ? (
-          <button className="icon-btn danger" title="Stop generating" onClick={() => stop(conversationId)}>
-            <Square size={14} />
-          </button>
+      {/* TWO ROWS, not one.
+          The textarea gets the full width on its own line and the controls sit
+          underneath. A single row forced the input to share horizontal space
+          with five controls, so a long message was typed through a slot a
+          third of the window wide while the buttons sat idle beside it. The
+          message is the important thing here; it gets the room. */}
+      <div className={`composer${recorder.state === "recording" ? " recording" : ""}`}>
+        {recorder.state === "recording" ? (
+          <div className="composer-listening">
+            <span className="rec-dot" />
+            <span>Listening — release to send</span>
+          </div>
         ) : (
-          <button
-            className="icon-btn primary"
-            disabled={!text.trim() && !attachments.length}
-            title="Send"
-            onClick={submit}
-          >
-            <Send size={16} />
-          </button>
+          <textarea
+            ref={textareaRef}
+            rows={1}
+            placeholder={
+              mode === "computer"
+                ? "Describe what to do on your computer — every action will ask first…"
+                : "Message Arthur…"
+            }
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={onKeyDown}
+            onPaste={onPaste}
+          />
         )}
+
+        <div className="composer-controls">
+          <ModeBadge mode={mode} />
+          <button
+            className="composer-icon"
+            title="Attach files"
+            disabled={uploading}
+            onClick={addFromPicker}
+          >
+            {uploading ? <Loader2 size={15} className="spin" /> : <Paperclip size={15} />}
+          </button>
+          {/* Pushes everything after it to the right edge. */}
+          <span className="composer-spacer" />
+          <ModelMenu conversationId={conversationId} mode={mode} />
+          <button
+            className={`composer-icon${recorder.state === "recording" ? " recording" : ""}`}
+            title={recorder.state === "denied" ? "Mic access denied, see system settings" : "Hold to talk"}
+            onMouseDown={recorder.start}
+            onMouseUp={recorder.stop}
+            onMouseLeave={recorder.stop}
+          >
+            {recorder.state === "transcribing" ? <Loader2 size={16} className="spin" /> : <Mic size={16} />}
+          </button>
+          {streaming ? (
+            <button className="composer-stop" title="Stop generating" onClick={() => stop(conversationId)}>
+              <Square size={12} fill="currentColor" strokeWidth={0} />
+              Stop
+            </button>
+          ) : (
+            // LABELLED, not an icon. The primary action of the whole screen
+            // was a bare paper plane; the word costs 30px and removes the one
+            // guess a first-time user should never have to make.
+            <button
+              className="composer-send"
+              disabled={!text.trim() && !attachments.length}
+              title="Send"
+              onClick={submit}
+            >
+              Send<span className="send-key">↵</span>
+            </button>
+          )}
+        </div>
       </div>
 
-      <div className="composer-hint">
-        {mode === "computer"
-          ? <span className="warn">Computer mode: Arthur can see your screen and control mouse/keyboard, each action needs your OK. Slam the mouse into the top-left corner to abort instantly.</span>
-          : "Enter to send, Shift+Enter for a new line, hold mic to talk"}
+      {/* Left-aligned and split into parts, sitting under the composer rather
+          than centred beneath it. Centred, it read as a caption for the whole
+          window; here it reads as a note attached to the box above it. */}
+      <div className={`composer-hint${mode === "computer" ? " warn" : ""}`}>
+        {mode === "computer" ? (
+          <>
+            <AlertCircle size={13} strokeWidth={1.9} />
+            <span>
+              Every action asks first. Slam the mouse into the top-left corner to abort instantly.
+            </span>
+          </>
+        ) : (
+          <>
+            <span>Shift+Enter for a new line</span>
+            <span>Hold the mic to talk</span>
+          </>
+        )}
       </div>
     </div>
   );

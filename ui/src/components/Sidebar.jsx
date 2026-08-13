@@ -4,7 +4,7 @@
 // a right-click menu (rename/pin/clone/archive/delete) on every row.
 import React, { useState } from "react";
 import {
-  SquarePen, Search, FolderPlus, ChevronRight, Folder as FolderIcon,
+  Plus, Search, FolderPlus, ChevronRight, Folder as FolderIcon,
   Pin, PinOff, Trash2, PanelLeftClose, PanelLeftOpen, Pencil, Copy, Archive,
 } from "lucide-react";
 import { useConversations } from "../stores/conversations";
@@ -175,7 +175,7 @@ export default function Sidebar({ view, mode, setView, onOpenPalette }) {
 
       <div className="sidebar-actions">
         <button className="sidebar-action-btn primary" onClick={() => { createNew(); setView("chat"); }}>
-          <SquarePen size={16} /> New chat<span className="sidebar-action-shortcut">Ctrl+N</span>
+          <Plus size={16} strokeWidth={2} /> New chat<span className="sidebar-action-shortcut">Ctrl+N</span>
         </button>
         <button className="sidebar-action-btn" onClick={onOpenPalette}>
           <Search size={16} /> Search<span className="sidebar-action-shortcut">Ctrl+K</span>

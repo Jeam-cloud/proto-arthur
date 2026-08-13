@@ -284,12 +284,25 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 
 /* composer model chip + panel (Claude-bar style, opens upward) */
 .model-menu { position: relative; flex-shrink: 0; }
+/* A real chip now, not bare text: bordered and filled so it reads as the
+   control it is. The dot reports whether the runtime behind it is actually up
+   — the chip names a model, and naming one that cannot answer is the kind of
+   quiet lie the rest of this UI works to avoid. */
 .model-chip {
-  display: flex; align-items: center; gap: 5px; background: none; border: none;
-  color: var(--tmut); font-size: 11.5px; padding: 7px 9px; border-radius: 8px;
-  max-width: 190px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--muted); border: 1px solid var(--border);
+  color: var(--tmut); font-size: 12.5px; font-weight: 500;
+  padding: 6px 10px; border-radius: 8px;
+  max-width: 190px; min-width: 0; font-family: inherit;
 }
-.model-chip:hover { background: var(--muted); color: var(--text); }
+.model-chip:hover { color: var(--text); }
+.model-chip.open { background: var(--emph); border-color: rgba(244, 246, 250, 0.24); color: var(--text); }
+.model-chip .chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.model-chip > svg:last-child { flex-shrink: 0; }
+.model-dot {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--green); flex-shrink: 0;
+}
+.model-dot.off { background: var(--tmut); }
 .model-panel {
   position: absolute; bottom: calc(100% + 10px); right: 0; width: 380px; z-index: 40;
   background: var(--bg2); border: 1px solid var(--border); border-radius: 14px;
@@ -394,24 +407,59 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 .svg-preview svg { max-width: 100%; height: auto; }
 
 /* ---------- composer ---------- */
-.composer-wrap { padding: 12px 24px 18px; position: relative; }
+.composer-wrap { padding: 12px 24px 16px; position: relative; border-top: 1px solid var(--border); }
+/* TWO-ROW COMPOSER.
+   Row 1 is the textarea at full width; row 2 is the controls. It used to be a
+   single flex row where the input competed with five buttons for horizontal
+   space — see Composer.jsx for why that was the wrong trade. */
 .composer {
-  /* Was flex-end: fine for the textarea (which should grow downward, pinning
-     its top to the row), wrong for everything beside it. ModeBadge and
-     ModelMenu were carrying their own `align-self: center` to compensate,
-     which left the icon buttons — no override of their own — sitting a few
-     pixels lower than the badge and chip next to them. Centering the row and
-     dropping those now-redundant overrides is the one rule that has to be
-     right for every child, not a fix per child. */
-  display: flex; align-items: center; gap: 9px; background: var(--bg2);
-  border: 1px solid var(--border); border-radius: 15px; padding: 10px 12px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+  background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 15px; padding: 12px 13px 9px;
+  transition: border-color 0.18s;
 }
 .composer:focus-within { border-color: rgba(255, 255, 255, 0.22); }
+.composer.recording { border-color: rgba(252, 165, 165, 0.4); }
 .composer textarea {
-  flex: 1; background: none; border: none; outline: none; resize: none;
-  font-size: 14px; line-height: 1.5; max-height: 150px; padding: 7px 4px; color: var(--text);
+  display: block; width: 100%; background: none; border: none; outline: none;
+  resize: none; font-size: 14.5px; line-height: 1.5; max-height: 150px;
+  padding: 3px 4px 11px; color: var(--text); font-family: inherit;
 }
+/* Replaces the textarea while the mic is held, rather than sitting beside it:
+   you cannot type and dictate at once, so showing both implies you can. */
+.composer-listening {
+  display: flex; align-items: center; gap: 9px; padding: 3px 4px 11px;
+  font-size: 14px; color: var(--tmut);
+}
+.rec-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--red);
+  flex-shrink: 0; animation: pulse 1.4s ease-in-out infinite;
+}
+
+.composer-controls { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.composer-spacer { flex: 1; min-width: 4px; }
+.composer-icon {
+  width: 30px; height: 30px; border-radius: 8px; border: none; background: none;
+  color: var(--tmut); display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; transition: all 0.13s;
+}
+.composer-icon:hover:not(:disabled) { background: var(--muted); color: var(--text); }
+.composer-icon:disabled { opacity: 0.45; cursor: default; }
+.composer-icon.recording {
+  background: rgba(252, 165, 165, 0.15); color: var(--red);
+  animation: pulse 1.2s ease infinite;
+}
+.composer-send, .composer-stop {
+  display: inline-flex; align-items: center; gap: 7px; height: 32px;
+  padding: 0 14px; border-radius: 9px; font-size: 13px; font-weight: 600;
+  flex-shrink: 0; font-family: inherit;
+}
+.composer-send { border: none; background: var(--accent); color: var(--inv); }
+.composer-send:disabled { background: var(--emph); color: var(--tmut); cursor: default; }
+.composer-stop { border: 1px solid var(--border); background: var(--muted); color: var(--text); }
+.composer-stop:hover { background: var(--emph); }
+/* The shortcut, quiet, inside the button. Teaches Enter-to-send without
+   spending a line of the hint row on it. */
+.send-key { font-family: var(--mono); font-size: 10.5px; opacity: 0.55; }
 .icon-btn {
   width: 38px; height: 38px; border-radius: 11px; border: none; background: none;
   color: var(--tmut); display: flex; align-items: center; justify-content: center; flex-shrink: 0;
@@ -421,8 +469,14 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 .icon-btn.primary:disabled { background: var(--emph); color: var(--tmut); }
 .icon-btn.danger { background: var(--red); color: var(--bg); }
 .icon-btn.recording { background: var(--red); color: var(--bg); animation: pulse 1.2s ease infinite; }
-.composer-hint { font-size: 11.5px; color: var(--tmut); margin-top: 10px; text-align: center; line-height: 1.5; }
-.composer-hint .warn { color: var(--orange); }
+/* Left-aligned under the composer, in parts. Centred it read as a caption for
+   the whole window; anchored left it reads as a note on the box above it. */
+.composer-hint {
+  display: flex; align-items: flex-start; gap: 14px; padding: 9px 4px 0;
+  font-size: 11.5px; line-height: 1.55; color: var(--tmut);
+}
+.composer-hint.warn { color: var(--yellow); gap: 7px; }
+.composer-hint.warn > svg { flex-shrink: 0; margin-top: 1px; }
 
 /* ---------- empty states ---------- */
 .empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 15px; color: var(--tmut); padding: 40px; text-align: center; }
