@@ -208,16 +208,21 @@ export default function ChangesPanel({ conversationId }) {
   );
 }
 
-// The default ending for a Code turn: it already happened, here is the way back.
+// THE UNDO AFFORDANCE, not a second announcement of the write.
 //
-// Deliberately ONE LINE and not expandable. The diff is in the transcript where
-// the work was described; repeating it here would turn a receipt back into a
-// review and re-introduce the thing being removed — a screen the user feels
-// obliged to read before carrying on.
+// The transcript already carries a receipt message for the same apply ("Wrote
+// hello_world.py in ~/dev/atlas") and that one is the permanent record — it
+// sits in chronological place and survives a reload. This strip is the only
+// place the change can be TAKEN BACK, and it persists across chat switches
+// because the undo snapshot does (see loadReceipt).
 //
-// The files are NAMED. "Wrote 2 files" is not checkable at a glance and
-// "login.css, app.py" is, and being checkable is the entire job of this strip
-// now that nothing was approved on the way in.
+// So it says the thing only it can say. Both used to open with "Wrote <file>",
+// which put two near-identical sentences about the same file on screen a
+// hundred pixels apart the moment anything landed.
+//
+// The files are still NAMED, because "1 change" is not checkable at a glance
+// and "hello_world.py" is — the strip has to be specific enough that you know
+// what the button would reverse before you press it.
 function Receipt({ receipt, undoing, onUndo }) {
   const { files, undoable } = receipt;
   const shown = files.slice(0, 3).map((p) => p.slice(p.lastIndexOf("/") + 1));
@@ -226,9 +231,8 @@ function Receipt({ receipt, undoing, onUndo }) {
     <div className="changes-panel receipt">
       <span className="receipt-mark"><Check size={13} strokeWidth={2.6} /></span>
       <span className="receipt-text">
-        Wrote <strong>{shown.join(", ")}</strong>
+        Last change: <strong>{shown.join(", ")}</strong>
         {rest > 0 && ` and ${rest} more`}
-        {" "}to your folder.
       </span>
       {undoable ? (
         <button className="btn tiny" disabled={undoing} onClick={onUndo}>
