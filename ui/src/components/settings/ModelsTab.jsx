@@ -13,6 +13,7 @@ import { CircleCheck, CircleAlert, CircleX, Loader2, RefreshCw, Trash2, Library 
 import { api } from "../../api/client";
 import { deleteModel } from "../../api/models";
 import { useBackend } from "../../stores/backend";
+import { useConfirm } from "../../stores/confirm";
 import { useSettings } from "../../stores/settings";
 import { useToasts } from "../../stores/toasts";
 import { MODES } from "../ModeRail";
@@ -53,6 +54,7 @@ export default function ModelsTab({ onOpenHub }) {
   const { status, refreshStatus } = useBackend();
   const { values, update } = useSettings();
   const pushToast = useToasts((s) => s.push);
+  const ask = useConfirm((s) => s.ask);
 
   const [budget, setBudget] = useState(null);
   const [deleting, setDeleting] = useState(null);
@@ -78,25 +80,31 @@ export default function ModelsTab({ onOpenHub }) {
   // active use, and reload settings afterward: the backend clears
   // default_model / a mode's assignment itself when you delete the model
   // they point at, and pushing our stale local copy back would undo that.
-  const doDelete = async (name) => {
+  const doDelete = (name) => {
     const usedAsDefault = values?.default_model === name;
     const usedByModes = MODES.filter((m) => (values?.mode_models || {})[m.id] === name).map((m) => m.label);
-    let warning = `Uninstall ${name}. Its disk space will be released and the action cannot be reversed.`;
-    if (usedAsDefault) warning += "\n\nThis model is currently set as the default.";
-    if (usedByModes.length) warning += `\n\nIt is also assigned to the following modes: ${usedByModes.join(", ")}.`;
-    warning += "\n\nProceed.";
-    if (!window.confirm(warning)) return;
+    let body = `${name} is removed from this computer and its disk space released. `
+      + "Downloading it again means fetching the whole model.";
+    if (usedAsDefault) body += " It is currently your default model.";
+    if (usedByModes.length) body += ` It is assigned to: ${usedByModes.join(", ")}.`;
 
-    setDeleting(name);
-    try {
-      await deleteModel(name);
-      await Promise.all([refreshStatus(), useSettings.getState().load()]);
-      pushToast(`${name} uninstalled.`, "success");
-    } catch (e) {
-      pushToast(e.message, "error");
-    } finally {
-      setDeleting(null);
-    }
+    ask({
+      title: `Uninstall ${name}?`,
+      body,
+      confirmLabel: "Uninstall",
+      onConfirm: async () => {
+        setDeleting(name);
+        try {
+          await deleteModel(name);
+          await Promise.all([refreshStatus(), useSettings.getState().load()]);
+          pushToast(`${name} uninstalled.`, "success");
+        } catch (e) {
+          pushToast(e.message, "error");
+        } finally {
+          setDeleting(null);
+        }
+      },
+    });
   };
 
   const b = budget || 8;

@@ -74,6 +74,34 @@ body {
 button { font-family: var(--sans); cursor: pointer; }
 input, textarea, select { font-family: var(--sans); color: var(--text); }
 ::selection { background: var(--sel); }
+
+/* KEYBOARD FOCUS, globally.
+   There was none: every button, rail icon, conversation row and menu entry was
+   reachable by Tab and showed nothing when it got there, so the app was
+   keyboard-navigable in principle and unusable that way in practice.
+   `:focus-visible` rather than `:focus` is the whole point -- it fires for
+   keyboard traversal and not for mouse clicks, which is why the old code could
+   not simply add an outline without every click leaving a ring behind. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+/* Inputs draw their own focus treatment (border colour), so the ring would be
+   a second, louder answer to a question already answered. */
+input:focus-visible, textarea:focus-visible { outline: none; }
+
+/* Motion is decoration here -- nothing in this UI depends on an animation to
+   be understood -- so honouring the OS preference costs nothing and matters to
+   people who get motion sickness from it. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: var(--emph); border-radius: 5px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(244, 246, 250, 0.14); }
@@ -165,6 +193,19 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
 }
 .conv-item:hover { background: var(--muted); }
 .conv-item.active { background: var(--muted); color: var(--text); }
+/* JUST CREATED — a different signal from `active`, deliberately.
+   `active` means "the chat you are reading" and is a steady state; this means
+   "this row appeared a moment ago" and decays. Green rather than the neutral
+   accent because every other surface in this palette is greyscale, so it is
+   the only tint that reads as an event rather than as selection. It fades over
+   .55s so the row settles into normal styling instead of blinking off.
+   The `.fresh` class is REMOVED by the store after 1.4s -- see justCreated. */
+.conv-item.fresh {
+  background: rgba(110, 231, 183, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(110, 231, 183, 0.3);
+  color: var(--text);
+}
+.conv-item { transition: background 0.55s, box-shadow 0.55s, color 0.12s; }
 .conv-title { flex: 1; overflow: hidden; text-overflow: ellipsis; }
 .conv-rename-input {
   flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--accent);
@@ -764,12 +805,34 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
 /* ---------- toasts ---------- */
 .toasts { position: fixed; bottom: 16px; right: 16px; display: flex; flex-direction: column; gap: 9px; z-index: 100; }
 .toast {
+  display: flex; align-items: center; gap: 10px;
   background: var(--bg2); border: 1px solid var(--border); border-left: 3px solid var(--accent);
-  border-radius: 10px; padding: 10px 14px; font-size: 12.5px; max-width: 340px;
+  border-radius: 10px; padding: 10px 12px 10px 14px; font-size: 12.5px;
+  max-width: 400px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
   animation: slide-in 0.2s ease;
 }
 .toast.error { border-left-color: var(--red); }
 .toast.success { border-left-color: var(--green); }
+.toast.warn { border-left-color: var(--yellow); }
+/* Colour AND a shape. The border alone encoded kind in hue only, which is the
+   one channel a red/green-confusable reader does not have. */
+.toast-icon { flex-shrink: 0; color: var(--tmut); }
+.toast.error .toast-icon { color: var(--red); }
+.toast.success .toast-icon { color: var(--green); }
+.toast.warn .toast-icon { color: var(--yellow); }
+.toast-text { flex: 1; min-width: 0; line-height: 1.5; }
+.toast-action {
+  flex-shrink: 0; font-size: 12px; font-weight: 600; padding: 4px 10px;
+  border-radius: 7px; border: 1px solid var(--border);
+  background: var(--emph); color: var(--text);
+}
+.toast-action:hover { background: rgba(244, 246, 250, 0.14); }
+.toast-close {
+  flex-shrink: 0; width: 22px; height: 22px; border-radius: 6px; border: none;
+  background: none; color: var(--tmut);
+  display: flex; align-items: center; justify-content: center;
+}
+.toast-close:hover { background: var(--emph); color: var(--text); }
 
 /* ---------- boot screen ---------- */
 .boot { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--tmut); }
@@ -1687,8 +1750,21 @@ input, textarea, select { font-family: var(--sans); color: var(--text); }
 .cite-pill.authordate.hot, .cite-pill.authordate:hover {
   color: var(--text); border-bottom-color: var(--text); background: rgba(252, 211, 77, 0.14);
 }
-.modal.narrow { max-width: 420px; }
+.modal.narrow { width: 420px; max-width: 92vw; }
 .modal.narrow p { color: var(--tmut); font-size: 13.5px; line-height: 1.65; margin: 10px 0 4px; }
+
+/* The confirm dialog specifically.
+   Its backdrop sits ABOVE the ordinary modal layer (z 60) because a
+   confirmation can be raised from inside another modal — deleting a persona
+   from Settings, discarding changes from the approval flow — and a
+   confirmation rendered underneath the thing that asked for it is a dead app.
+   The blur is from the design mock and does real work here: it separates a
+   question that must be answered from a screen that can wait. */
+[role="alertdialog"] { z-index: 131; }
+.modal-backdrop:has(> [role="alertdialog"]) {
+  z-index: 130; background: rgba(6, 7, 10, 0.62); backdrop-filter: blur(2px);
+}
+[role="alertdialog"].modal .modal-actions { justify-content: flex-end; margin-top: 20px; }
 
 
 /* ---------- Code mode: the review gate ----------

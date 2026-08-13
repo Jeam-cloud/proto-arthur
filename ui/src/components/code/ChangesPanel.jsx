@@ -26,6 +26,7 @@ import {
   AlertCircle, Check, ChevronRight, FileDiff, FileMinus2, FilePlus2, Undo2, X,
 } from "lucide-react";
 import { useChanges } from "../../stores/changes";
+import { useConfirm } from "../../stores/confirm";
 
 const KIND_ICON = { create: FilePlus2, delete: FileMinus2, modify: FileDiff };
 // Diffs longer than this collapse behind "Show diff". A 400-line rewrite pushes
@@ -40,6 +41,7 @@ export default function ChangesPanel({ conversationId }) {
     apply, discard, reread, continueRun, registerCard,
     receipt, undoing, undo,
   } = useChanges();
+  const ask = useConfirm((s) => s.ask);
 
   // Nothing pending: either report what landed, or say nothing at all. An empty
   // panel sitting under the composer would be a permanent reminder of a
@@ -177,7 +179,20 @@ export default function ChangesPanel({ conversationId }) {
               {busy && <span className="spinner" />}
               {applyLabel}
             </button>
-            <button className="btn" disabled={busy} onClick={() => discard(conversationId, null)}>
+            {/* Discarding ALL is confirmed; discarding one file (the × on a
+                card) is not. The single-file case is a small, visible,
+                re-askable correction — the model can stage it again. This one
+                throws away a whole turn's work at once. */}
+            <button
+              className="btn" disabled={busy}
+              onClick={() => ask({
+                title: "Discard all staged changes?",
+                body: `All ${changes.length} file(s) are thrown away and Arthur's work on them `
+                  + "is lost. Your folder stays exactly as it is.",
+                confirmLabel: "Discard all",
+                onConfirm: () => discard(conversationId, null),
+              })}
+            >
               Discard all
             </button>
             <span

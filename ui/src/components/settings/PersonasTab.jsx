@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { api } from "../../api/client";
+import { useConfirm } from "../../stores/confirm";
 import { useToasts } from "../../stores/toasts";
 
 export default function PersonasTab() {
@@ -10,6 +11,7 @@ export default function PersonasTab() {
   const [selected, setSelected] = useState(null);
   const [draft, setDraft] = useState(null);
   const pushToast = useToasts((s) => s.push);
+  const ask = useConfirm((s) => s.ask);
 
   const load = async () => {
     const list = await api.get("/personas");
@@ -48,10 +50,20 @@ export default function PersonasTab() {
     load();
   };
 
-  const remove = async () => {
-    await api.del(`/personas/${selected}`);
-    setSelected(null); setDraft(null);
-    load();
+  const remove = () => {
+    ask({
+      title: `Delete "${draft?.name || "this persona"}"?`,
+      body: "The system prompt and every example exchange saved with it are removed "
+        + "permanently. Chats that already used it keep their replies.",
+      confirmLabel: "Delete persona",
+      onConfirm: async () => {
+        try {
+          await api.del(`/personas/${selected}`);
+          setSelected(null); setDraft(null);
+          load();
+        } catch (e) { pushToast(e.message, "error"); }
+      },
+    });
   };
 
   return (

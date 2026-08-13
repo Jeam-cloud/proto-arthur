@@ -4,6 +4,7 @@
 import React, { useState } from "react";
 import { api } from "../../api/client";
 import { useBackend } from "../../stores/backend";
+import { useConfirm } from "../../stores/confirm";
 import { useSettings } from "../../stores/settings";
 import { useToasts } from "../../stores/toasts";
 
@@ -58,16 +59,26 @@ function EmailCard({ configured, onSaved }) {
   const pushToast = useToasts((s) => s.push);
   const savedAddress = useSettings((s) => (s.values && s.values.email_address) || "");
   const reloadSettings = useSettings((s) => s.load);
+  const ask = useConfirm((s) => s.ask);
 
-  const disconnect = async () => {
-    try {
-      await api.del("/integrations/email");
-      await reloadSettings();
-      pushToast("Email disconnected. The password was removed from your system's vault.", "success");
-      onSaved();
-    } catch (e) {
-      pushToast(e.message, "error");
-    }
+  const disconnect = () => {
+    ask({
+      title: "Disconnect email?",
+      body: `The app password for ${savedAddress} is deleted from your system's credential `
+        + "vault. Email mode stops working until you connect an account again, and you will "
+        + "need to paste a new app password — the old one cannot be read back.",
+      confirmLabel: "Disconnect",
+      onConfirm: async () => {
+        try {
+          await api.del("/integrations/email");
+          await reloadSettings();
+          pushToast("Email disconnected. The password was removed from your system's vault.", "success");
+          onSaved();
+        } catch (e) {
+          pushToast(e.message, "error");
+        }
+      },
+    });
   };
 
   const save = async () => {
@@ -137,6 +148,7 @@ function EmailCard({ configured, onSaved }) {
 function KeyCard({ title, hint, name, configured, onSaved }) {
   const [value, setValue] = useState("");
   const pushToast = useToasts((s) => s.push);
+  const ask = useConfirm((s) => s.ask);
 
   const save = async () => {
     try {
@@ -147,9 +159,23 @@ function KeyCard({ title, hint, name, configured, onSaved }) {
     } catch (e) { pushToast(e.message, "error"); }
   };
 
-  const remove = async () => {
-    await api.del(`/secrets/${name}`);
-    onSaved();
+  const remove = () => {
+    ask({
+      title: `Remove the ${title.replace(/ API key$/, "")} key?`,
+      // Specifically flagged as unreadable: a key store that only ever writes
+      // is the right design, but it means "remove" is not reversible by
+      // looking the value up again, and the user is the only one who can know
+      // whether they still have it.
+      body: "It is deleted from your system's credential vault. Arthur cannot read keys "
+        + "back, so you will need the original again to reconnect.",
+      confirmLabel: "Remove key",
+      onConfirm: async () => {
+        try {
+          await api.del(`/secrets/${name}`);
+          onSaved();
+        } catch (e) { pushToast(e.message, "error"); }
+      },
+    });
   };
 
   return (

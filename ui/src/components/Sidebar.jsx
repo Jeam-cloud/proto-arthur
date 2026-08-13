@@ -10,6 +10,7 @@ import {
 import { useConversations } from "../stores/conversations";
 import { useOrganize } from "../stores/organize";
 import { useBackend } from "../stores/backend";
+import { useConfirm } from "../stores/confirm";
 import { useSettings } from "../stores/settings";
 import ContextMenu from "./ContextMenu";
 
@@ -17,12 +18,13 @@ const MIN_WIDTH = 200;
 const MAX_WIDTH = 420;
 
 export default function Sidebar({ view, mode, setView, onOpenPalette }) {
-  const { list, activeId, select, createNew, remove, rename, archive, clone } = useConversations();
+  const { list, activeId, justCreated, select, createNew, remove, rename, archive, clone } = useConversations();
   const {
     pinned, folders, convFolder, openFolders,
     togglePin, addFolder, toggleFolder, renameFolder, deleteFolder, setConvFolder,
   } = useOrganize();
   const { status } = useBackend();
+  const ask = useConfirm((s) => s.ask);
   const settings = useSettings((s) => s.values);
   const [collapsed, setCollapsed] = useState(false);
   const [width, setWidth] = useState(260);
@@ -93,15 +95,29 @@ export default function Sidebar({ view, mode, setView, onOpenPalette }) {
   ];
   const folderMenuItems = (f) => [
     { label: "Rename folder", icon: Pencil, onClick: () => { setRenamingFolderId(f.id); setDraft(f.name); } },
-    { label: "Delete folder", icon: Trash2, danger: true, onClick: () => deleteFolder(f.id) },
+    {
+      label: "Delete folder", icon: Trash2, danger: true,
+      // Folders are a local grouping only (stores/organize.js) — the chats
+      // inside survive. Said explicitly, because "delete folder" reads like it
+      // takes the contents with it, which is the scarier assumption.
+      onClick: () => ask({
+        title: `Delete the folder "${f.name}"?`,
+        body: `The ${inFolder(f.id).length} chat(s) in it are not deleted — they move back to `
+          + "Recents. Only the folder itself goes.",
+        confirmLabel: "Delete folder",
+        onConfirm: () => deleteFolder(f.id),
+      }),
+    },
   ];
 
   const row = (c) => {
     const isRenaming = renamingId === c.id;
+    const isFresh = c.id === justCreated;
     return (
       <div
         key={c.id}
-        className={`conv-item ${c.id === activeId && view === "chat" ? "active" : ""} ${draggingId === c.id ? "dragging" : ""}`}
+        ref={isFresh ? (el) => el?.scrollIntoView({ block: "nearest" }) : undefined}
+        className={`conv-item ${c.id === activeId && view === "chat" ? "active" : ""} ${isFresh ? "fresh" : ""} ${draggingId === c.id ? "dragging" : ""}`}
         draggable={!isRenaming}
         onDragStart={(e) => { setDraggingId(c.id); e.dataTransfer.setData("text/arthur-conv-id", c.id); }}
         onDragEnd={() => setDraggingId(null)}
@@ -120,7 +136,12 @@ export default function Sidebar({ view, mode, setView, onOpenPalette }) {
             }}
           />
         ) : (
-          <span className="conv-title">{c.title}</span>
+          // "New chat · just now" while fresh. The backend titles every new
+          // conversation "New chat" until the model suggests a real one, so
+          // without the suffix two brand-new chats are the same string.
+          <span className="conv-title">
+            {isFresh && c.title === "New chat" ? "New chat · just now" : c.title}
+          </span>
         )}
         <button
           className="conv-action"

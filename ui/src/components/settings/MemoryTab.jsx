@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import { Pencil, Trash2, Check, X, Plus } from "lucide-react";
 import { api } from "../../api/client";
+import { useConfirm } from "../../stores/confirm";
 import { useToasts } from "../../stores/toasts";
 
 export default function MemoryTab() {
@@ -11,6 +12,7 @@ export default function MemoryTab() {
   const [editText, setEditText] = useState("");
   const [newText, setNewText] = useState("");
   const pushToast = useToasts((s) => s.push);
+  const ask = useConfirm((s) => s.ask);
 
   const load = () => api.get("/memory").then(setMemories).catch((e) => pushToast(e.message, "error"));
   useEffect(() => { load(); }, []);
@@ -28,9 +30,21 @@ export default function MemoryTab() {
     load();
   };
 
-  const remove = async (id) => {
-    await api.del(`/memory/${id}`);
-    load();
+  const remove = (id) => {
+    const m = (memories || []).find((x) => x.id === id);
+    ask({
+      title: "Forget this?",
+      // The memory's own text is quoted back. "Delete this memory?" asks the
+      // user to remember which row they clicked; showing it does not.
+      body: `"${m ? m.text : ""}" is removed permanently. Arthur will stop using it in replies.`,
+      confirmLabel: "Forget it",
+      onConfirm: async () => {
+        try {
+          await api.del(`/memory/${id}`);
+          load();
+        } catch (e) { pushToast(e.message, "error"); }
+      },
+    });
   };
 
   const add = async () => {

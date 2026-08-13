@@ -4,6 +4,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../../api/client";
 import { useBackend } from "../../stores/backend";
+import { useConfirm } from "../../stores/confirm";
 import { useSettings } from "../../stores/settings";
 
 const SEVERITY_PILL = { info: "ok", warning: "warn", blocked: "off" };
@@ -12,6 +13,7 @@ export default function SecurityTab() {
   const [events, setEvents] = useState([]);
   const { status } = useBackend();
   const { values, update } = useSettings();
+  const ask = useConfirm((s) => s.ask);
 
   const load = () => api.get("/security/events?limit=100").then(setEvents).catch(() => {});
   useEffect(() => { load(); }, []);
@@ -118,7 +120,13 @@ export default function SecurityTab() {
         <h2 style={{ fontSize: 14 }} className="grow">Event log</h2>
         <button className="btn" style={{ padding: "4px 12px", fontSize: 12 }} onClick={load}>Refresh</button>
         <button className="btn danger" style={{ padding: "4px 12px", fontSize: 12 }}
-          onClick={async () => { await api.del("/security/events"); load(); }}>
+          onClick={() => ask({
+            title: "Clear the security log?",
+            body: "Every recorded event is erased. This is the only record of what Arthur "
+              + "blocked or flagged, and it cannot be recovered.",
+            confirmLabel: "Clear the log",
+            onConfirm: async () => { await api.del("/security/events"); load(); },
+          })}>
           Clear
         </button>
       </div>

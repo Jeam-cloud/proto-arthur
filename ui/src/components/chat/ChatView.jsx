@@ -61,11 +61,20 @@ export default function ChatView({ mode }) {
   // check, and a 1px definition would unpin the user for scrolling nowhere.
   const PIN_SLACK_PX = 80;
 
+  // The CSS `scroll-behavior: auto !important` in the reduced-motion block
+  // does NOT reach scrollIntoView's own `behavior` option -- that is a
+  // scripted scroll and wins over the stylesheet. Checked here so the
+  // preference is actually honoured rather than only appearing to be.
+  const scrollToBottom = useCallback(() => {
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    bottomRef.current?.scrollIntoView({ behavior: reduce ? "auto" : "smooth" });
+  }, []);
+
   const jumpToLatest = useCallback(() => {
     pinnedRef.current = true;
     setShowJump(false);
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, []);
+    scrollToBottom();
+  }, [scrollToBottom]);
 
   // Scrolling up is a decision, and it used to be overruled ~30 times a second.
   //
@@ -84,14 +93,14 @@ export default function ChatView({ mode }) {
 
   useEffect(() => {
     if (pinnedRef.current) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+      scrollToBottom();
     } else if (slice.streaming || slice.draft) {
       // Only advertise unread content while something is actually arriving.
       // Scrolling up through a FINISHED conversation is just reading, and a
       // "new messages" pill there would be pointing at nothing new.
       setShowJump(true);
     }
-  }, [slice.messages.length, slice.draft?.content?.length, slice.streaming]);
+  }, [slice.messages.length, slice.draft?.content?.length, slice.streaming, scrollToBottom]);
 
   // A new conversation starts at the bottom by definition — otherwise the pin
   // state carries over from the chat you just left, and switching to a fresh

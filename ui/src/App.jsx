@@ -17,6 +17,7 @@ import SettingsView from "./components/settings/SettingsView";
 import Onboarding from "./components/Onboarding";
 import ApprovalModal from "./components/ApprovalModal";
 import Toasts from "./components/common/Toasts";
+import ConfirmDialog from "./components/common/ConfirmDialog";
 import StatusBanner from "./components/common/StatusBanner";
 import BootScreen from "./components/common/BootScreen";
 import ErrorBoundary from "./components/common/ErrorBoundary";
@@ -135,6 +136,10 @@ export default function App() {
       </div>
       {hubOpen && <ModelHub onClose={() => setHubOpen(false)} />}
       <ApprovalModal />
+      {/* Above the approval modal in the DOM order AND in z-index: a confirm
+          can be raised from inside any other overlay, so it must never render
+          beneath the thing that asked for it. */}
+      <ConfirmDialog />
       <Toasts />
       {paletteOpen && (
         <CommandPalette
