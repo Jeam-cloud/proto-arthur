@@ -34,19 +34,45 @@ const EMPTY_SLICE = Object.freeze({
   // A pending ask_user question, or null. Not a message: it is a live control,
   // and answering it replaces it with the user's own message.
   ask: null,
-  streaming: false, error: null, loaded: false, startedAt: null,
+  // `stopped` is deliberately separate from `error`: a cancelled turn is a
+  // normal ending, and putting it in `error` is what made Stop look like a
+  // crash. Cleared on the next send, like `error`.
+  streaming: false, error: null, stopped: false, loaded: false, startedAt: null,
 });
 
 export const useChat = create((set, get) => ({
   byConv: {},
   aborters: {},
-  // Per-conversation model override from the header picker. "" = auto
+  // Per-conversation model override from the composer picker. "" = auto
   // (backend resolves: mode's assigned model, else the global default).
-  // Instant by design: the model is just a field on the next request.
+  //
+  // This map is a CACHE of `conversations.model`, not the source of truth. It
+  // used to be the only copy, living purely in memory, so every relaunch reset
+  // every chat to Auto while the chip carried on looking authoritative —
+  // twenty turns of qwen2.5-coder followed by a silent switch back to the
+  // default. hydrateModelOverrides() fills it from the server on load.
   modelOverride: {},
 
+  // Seed from the conversation list at boot. Only rows that actually carry a
+  // model are copied: a NULL means "never chose one", which must stay absent
+  // here so the chip renders Auto rather than an empty explicit selection.
+  hydrateModelOverrides(conversations) {
+    const seeded = {};
+    for (const c of conversations || []) {
+      if (c && typeof c.model === "string") seeded[c.id] = c.model;
+    }
+    set((s) => ({ modelOverride: { ...seeded, ...s.modelOverride } }));
+  },
+
   setModelOverride(cid, model) {
+    // Optimistic: the picker closes instantly and the next send already uses
+    // the new model. The write is a durability detail, so a failed PUT must
+    // not rewind a choice the user can see they made — it is logged and the
+    // in-memory value stands for this session.
     set((s) => ({ modelOverride: { ...s.modelOverride, [cid]: model } }));
+    api.put(`/conversations/${cid}/model`, { model }).catch((e) => {
+      console.warn("could not persist model choice for", cid, e);
+    });
   },
 
   slice(cid) {
@@ -99,7 +125,8 @@ export const useChat = create((set, get) => ({
       // clears when the user ignores the question and types something else —
       // a stale question offering choices about a finished topic is worse than
       // no question at all.
-      activity: [], memoryUsed: [], ask: null, streaming: true, error: null,
+      activity: [], memoryUsed: [], ask: null, streaming: true,
+      error: null, stopped: false,
     });
 
     // A new turn is not cut short until it says so; leaving the banner up would
@@ -199,7 +226,22 @@ export const useChat = create((set, get) => ({
         }
       }
     } catch (e) {
-      get()._patch(cid, { error: { code: e.code || "stream_failed", message: e.message } });
+      // STOPPING IS NOT FAILING.
+      //
+      // Clicking Stop aborts the fetch, which rejects the stream with whatever
+      // the platform calls it — "BodyStreamBuffer was aborted" in Chromium,
+      // "The user aborted a request" elsewhere. That was landing in the same
+      // red "Something went wrong" box as a real crash, so the app reported an
+      // error every single time it did exactly what it was told.
+      //
+      // Detected by the aborter we own rather than by matching the message
+      // text: the wording is a browser implementation detail and differs
+      // between engines and versions, but `aborter.signal.aborted` is a fact.
+      if (aborter.signal.aborted || e.name === "AbortError") {
+        get()._patch(cid, { error: null, stopped: true });
+      } else {
+        get()._patch(cid, { error: { code: e.code || "stream_failed", message: e.message } });
+      }
     } finally {
       const cur = get().slice(cid);
       // stream ended without DONE (abort/crash): keep partial text, mark noted

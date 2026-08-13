@@ -215,6 +215,25 @@ MIGRATIONS: list[str] = [
     """
     ALTER TABLE messages ADD COLUMN reviewed INTEGER;
     """,
+
+    # 7 — the chosen model belongs to the conversation too.
+    #
+    # It was `modelOverride: {}` in a Zustand store: renderer memory, never
+    # persisted. So picking qwen2.5-coder for a Code chat held until the next
+    # launch and then silently reverted to Auto — and "silently" is the problem,
+    # because the chip still looked authoritative while the request went to a
+    # different model than the one the last twenty turns had used.
+    #
+    # This is the same fix migrations 2 and 5 made for the folder and the mode,
+    # for the same reason: a conversation's identity should survive a restart.
+    #
+    # EMPTY STRING IS NOT NULL HERE. '' means "Auto — follow Settings", which is
+    # a real choice a user can make (and can switch BACK to); NULL means the
+    # conversation predates this column and has never expressed one. They
+    # resolve the same way today, but only one of them is a decision.
+    """
+    ALTER TABLE conversations ADD COLUMN model TEXT;
+    """,
 ]
 
 

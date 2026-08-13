@@ -1,5 +1,5 @@
-import React, { useEffect, useRef } from "react";
-import { BrainCircuit, Check, Compass, FileText, Image as ImageIcon, ShieldCheck } from "lucide-react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowDown, BrainCircuit, Check, Compass, FileText, Image as ImageIcon, ShieldCheck, Square } from "lucide-react";
 import { useChat } from "../../stores/chat";
 import { useConversations } from "../../stores/conversations";
 import Composer from "./Composer";
@@ -36,6 +36,12 @@ export default function ChatView({ mode }) {
   const dropHandlers = useFileDrop();
   const dragging = useAttachments((s) => s.dragging);
   const bottomRef = useRef(null);
+  const listRef = useRef(null);
+  // "Is the user reading the newest text?" — the question the autoscroll should
+  // have been asking all along. Ref, not state: it is read inside a scroll
+  // handler on every frame and must not cause a render when it flips.
+  const pinnedRef = useRef(true);
+  const [showJump, setShowJump] = useState(false);
 
   useEffect(() => {
     if (activeId) loadMessages(activeId).catch(() => {});
@@ -50,10 +56,51 @@ export default function ChatView({ mode }) {
     if (mode === "code") loadChanges(activeId);
   }, [activeId, mode, loadChanges]);
 
-  // pin to bottom while streaming
-  useEffect(() => {
+  // How far from the bottom still counts as "at the bottom". Generous on
+  // purpose: a line of tokens can land between the scroll event and this
+  // check, and a 1px definition would unpin the user for scrolling nowhere.
+  const PIN_SLACK_PX = 80;
+
+  const jumpToLatest = useCallback(() => {
+    pinnedRef.current = true;
+    setShowJump(false);
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [slice.messages.length, slice.draft?.content?.length]);
+  }, []);
+
+  // Scrolling up is a decision, and it used to be overruled ~30 times a second.
+  //
+  // The old effect called scrollIntoView on every token, so reading back
+  // through a long reply while it was still being written was impossible: the
+  // view snapped to the bottom before you could finish a sentence. Now the
+  // stream only follows the user if the user is already at the bottom, and
+  // otherwise says there is more below and waits to be asked.
+  const onListScroll = useCallback(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= PIN_SLACK_PX;
+    pinnedRef.current = atBottom;
+    if (atBottom) setShowJump(false);
+  }, []);
+
+  useEffect(() => {
+    if (pinnedRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    } else if (slice.streaming || slice.draft) {
+      // Only advertise unread content while something is actually arriving.
+      // Scrolling up through a FINISHED conversation is just reading, and a
+      // "new messages" pill there would be pointing at nothing new.
+      setShowJump(true);
+    }
+  }, [slice.messages.length, slice.draft?.content?.length, slice.streaming]);
+
+  // A new conversation starts at the bottom by definition — otherwise the pin
+  // state carries over from the chat you just left, and switching to a fresh
+  // one can open it scrolled up with a pill offering to show you the only
+  // message it has.
+  useEffect(() => {
+    pinnedRef.current = true;
+    setShowJump(false);
+  }, [activeId]);
 
   if (!activeId) {
     return (
@@ -98,7 +145,7 @@ export default function ChatView({ mode }) {
       {showSuggestions ? (
         <EmptyChat conversationId={activeId} mode={mode} />
       ) : (
-        <div className="message-list">
+        <div className="message-list" ref={listRef} onScroll={onListScroll}>
           {slice.memoryUsed.length > 0 && (
             <div className="memory-chip">
               <BrainCircuit size={12} />
@@ -128,6 +175,18 @@ export default function ChatView({ mode }) {
               </div>
             </div>
           )}
+          {/* A stopped turn gets a plain grey note, not the red error box.
+              Whatever Arthur had already written stays above it — it was
+              really written, and deleting it would punish the user for
+              stopping. */}
+          {slice.stopped && (
+            <div className="message-row assistant">
+              <div className="stopped-note">
+                <Square size={11} strokeWidth={2.4} />
+                Stopped. Arthur was still writing when you cancelled.
+              </div>
+            </div>
+          )}
           {slice.error && (
             <div className="message-row assistant">
               <div className="bubble error">
@@ -140,6 +199,15 @@ export default function ChatView({ mode }) {
           )}
           <div ref={bottomRef} />
         </div>
+      )}
+      {/* OUTSIDE .message-list on purpose. Inside the scroller it would scroll
+          away with the content it is advertising — visible only once you had
+          already scrolled back to where you no longer needed it. */}
+      {showJump && (
+        <button className="jump-latest" onClick={jumpToLatest}>
+          <ArrowDown size={13} strokeWidth={2.2} />
+          Arthur is still writing — jump to latest
+        </button>
       )}
       {/* Clicking a file appends its path to the draft rather than sending
           anything: the path is the hard part to remember, the sentence around

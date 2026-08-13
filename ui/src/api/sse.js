@@ -36,7 +36,18 @@ export async function* streamSSE(path, body, { signal } = {}) {
 
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      let done, value;
+      try {
+        ({ done, value } = await reader.read());
+      } catch (e) {
+        // Aborting mid-body rejects the READER, not the fetch — a separate
+        // path from the abort already handled above, and the one Stop actually
+        // takes once tokens are flowing. Chromium words it "BodyStreamBuffer
+        // was aborted", which is how that string ended up rendered to users as
+        // an error. A cancelled stream simply ends; treat it like `done`.
+        if (signal?.aborted || e.name === "AbortError") return;
+        throw e;
+      }
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
 

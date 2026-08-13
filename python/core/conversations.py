@@ -80,16 +80,29 @@ class ConversationStore:
 
     async def clone(self, cid: str) -> dict:
         """Duplicate a conversation and its messages as a new, independent one.
+
         WHY a real copy instead of a pointer: conversations are meant to
         branch from here (edit the clone, keep the original untouched), so
-        sharing message rows would let an edit in one leak into the other."""
+        sharing message rows would let an edit in one leak into the other.
+
+        THE CLONE CARRIES MODE, FOLDER AND MODEL. It used to copy only the
+        title and persona, which meant cloning a Code chat bound to a project
+        handed back a General chat with no folder and no tools — a branch that
+        silently could not do what the thing it branched from did. If a clone
+        is "the same conversation, forked", the properties that decide what the
+        conversation IS have to come with it.
+        """
         src = await self.get(cid)
         new_cid = new_id()
         ts = now()
         title = src["title"] if src["title"].endswith(" (copy)") else f"{src['title']} (copy)"
+        mode = src.get("mode", "general")
+        workspace_root = src.get("workspace_root")
+        model = src.get("model")
         await self._db.write(
-            "INSERT INTO conversations(id, title, persona_id, created_at, updated_at) VALUES(?,?,?,?,?)",
-            (new_cid, title[:120], src["persona_id"], ts, ts),
+            "INSERT INTO conversations(id, title, persona_id, mode, workspace_root, model, "
+            "created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)",
+            (new_cid, title[:120], src["persona_id"], mode, workspace_root, model, ts, ts),
         )
         rows = await self._db.fetch_all(
             "SELECT * FROM messages WHERE conversation_id=? ORDER BY created_at", (cid,)
@@ -97,13 +110,26 @@ class ConversationStore:
         if rows:
             await self._db.write_many([
                 (
-                    "INSERT INTO messages(id, conversation_id, role, content, tool_calls, tool_name, model, provider, created_at) "
-                    "VALUES(?,?,?,?,?,?,?,?,?)",
-                    (new_id(), new_cid, r["role"], r["content"], r["tool_calls"], r["tool_name"], r["model"], r["provider"], r["created_at"]),
+                    "INSERT INTO messages(id, conversation_id, role, content, tool_calls, tool_name, model, provider, reviewed, created_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    (new_id(), new_cid, r["role"], r["content"], r["tool_calls"], r["tool_name"], r["model"], r["provider"], r["reviewed"], r["created_at"]),
                 )
                 for r in rows
             ])
-        return {"id": new_cid, "title": title[:120], "created_at": ts, "updated_at": ts, "message_count": len(rows)}
+        return {"id": new_cid, "title": title[:120], "mode": mode,
+                "workspace_root": workspace_root, "model": model,
+                "created_at": ts, "updated_at": ts, "message_count": len(rows)}
+
+    async def set_model(self, cid: str, model: str) -> None:
+        """Remember which model this conversation talks to.
+
+        `updated_at` is deliberately NOT touched: changing the model is not
+        activity in the conversation, and bumping it would jump the chat to the
+        top of a sidebar sorted by recency without a word being said in it.
+        """
+        await self._db.write(
+            "UPDATE conversations SET model=? WHERE id=?", (model, cid),
+        )
 
     async def add_message(
         self,

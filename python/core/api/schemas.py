@@ -110,6 +110,16 @@ class ArchiveRequest(BaseModel):
     archived: bool = True
 
 
+class ConversationModelRequest(BaseModel):
+    """The model this conversation should use from now on.
+
+    Empty string means "Auto" (defer to the mode's assigned model, then the
+    global default) and is a deliberate choice, not a missing value — which is
+    why it is `str` with a default of "" rather than `str | None`.
+    """
+    model: str = Field(default="", max_length=120)
+
+
 class AttachPathsRequest(BaseModel):
     """Absolute paths of dropped files or folders.
 

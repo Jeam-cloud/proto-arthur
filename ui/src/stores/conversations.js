@@ -1,5 +1,12 @@
 import { create } from "zustand";
 import { api } from "../api/client";
+// CIRCULAR BY DESIGN, and safe: chat.js imports this module too. Neither
+// touches the other at module-evaluation time — both only call
+// `.getState()` inside function bodies — so whichever module the bundler
+// evaluates first finds a fully-formed export by the time anything runs.
+// Keep it that way: a top-level `useChat.getState()` in either file would
+// turn this into a real initialisation-order bug.
+import { useChat } from "./chat";
 import { useToasts } from "./toasts";
 
 export const useConversations = create((set, get) => ({
@@ -10,6 +17,9 @@ export const useConversations = create((set, get) => ({
   async load() {
     const list = await api.get("/conversations");
     set({ list, loaded: true });
+    // Each conversation's pinned model rides along on the list, so the chat
+    // store can be seeded in the same round trip rather than asking per chat.
+    useChat.getState().hydrateModelOverrides(list);
     if (!get().activeId && list.length) set({ activeId: list[0].id });
   },
 

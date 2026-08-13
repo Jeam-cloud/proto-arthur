@@ -29,7 +29,8 @@ from core import events
 from core import model_kind
 from core.api.auth import require_auth
 from core.api.schemas import (
-    ApprovalDecision, ArchiveRequest, ChatRequest, MemoryCreate, MemoryUpdate, PersonaBody,
+    ApprovalDecision, ArchiveRequest, ChatRequest, ConversationModelRequest, MemoryCreate,
+    MemoryUpdate, PersonaBody,
     PullRequest, RenameRequest, ResearchExportRequest, ResearchFindSourcesRequest,
     ResearchPlanRequest, ResearchRunRequest, ResearchSynthesizeRequest, SecretBody, SettingsPatch,
     AttachPathsRequest, ChangesRequest, NewConversation, UndoRequest, WorkspaceRequest,
@@ -659,6 +660,22 @@ async def conversation_messages(request: Request, cid: str) -> list[dict]:
 @router.patch("/conversations/{cid}")
 async def rename_conversation(request: Request, cid: str, body: RenameRequest) -> dict:
     await state(request).conversations.rename(cid, body.title)
+    return {"ok": True}
+
+
+@router.put("/conversations/{cid}/model")
+async def set_conversation_model(
+    request: Request, cid: str, body: ConversationModelRequest,
+) -> dict:
+    """Pin this conversation to a model (or "" to follow Settings again).
+
+    Separate from PATCH /conversations, which renames: the two are unrelated
+    edits and folding them together would mean every rename had to carry a
+    model and vice versa.
+    """
+    s = state(request)
+    await s.conversations.get(cid)  # 404 for unknown ids, same as the others
+    await s.conversations.set_model(cid, body.model)
     return {"ok": True}
 
 
