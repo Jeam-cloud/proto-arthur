@@ -69,6 +69,15 @@ class LLMGuardScanner:
     Loaded on first scan, guarded by a lock so concurrent first-requests don't
     load the model twice. `scan` is synchronous and CPU-heavy — the gateway
     always calls it via anyio.to_thread so the event loop never stalls.
+
+    IF THE LOAD FAILS IT DEGRADES, it does not raise. The module header promises
+    "the app must still function if the model download failed", and until now it
+    did not: build_scanner's probe only proved the package was *importable*, and
+    the download/model-file failure happens later, here, on first scan — where
+    nothing caught it and it surfaced as a broken user message instead. One
+    failed load switches this instance to heuristics for the life of the
+    process; a scanner that raises is worse than a weaker scanner that answers,
+    because every path through the gateway depends on getting an answer.
     """
 
     name = "llm_guard"
@@ -76,20 +85,48 @@ class LLMGuardScanner:
     def __init__(self):
         self._scanner = None
         self._lock = threading.Lock()
+        # Set once if loading fails; scans then run on this instead.
+        self._fallback: HeuristicScanner | None = None
 
-    def _ensure_loaded(self):
-        if self._scanner is None:
-            with self._lock:
-                if self._scanner is None:
-                    from llm_guard.input_scanners import PromptInjection
-                    from llm_guard.input_scanners.prompt_injection import MatchType
+    def _ensure_loaded(self) -> bool:
+        """True if the ML scanner is usable, False if we've fallen back."""
+        if self._scanner is not None:
+            return True
+        if self._fallback is not None:
+            return False
+        with self._lock:
+            if self._scanner is not None:
+                return True
+            if self._fallback is not None:
+                return False
+            try:
+                from llm_guard.input_scanners import PromptInjection
+                from llm_guard.input_scanners.prompt_injection import MatchType
 
-                    self._scanner = PromptInjection(threshold=0.7, match_type=MatchType.CHUNKS)
-                    log.info("LLM-Guard PromptInjection scanner loaded")
+                self._scanner = PromptInjection(threshold=0.7, match_type=MatchType.CHUNKS)
+                log.info("LLM-Guard PromptInjection scanner loaded")
+                return True
+            except Exception as e:
+                # Logged at error, not warning: the app keeps working but with
+                # materially weaker injection detection, and that is a fact the
+                # operator should be able to find in the log.
+                log.error(
+                    "LLM-Guard failed to load (%s); falling back to heuristics "
+                    "for the rest of this session", e,
+                )
+                self._fallback = HeuristicScanner()
+                return False
 
     def scan(self, text: str) -> ScanResult:
-        self._ensure_loaded()
-        _, is_valid, risk = self._scanner.scan(text)
+        if not self._ensure_loaded():
+            return self._fallback.scan(text)
+        try:
+            _, is_valid, risk = self._scanner.scan(text)
+        except Exception as e:
+            # A model that loaded but throws mid-scan gets the same treatment:
+            # answer with the heuristics rather than failing the request.
+            log.error("LLM-Guard scan failed (%s); using heuristics for this scan", e)
+            return HeuristicScanner().scan(text)
         return ScanResult(
             risk=float(max(risk, 0.0)),
             flagged=not is_valid,
@@ -120,19 +157,45 @@ class CombinedScanner:
 
 def build_scanner(backend: str) -> Scanner:
     """`auto` tries LLM-Guard and falls back to heuristics if it can't load
-    (not installed / model files missing / first-run offline)."""
+    (not installed / model files missing / first-run offline).
+
+    THE AVAILABILITY CHECK MUST NOT IMPORT THE PACKAGE. This used to be a real
+    `import llm_guard`, done here purely to find out whether the package
+    existed — which executed llm_guard's __init__ and pulled in torch and
+    transformers, ~2GB of native libraries, before this function returned.
+
+    That single line undid the lazy loading this whole module is built around
+    (see the header, and LLMGuardScanner._ensure_loaded), and it did it in the
+    worst possible place: build_scanner runs inside build_state, which runs
+    inside FastAPI's lifespan, and uvicorn does not accept a single connection
+    until lifespan startup returns. So /health could not answer until torch had
+    finished importing. On a cold first launch — nothing in the OS file cache —
+    that is often over a minute; on the next launch the same import is a few
+    seconds because Windows still has the DLLs cached. Which is exactly the
+    "first boot fails, second boot works" symptom.
+
+    find_spec answers the same question (is it installed?) by looking at the
+    module finder, without executing anything.
+    """
     if backend == "heuristic":
         return HeuristicScanner()
     if backend in ("llm_guard", "auto", "combined"):
-        try:
-            import llm_guard  # noqa: F401  — probe the import before committing
+        from importlib.util import find_spec
 
+        try:
+            found = find_spec("llm_guard") is not None
+        except (ImportError, ValueError):
+            # A broken/partial install can make find_spec itself raise; that is
+            # an unavailable package as far as we are concerned.
+            found = False
+        if found:
             return CombinedScanner(LLMGuardScanner())
-        except Exception as e:
-            if backend == "llm_guard":
-                raise
-            log.warning("LLM-Guard unavailable (%s); using heuristic scanner", e)
-            return HeuristicScanner()
+        if backend == "llm_guard":
+            raise RuntimeError(
+                "scanner_backend='llm_guard' but the llm_guard package is not installed"
+            )
+        log.warning("LLM-Guard not installed; using heuristic scanner")
+        return HeuristicScanner()
     return HeuristicScanner()
 
 

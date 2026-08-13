@@ -14,6 +14,9 @@ const fs = require("fs");
 const { app } = require("electron");
 
 const MAX_RESTARTS = 3;
+// After this long without a healthy response we stop saying "starting" and
+// start saying "still starting" — a message, NOT a deadline. See _waitForHealth.
+const SLOW_AFTER_MS = 8_000;
 
 class BackendManager {
   constructor() {
@@ -21,9 +24,14 @@ class BackendManager {
     this.port = null;
     this.proc = null;
     this.restarts = 0;
-    this.state = "starting"; // starting | ready | failed | stopped
+    this.state = "starting"; // starting | slow | ready | failed | stopped
     this.listeners = new Set();
     this.stopping = false;
+    // Bumped on every start(). A health poll from a superseded start must not
+    // report on the current one: a restart picks a NEW port, so an in-flight
+    // poll from the old attempt is asking a port nobody is listening on and
+    // its answer is meaningless.
+    this.generation = 0;
   }
 
   onStateChange(fn) { this.listeners.add(fn); }
@@ -32,6 +40,7 @@ class BackendManager {
   info() { return { port: this.port, token: this.token, state: this.state }; }
 
   async start() {
+    const gen = ++this.generation;
     this.port = await freePort();
     const { command, args, cwd } = resolveBackend();
 
