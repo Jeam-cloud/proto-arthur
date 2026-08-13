@@ -50,7 +50,7 @@ class TestTheQuestionReachesTheUser:
         llm = FakeLLM([{"tool_calls": [ASK]}])
         loop = make_loop(db, settings, llm, [AskUserTool()])
         emit = CollectingEmit()
-        await loop.run("m", [], TaskMode.CODE, CTX, emit)
+        await loop.run("m", [], TaskMode.GENERAL, CTX, emit)
 
         asked = emit.of(events.ASK_USER)
         assert asked and asked[0]["question"] == "Which login page did you mean?"
@@ -66,7 +66,7 @@ class TestTheQuestionReachesTheUser:
             {"tokens": ["I'll assume you meant the CSS and proceed."]},
         ])
         loop = make_loop(db, settings, llm, [AskUserTool()])
-        await loop.run("m", [], TaskMode.CODE, CTX, CollectingEmit())
+        await loop.run("m", [], TaskMode.GENERAL, CTX, CollectingEmit())
 
         # One request only: the second scripted turn was never reached.
         assert len([c for c in llm.calls if "messages" in c and "schema" not in c]) == 1
@@ -77,7 +77,7 @@ class TestTheQuestionReachesTheUser:
         llm = FakeLLM([{"tool_calls": [ASK]}])
         loop = make_loop(db, settings, llm, [AskUserTool()])
         emit = CollectingEmit()
-        await loop.run("m", [], TaskMode.CODE, CTX, emit)
+        await loop.run("m", [], TaskMode.GENERAL, CTX, emit)
 
         result = emit.of(events.TOOL_RESULT)[0]
         assert result["ok"] is True
@@ -86,15 +86,61 @@ class TestTheQuestionReachesTheUser:
         assert "Awaiting their reply" in out.content
         assert "Do not answer on their behalf" in out.content
 
-    async def test_it_is_available_in_every_mode(self, db, settings):
-        """Ambiguity is not a property of Code mode, and a mode where the model
-        can act but cannot ask is a mode where it has to guess."""
-        for mode in (TaskMode.GENERAL, TaskMode.CODE, TaskMode.EMAIL, TaskMode.RESEARCH):
+    async def test_it_is_available_wherever_a_wrong_guess_is_expensive(self, db, settings):
+        """Email and Computer take actions that are not reviewable diffs, so a
+        wrong guess costs the user something real and a question is cheap."""
+        for mode in (TaskMode.GENERAL, TaskMode.EMAIL, TaskMode.RESEARCH, TaskMode.COMPUTER):
             llm = FakeLLM([{"tool_calls": [ASK]}])
             loop = make_loop(db, settings, llm, [AskUserTool()])
             emit = CollectingEmit()
             await loop.run("m", [], mode, CTX, emit)
             assert emit.of(events.ASK_USER), mode
+
+
+class TestCodeModeCannotAsk:
+    """REGRESSION, and it was mine. ask_user shipped granted in every mode and
+    immediately made Code mode worse: the model stalled and asked instead of
+    acting.
+
+    Obvious in hindsight — Code mode's own guidance is "never ask the user where
+    a file is, you can see their whole folder, so look", and handing it a tool
+    whose only purpose is asking contradicts that in the same prompt. A small
+    model resolves the contradiction by taking the easier branch, every time.
+
+    The deeper reason: in Code mode nearly every question the model wants to ask
+    is one it can ANSWER, with find_files / search_files / read_file. And when it
+    genuinely cannot tell, guessing is cheap — the guess arrives as a reviewable
+    diff, undoable after the fact. Elsewhere the trade reverses: an email send is
+    not a diff, so a question is the cheaper move."""
+
+    async def test_it_is_not_granted_in_code_mode(self, db, settings):
+        llm = FakeLLM([{"tool_calls": [ASK]}, {"tokens": ["ok"]}])
+        loop = make_loop(db, settings, llm, [AskUserTool()])
+        emit = CollectingEmit()
+        await loop.run("m", [], TaskMode.CODE, CTX, emit)
+        assert not emit.of(events.ASK_USER)
+
+    async def test_the_note_does_not_advertise_asking_in_code_mode(self, db, settings):
+        """The prompt must not describe a tool the mode does not grant — that is
+        the same self-contradiction, one layer up."""
+        llm = FakeLLM([{"tokens": ["ok"]}])
+        loop = make_loop(db, settings, llm, [AskUserTool()])
+        await loop.run("m", [], TaskMode.CODE, CTX, CollectingEmit())
+        assert "Asking for INFORMATION" not in llm.calls[0]["messages"][0]["content"]
+
+    async def test_a_stall_is_never_recovered_into_a_question(self, db, settings):
+        """The forced-call path exists because the model stalled. Offering
+        ask_user there lets the recovery for a stall produce another stall — and
+        a manufactured one, since the model never intended to ask."""
+        llm = FakeLLM([{"tokens": ["Let me know which file you meant."]}])
+        loop = make_loop(db, settings, llm, [AskUserTool(), EchoTool()])
+        emit = CollectingEmit()
+        await loop.run("m", [], TaskMode.GENERAL, CTX, emit)
+
+        picks = [c["schema"] for c in llm.calls if "schema" in c]
+        assert picks, "the forced picker should have run"
+        assert "ask_user" not in picks[0]["properties"]["tool"]["enum"]
+        assert not emit.of(events.ASK_USER)
 
 
 class TestItRefusesAQuestionNobodyCanAnswer:
@@ -128,7 +174,7 @@ class TestItRefusesAQuestionNobodyCanAnswer:
         ])
         loop = make_loop(db, settings, llm, [AskUserTool()])
         emit = CollectingEmit()
-        text = await loop.run("m", [], TaskMode.CODE, CTX, emit)
+        text = await loop.run("m", [], TaskMode.GENERAL, CTX, emit)
 
         assert not emit.of(events.ASK_USER)
         assert text == "never mind"
@@ -142,7 +188,7 @@ class TestTheCapabilityNote:
         guesses — so the exception is stated wherever ask_user is granted."""
         llm = FakeLLM([{"tokens": ["ok"]}])
         loop = make_loop(db, settings, llm, [AskUserTool(), EchoTool()])
-        await loop.run("m", [], TaskMode.CODE, CTX, CollectingEmit())
+        await loop.run("m", [], TaskMode.GENERAL, CTX, CollectingEmit())
         note = llm.calls[0]["messages"][0]["content"]
         assert "Asking for INFORMATION is different from asking permission" in note
 

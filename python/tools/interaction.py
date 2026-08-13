@@ -70,9 +70,26 @@ class AskUserTool(Tool):
     Args = AskUserArgs
     # SAFE: it touches nothing. The turn stopping is not a risk, it is the point.
     risk = Risk.SAFE
-    # Every mode. Ambiguity is not a property of Code mode, and a mode where the
-    # model can act but cannot ask is a mode where it has to guess.
-    modes = set(TaskMode)
+    # EVERY MODE EXCEPT CODE.
+    #
+    # It was granted everywhere for one day and immediately made Code mode worse:
+    # the model stalled and asked instead of acting. Obvious in hindsight — Code
+    # mode's guidance is "never ask the user where a file is, you can see their
+    # whole folder, so look", and handing it a tool whose only purpose is asking
+    # contradicts that in the same prompt. A small model resolves that
+    # contradiction by taking the easier branch, every time.
+    #
+    # The deeper reason it does not belong here: in Code mode almost every
+    # question the model wants to ask is one it can ANSWER — which file, what is
+    # in it, does this exist — with find_files, search_files and read_file. And
+    # when it genuinely cannot tell, guessing is cheap now: the guess arrives as
+    # a reviewable diff that the user can reject, or undo after the fact. Asking
+    # costs a whole round trip to learn something a tool call would have told it.
+    #
+    # Everywhere else the trade is reversed. Email and Computer modes take
+    # actions that are NOT reviewable diffs, so a wrong guess is expensive and a
+    # question is cheap.
+    modes = set(TaskMode) - {TaskMode.CODE}
 
     def approval_summary(self, args: AskUserArgs) -> str:
         return f"Ask: {args.question}"

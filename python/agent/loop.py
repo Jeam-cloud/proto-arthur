@@ -892,7 +892,17 @@ class AgentLoop:
         Pydantic validation, approval. Forcing changes how a call is OBTAINED,
         never what it is allowed to do.
         """
-        names = [t.name for t in tools]
+        # ASKING IS NEVER FORCED.
+        #
+        # This path exists because the model stalled — it described a step and
+        # emitted nothing. Offering `ask_user` here lets the recovery for a stall
+        # produce ANOTHER stall, and a manufactured one at that: the model never
+        # intended to ask, we would be putting the question in its mouth and then
+        # ending the turn on it. If it genuinely wants to ask, it can call the
+        # tool itself on the next turn.
+        names = [t.name for t in tools if t.name != "ask_user"]
+        if not names:
+            return None
         history = [*messages, {"role": "assistant", "content": said}]
         try:
             pick = await self._llm.chat_json(
