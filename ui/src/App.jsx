@@ -31,6 +31,7 @@ export default function App() {
   const [hubOpen, setHubOpen] = useState(false);
   const [booted, setBooted] = useState(false);
   const [bootError, setBootError] = useState(null);
+  const [bootSlow, setBootSlow] = useState(false);
   const { phase, status, startPolling } = useBackend();
 
   // MODE BELONGS TO THE CONVERSATION, not to the app.
@@ -50,7 +51,7 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        await initApi();
+        await initApi({ onSlow: () => setBootSlow(true) });
         startPolling();
         await Promise.all([
           useConversations.getState().load(),
@@ -96,7 +97,7 @@ export default function App() {
     );
   }
 
-  if (!booted || !status) return <BootScreen />;
+  if (!booted || !status) return <BootScreen slow={bootSlow} />;
   if (!status.onboarded) return <Onboarding />;
 
   return (

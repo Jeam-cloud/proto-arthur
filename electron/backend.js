@@ -27,6 +27,7 @@ class BackendManager {
     this.state = "starting"; // starting | slow | ready | failed | stopped
     this.listeners = new Set();
     this.stopping = false;
+    this.exited = false;
     // Bumped on every start(). A health poll from a superseded start must not
     // report on the current one: a restart picks a NEW port, so an in-flight
     // poll from the old attempt is asking a port nobody is listening on and
@@ -48,6 +49,9 @@ class BackendManager {
     fs.mkdirSync(logPath, { recursive: true });
     const logStream = fs.createWriteStream(path.join(logPath, "backend-stdio.log"), { flags: "a" });
 
+    // Cleared BEFORE the spawn, so there is no window in which a fast exit
+    // sets the flag and this line then wipes it.
+    this.exited = false;
     this.proc = spawn(command, args, {
       cwd,
       env: {
@@ -64,6 +68,8 @@ class BackendManager {
 
     this.proc.on("exit", (code) => {
       if (this.stopping) return;
+      if (gen !== this.generation) return;  // a newer start() already took over
+      this.exited = true;
       // Crash-loop guard: restart a few times with backoff, then surface
       // a real error screen instead of flapping forever.
       if (this.restarts < MAX_RESTARTS) {
@@ -75,17 +81,50 @@ class BackendManager {
       }
     });
 
-    const healthy = await this._waitForHealth(60_000);
-    this._setState(healthy ? "ready" : "failed");
+    const healthy = await this._waitForHealth(gen);
+    if (gen !== this.generation) return;  // superseded mid-wait; that start owns the state
+    if (healthy) {
+      // Reset the crash budget on a SUCCESSFUL boot, not just on first launch.
+      // Without this an app left running for days accumulates restarts across
+      // unrelated incidents and eventually refuses to come back from a single
+      // recoverable crash.
+      this.restarts = 0;
+      this._setState("ready");
+    } else {
+      this._setState("failed");
+    }
   }
 
-  async _waitForHealth(timeoutMs) {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
+  /**
+   * Poll /health until it answers, the process dies, or we're superseded.
+   *
+   * THERE IS DELIBERATELY NO TIMEOUT. This used to give up after a fixed 60s
+   * and report "failed" — but a timer is only ever a GUESS at the real
+   * question, which is "is this process ever going to answer?", and we already
+   * have the true answer to that: the child's own exit event. If it is still
+   * running it is still booting, and calling that a failure was wrong. It also
+   * happened to be wrong in the most common case: on a cold first launch the
+   * backend's Python imports can take well over a minute, so the very first
+   * run of a fresh install reliably tripped the timer and showed "Arthur
+   * couldn't start", while the second run — warm OS file cache — came up fast
+   * enough to pass. Hence "it only works the second time".
+   *
+   * Waiting forever is safe precisely because the failure signal is separate:
+   * a backend that cannot start exits, and `exit` drives the restart/fail path
+   * above. A backend that is merely slow now reports "slow" and keeps going.
+   */
+  async _waitForHealth(gen) {
+    const startedAt = Date.now();
+    let announcedSlow = false;
+    while (!this.stopping && !this.exited && gen === this.generation) {
       try {
         const res = await fetch(`http://127.0.0.1:${this.port}/health`);
         if (res.ok) return true;
       } catch { /* not up yet */ }
+      if (!announcedSlow && Date.now() - startedAt > SLOW_AFTER_MS) {
+        announcedSlow = true;
+        this._setState("slow");
+      }
       await new Promise((r) => setTimeout(r, 400));
     }
     return false;

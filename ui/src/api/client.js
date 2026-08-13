@@ -16,20 +16,41 @@ export class ApiError extends Error {
   }
 }
 
-export async function initApi() {
+/**
+ * Wait for the backend, reporting progress.
+ *
+ * `onSlow` fires once if this is taking long enough to be worth saying so.
+ *
+ * THIS NO LONGER HAS ITS OWN DEADLINE. It used to poll 150 times at 400ms and
+ * then throw "The Arthur backend did not start." — a 60s timeout that just
+ * happened to equal the 60s timeout in electron/backend.js, two copies of one
+ * decision with nothing tying them together, so either could be raised while
+ * the other still gave up. Worse, it made a *guess* ("60s elapsed") outrank a
+ * *fact* the main process already had ("the child process is alive and still
+ * booting"). Now there is one authority: main reports `failed` when the child
+ * actually dies, and this waits for `ready` or `failed` and nothing else.
+ */
+export async function initApi({ onSlow } = {}) {
   if (ready) return;
   if (window.arthur) {
-    // Electron may still be booting the backend; poll until it hands us a port
-    for (let i = 0; i < 150; i++) {
+    const startedAt = Date.now();
+    let saidSlow = false;
+    for (;;) {
       const info = await window.arthur.getBackendInfo();
       if (info && info.port) {
         base = `http://127.0.0.1:${info.port}`;
         token = info.token;
         if (info.state === "ready") { ready = true; return; }
+        if (info.state === "failed") {
+          throw new ApiError("backend_unreachable", "The Arthur backend did not start.", 0);
+        }
+      }
+      if (!saidSlow && (info?.state === "slow" || Date.now() - startedAt > 8_000)) {
+        saidSlow = true;
+        onSlow?.();
       }
       await new Promise((r) => setTimeout(r, 400));
     }
-    throw new ApiError("backend_unreachable", "The Arthur backend did not start.", 0);
   } else {
     base = "http://127.0.0.1:8756"; // plain-browser dev fallback
     token = "dev-token";
