@@ -303,6 +303,7 @@ class ChatService:
             result = await apply_changeset(
                 changes, conversation_id=conversation_id,
                 conversations=self._conversations, undos=self._undos, audit=self._audit,
+                reviewed=False,  # this IS the auto-apply path — nothing was shown first
             )
         except Exception:
             log.exception("auto-apply failed for conversation %s", conversation_id)

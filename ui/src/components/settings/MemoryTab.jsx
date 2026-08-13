@@ -88,8 +88,8 @@ export default function MemoryTab() {
           </div>
           {editing === m.id ? (
             <>
-              <button className="icon-btn" onClick={() => saveEdit(m.id)}><Check size={14} /></button>
-              <button className="icon-btn" onClick={() => setEditing(null)}><X size={14} /></button>
+              <button className="icon-btn-sm" onClick={() => saveEdit(m.id)}><Check size={14} /></button>
+              <button className="icon-btn-sm" onClick={() => setEditing(null)}><X size={14} /></button>
             </>
           ) : (
             <>
@@ -97,10 +97,10 @@ export default function MemoryTab() {
                 <input type="checkbox" checked={!!m.enabled} onChange={() => toggle(m)} />
                 <span className="track" /><span className="thumb" />
               </label>
-              <button className="icon-btn" title="Edit" onClick={() => { setEditing(m.id); setEditText(m.text); }}>
+              <button className="icon-btn-sm" title="Edit" onClick={() => { setEditing(m.id); setEditText(m.text); }}>
                 <Pencil size={14} />
               </button>
-              <button className="icon-btn" title="Delete" onClick={() => remove(m.id)}>
+              <button className="icon-btn-sm" title="Delete" onClick={() => remove(m.id)}>
                 <Trash2 size={14} />
               </button>
             </>

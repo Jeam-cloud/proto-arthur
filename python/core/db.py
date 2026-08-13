@@ -198,6 +198,23 @@ MIGRATIONS: list[str] = [
     """
     ALTER TABLE conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'general';
     """,
+
+    # 6 — whether a receipt's edits were actually reviewed before they landed.
+    #
+    # The two apply paths (auto-apply at the end of a turn vs. the review
+    # panel's Apply button) share one receipt renderer, and until now that
+    # renderer's "you reviewed every line" note was hardcoded true no matter
+    # which path produced it. Correct when review-before-apply is on; false —
+    # and told to the user anyway — when auto-apply wrote the files straight
+    # through. A receipt exists so the transcript cannot claim something that
+    # didn't happen; this column is what lets it stop doing that to itself.
+    #
+    # NULL for every role except 'receipt': the fact only exists at the moment
+    # of an apply, and NULL reads honestly as "not applicable" rather than
+    # false reading as "no one reviewed this either" for an ordinary message.
+    """
+    ALTER TABLE messages ADD COLUMN reviewed INTEGER;
+    """,
 ]
 
 

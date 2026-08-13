@@ -225,7 +225,7 @@ export default function Composer({ conversationId, mode }) {
             title="Send"
             onClick={submit}
           >
-            <Send size={15} />
+            <Send size={16} />
           </button>
         )}
       </div>

@@ -135,7 +135,7 @@ export default function ChangesPanel({ conversationId }) {
                     {c.additions > 0 && <span className="diff-stat add">+{c.additions}</span>}
                     {c.deletions > 0 && <span className="diff-stat del">−{c.deletions}</span>}
                     <button
-                      className="icon-btn" title="Discard this file"
+                      className="icon-btn-sm" title="Discard this file"
                       onClick={() => discard(conversationId, [c.path])}
                     >
                       <X size={13} strokeWidth={1.9} />

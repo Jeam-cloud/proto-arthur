@@ -46,8 +46,15 @@ async def apply_changeset(
     undos=None,
     audit=None,
     paths: list[str] | None = None,
+    reviewed: bool = True,
 ) -> dict[str, Any]:
     """Write staged edits, snapshot what they replaced, and record a receipt.
+
+    `reviewed` says which of the two callers this is: the review panel's Apply
+    button (True — the user looked at a diff and chose this) or the end of an
+    auto-apply turn (False — nothing was shown first). It rides along on the
+    receipt so the transcript can say which one actually happened, instead of
+    the UI assuming review occurred because that used to be the only path.
 
     Order matters: the snapshot is taken from the result of `apply`, which is
     the only place the previous file contents still exist — a PendingChange is
@@ -101,8 +108,11 @@ async def apply_changeset(
     if result["applied"]:
         text = receipt_text(result["applied"], result["conflicts"], root)
         result["receipt"] = {
-            "id": await conversations.add_message(conversation_id, "receipt", text),
+            "id": await conversations.add_message(
+                conversation_id, "receipt", text, reviewed=reviewed,
+            ),
             "role": "receipt",
             "content": text,
+            "reviewed": reviewed,
         }
     return result

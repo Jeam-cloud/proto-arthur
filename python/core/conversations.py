@@ -115,14 +115,16 @@ class ConversationStore:
         tool_name: str | None = None,
         model: str | None = None,
         provider: str = "local",
+        reviewed: bool | None = None,
     ) -> str:
         mid = new_id()
         await self._db.write_many([
             (
-                "INSERT INTO messages(id, conversation_id, role, content, tool_calls, tool_name, model, provider, created_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO messages(id, conversation_id, role, content, tool_calls, tool_name, model, provider, reviewed, created_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?)",
                 (mid, cid, role, content, json.dumps(tool_calls) if tool_calls else None,
-                 tool_name, model, provider, now()),
+                 tool_name, model, provider,
+                 None if reviewed is None else int(reviewed), now()),
             ),
             ("UPDATE conversations SET updated_at=? WHERE id=?", (now(), cid)),
         ])

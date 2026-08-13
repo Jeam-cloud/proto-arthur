@@ -36,7 +36,7 @@ export default function FileTree({ onPick }) {
   if (!treeOpen) {
     return (
       <div className="filetree collapsed">
-        <button className="icon-btn" title="Show files" onClick={toggleTree}>
+        <button className="icon-btn-sm" title="Show files" onClick={toggleTree}>
           <ChevronRight size={15} strokeWidth={1.9} style={{ transform: "rotate(180deg)" }} />
         </button>
         {changes.length > 0 && <span className="tree-count">{changes.length}</span>}
@@ -49,10 +49,10 @@ export default function FileTree({ onPick }) {
       <div className="filetree-head">
         <span className="filetree-title">Files</span>
         {changes.length > 0 && <span className="tree-count">{changes.length}</span>}
-        <button className="icon-btn" title="Collapse all folders" onClick={collapseAll}>
+        <button className="icon-btn-sm" title="Collapse all folders" onClick={collapseAll}>
           <ChevronsDownUp size={14} strokeWidth={1.9} />
         </button>
-        <button className="icon-btn" title="Hide panel" onClick={toggleTree}>
+        <button className="icon-btn-sm" title="Hide panel" onClick={toggleTree}>
           <ChevronRight size={14} strokeWidth={1.9} />
         </button>
       </div>

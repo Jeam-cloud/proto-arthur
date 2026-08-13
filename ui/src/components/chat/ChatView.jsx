@@ -13,6 +13,7 @@ import ChangesPanel from "../code/ChangesPanel";
 import { useWorkspace } from "../../stores/workspace";
 import { useChanges } from "../../stores/changes";
 import { useAttachments } from "../../stores/attachments";
+import { useSettings } from "../../stores/settings";
 import { useFileDrop } from "../../lib/useFileDrop";
 
 // Model selection lives in the composer bar (ModelMenu inside Composer),
@@ -27,6 +28,7 @@ export default function ChatView({ mode }) {
   const loadChanges = useChanges((s) => s.load);
   const pendingFiles = useChanges((s) => s.files);
   const hasFolder = useWorkspace((s) => !!s.root);
+  const reviewGateOn = useSettings((s) => !!s.values?.code_review_before_apply);
   // Just the last segment: "Working in atlas" is the project, "Working in
   // C:\Users\rian\OneDrive\…\atlas" is a path nobody reads.
   const folderName = useWorkspace((s) => (s.root ? s.root.replace(/[\\/]+$/, "").split(/[\\/]/).pop() : ""));
@@ -157,8 +159,13 @@ export default function ChatView({ mode }) {
         <div className="code-idle">
           <ShieldCheck size={15} strokeWidth={1.8} />
           <span>
-            Arthur edits this folder on its own, then stages every change here for you to
-            review. Nothing is written until you approve it.
+            {reviewGateOn
+              ? "Arthur edits this folder on its own, then stages every change here for you to review. Nothing is written until you approve it."
+              // The old copy always described the review-first flow, even with
+              // the setting off — telling a user "nothing is written until you
+              // approve it" in the one mode where that's no longer true. This
+              // reads the same setting the banner is actually promising.
+              : "Arthur writes to this folder directly — review is off. Every change still lands as an undoable receipt."}
           </span>
         </div>
       )}
@@ -178,6 +185,12 @@ function Message({ message }) {
   // The apply receipt: not a turn, a record. Styled as a note rather than a
   // bubble so it never reads as something Arthur said.
   if (message.role === "receipt") {
+    // `reviewed` comes from the apply that produced this receipt, not from
+    // whatever the review-gate setting happens to be NOW. A message written
+    // last week under auto-apply has to keep saying so even if the setting
+    // was flipped back on since — the receipt is a record of what happened,
+    // not a live readout of current settings.
+    const wasReviewed = !!message.reviewed;
     return (
       <div className="message-row receipt">
         <div className="receipt-card">
@@ -185,7 +198,9 @@ function Message({ message }) {
           <div>
             <div className="receipt-title">{message.content}</div>
             <div className="receipt-note">
-              You reviewed every line before this happened. This receipt stays in the conversation.
+              {wasReviewed
+                ? "You reviewed every line before this happened. This receipt stays in the conversation."
+                : "Applied automatically — review was off. This receipt stays in the conversation."}
             </div>
           </div>
         </div>
