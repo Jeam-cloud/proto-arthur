@@ -12,12 +12,15 @@ reports itself down for 10 minutes instead of trying again.
 from __future__ import annotations
 
 import json
+import logging
 import time
 
 from pydantic import BaseModel, Field, field_validator
 
 from sandbox.runner import SandboxRunner
 from tools.base import Risk, TaskMode, Tool, ToolContext, ToolResult
+
+log = logging.getLogger(__name__)
 
 # BUMP THIS WHENEVER finance_query.py CHANGES.
 #
@@ -101,10 +104,39 @@ class _FinanceBase(Tool):
             res = await self._sandbox.run(
                 FINANCE_IMAGE, [], stdin_data=payload, network="bridge", timeout_s=timeout_s
             )
-            data = json.loads(res.stdout.strip().splitlines()[-1])
         except Exception as e:
             self._breaker.record(False)
             return ToolResult(ok=False, content=f"Market data fetch failed: {e}", summary="fetch failed")
+
+        # THE CONTAINER'S OWN ERROR IS THE ONLY USEFUL DIAGNOSTIC, so it must
+        # not be discarded. This used to be `res.stdout.strip().splitlines()[-1]`
+        # inside the try above, which meant an empty stdout raised IndexError and
+        # the operator was shown "list index out of range" — a fact about our
+        # parsing, not about what went wrong. Meanwhile stderr, which held the
+        # actual traceback, was captured and thrown away.
+        #
+        # The script prints JSON on EVERY path including its own exceptions, so
+        # empty stdout means it never got that far: killed on timeout, or dead
+        # before main() (a failed import, a missing dependency in the image).
+        stdout = (res.stdout or "").strip()
+        if not stdout:
+            self._breaker.record(False)
+            detail = (res.stderr or "").strip().splitlines()
+            reason = detail[-1] if detail else f"no output, exit code {res.exit_code}"
+            if getattr(res, "timed_out", False):
+                reason = f"timed out after {timeout_s}s"
+            log.warning("finance container produced no output (%s): %s",
+                        reason, (res.stderr or "")[-2000:])
+            return ToolResult(ok=False, summary="container failed",
+                              content=f"Market data container failed: {reason}")
+
+        try:
+            data = json.loads(stdout.splitlines()[-1])
+        except json.JSONDecodeError:
+            self._breaker.record(False)
+            log.warning("finance container printed non-JSON: %s", stdout[-2000:])
+            return ToolResult(ok=False, summary="bad response",
+                              content=f"Market data returned something unreadable: {stdout[-200:]}")
 
         if not data.get("ok"):
             self._breaker.record(False)
