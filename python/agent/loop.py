@@ -868,6 +868,13 @@ class AgentLoop:
                 messages.append(result_msg)
                 if result is not None and result.ask:
                     asked = result.ask
+                # Emitted AS IT HAPPENS, not collected for the end of the turn.
+                # The chart belongs next to the tool call that produced it, and
+                # a turn that fetches three series should draw three charts in
+                # the order they arrived. Unlike `ask`, this does not end the
+                # turn — the model still has to say something about the picture.
+                if result is not None and result.chart:
+                    await emit(events.CHART, result.chart)
 
             # A QUESTION ENDS THE TURN.
             #

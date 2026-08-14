@@ -11,6 +11,7 @@ import WorkspaceBar from "../code/WorkspaceBar";
 import FileTree from "../code/FileTree";
 import ChangesPanel from "../code/ChangesPanel";
 import WatchlistPanel from "../finance/WatchlistPanel";
+import ChartCard from "../finance/ChartCard";
 import { useWorkspace } from "../../stores/workspace";
 import { useChanges } from "../../stores/changes";
 import { useAttachments } from "../../stores/attachments";
@@ -180,9 +181,14 @@ export default function ChatView({ mode }) {
                   folder={folderName}
                   onStop={() => stop(activeId)}
                 />
+                {/* Charts sit ABOVE the prose, because the prose is about
+                    them. A model that has just fetched a year of closes says
+                    "as you can see" — and until the picture is on screen there
+                    is nothing to see. */}
+                {slice.charts.map((c, i) => <ChartCard key={i} chart={c} />)}
                 {slice.draft.content
                   ? <><Markdown>{slice.draft.content}</Markdown><span className="cursor-blink" /></>
-                  : !slice.activity.length && <span className="cursor-blink" />}
+                  : !slice.activity.length && !slice.charts.length && <span className="cursor-blink" />}
               </div>
             </div>
           )}
@@ -307,6 +313,9 @@ function Message({ message }) {
           <span className="provider-badge">cloud · {message.provider}</span>
         )}
         {message.activity && <ActivityFeed items={message.activity} />}
+        {/* Kept on the finished message too — a chart that vanished the
+            moment the turn ended would make scrolling back useless. */}
+        {message.charts?.map((c, i) => <ChartCard key={i} chart={c} />)}
         {/* Attachments, on the message they were sent with.
             They were bound to the message in the database from the start but
             never read back, so scrolling up showed the question with no sign of

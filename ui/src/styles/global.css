@@ -195,6 +195,47 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 .rail-tip-label { font-size: 12.5px; font-weight: 600; white-space: nowrap; }
 .rail-tip-sub { font-size: 11.5px; color: var(--tmut); margin-top: 2px; line-height: 1.4; }
 
+/* ---------- finance: chart in the transcript ---------- */
+.chart-card {
+  margin: 10px 0; border: 1px solid var(--border); border-radius: 13px;
+  background: var(--bg2); overflow: hidden;
+}
+.chart-head {
+  display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px 8px;
+}
+.chart-title { font-family: var(--mono); font-size: 13px; font-weight: 600; }
+.chart-sub { font-size: 11px; color: var(--tmut); margin-top: 2px; }
+/* The delay travels WITH the picture. The panel's timestamp is at the edge of
+   the screen and scrolls away; this chart will be scrolled back to. */
+.chart-note { margin-left: auto; font-size: 10.5px; color: var(--tmut); flex-shrink: 0; }
+
+.chart-svg { display: block; width: 100%; height: 200px; }
+.chart-line { fill: none; stroke: var(--tmut); stroke-width: 1.5;
+  stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.chart-line.up { stroke: var(--green); }
+.chart-line.down { stroke: var(--red); }
+.chart-area { stroke: none; opacity: 0.09; }
+.chart-area.up { fill: var(--green); }
+.chart-area.down { fill: var(--red); }
+.chart-zero { stroke: var(--border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.chart-cursor { stroke: var(--tmut); stroke-width: 1; opacity: 0.5;
+  vector-effect: non-scaling-stroke; }
+
+.chart-legend {
+  display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 6px 14px 0; font-size: 11.5px;
+}
+.chart-key { display: inline-flex; align-items: center; gap: 6px; }
+.chart-key strong { font-family: var(--mono); font-weight: 600; }
+.chart-val { font-family: var(--mono); color: var(--tmut); }
+.chart-date { color: var(--tmut); }
+
+/* The same sentence the SVG carries as its aria-label — shown, not merely
+   announced. It is the fastest way to read the chart, and the only way if the
+   line is a shape you cannot interpret at a glance. */
+.chart-summary {
+  padding: 8px 14px 12px; font-size: 11.5px; color: var(--tmut); line-height: 1.5;
+}
+
 /* ---------- finance: watchlist panel ---------- */
 .watchlist {
   width: 236px; flex-shrink: 0; background: var(--bg2);

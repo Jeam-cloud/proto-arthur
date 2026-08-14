@@ -32,5 +32,7 @@ class ToolRegistry:
             return None
         return tool
 
-    def all_tools(self) -> list[Tool]:
-        return list(self._tools.values())
+    # (all_tools() removed — nothing called it. Every caller wants the tools
+    # for a MODE, which is the point: a method handing back the ungated set
+    # is one import away from bypassing the privilege boundary that for_mode
+    # and get_granted exist to enforce.)

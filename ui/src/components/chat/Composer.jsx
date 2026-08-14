@@ -8,7 +8,6 @@
 // it as a badge, same as the mockup's composer bar.
 import React, { useEffect, useRef, useState } from "react";
 import { AlertCircle, Mic, Paperclip, Square, Loader2 } from "lucide-react";
-import { useBackend } from "../../stores/backend";
 import { useChat } from "../../stores/chat";
 import { useToasts } from "../../stores/toasts";
 import { useWorkspace } from "../../stores/workspace";
@@ -20,12 +19,6 @@ import ModelMenu from "./ModelMenu";
 import ModeBadge from "./ModeBadge";
 import { useRecorder } from "./useRecorder";
 
-// "email jane@x.com that..." typed (or spoken) in General mode should just
-// work -- detect the intent and switch to Email mode for this send. The
-// switch is VISIBLE (rail highlights + toast), keeping privilege separation
-// explicit rather than silently granting tools.
-const EMAIL_INTENT = /\b(e-?mail|send (an? )?e-?mail|reply to .*e-?mail|check my inbox|unread e-?mails?)\b/i;
-
 export default function Composer({ conversationId, mode }) {
   const [text, setText] = useState("");
   const textareaRef = useRef(null);
@@ -34,7 +27,6 @@ export default function Composer({ conversationId, mode }) {
   // directly there would see a stale value).
   const textRef = useRef("");
   textRef.current = text;
-  const { status } = useBackend();
   const { send, stop } = useChat();
   const streaming = useChat((s) => s.slice(conversationId).streaming);
   const pushToast = useToasts((s) => s.push);
@@ -74,8 +66,8 @@ export default function Composer({ conversationId, mode }) {
     textareaRef.current?.focus();
   }, [pendingInsert, clearInsert]);
 
-  // dispatch: shared send path for typed AND spoken input -- mode auto-switch
-  // and model resolution behave identically either way.
+  // dispatch: shared send path for typed AND spoken input, so model
+  // resolution and the attachment rules behave identically either way.
   const dispatch = (raw) => {
     const trimmed = raw.trim();
     // Attachments count as content. Dropping a screenshot and pressing send
@@ -84,23 +76,8 @@ export default function Composer({ conversationId, mode }) {
     // appeared enabled and did nothing at all.
     if ((!trimmed && !useAttachments.getState().items.length) || streaming) return false;
 
-    // The email-intent nudge used to silently switch this chat to Email mode
-    // mid-conversation. That is exactly the behaviour we removed: a chat's mode
-    // is fixed at creation, so changing it under the user would make the mode
-    // badge, the tools and the transcript disagree with each other. Point at
-    // the rail instead and let them decide.
-    const sendMode = mode;
-    if (mode === "general" && EMAIL_INTENT.test(trimmed)) {
-      pushToast(
-        status?.email_configured
-          ? "Sending email needs an Email chat — start one from the left rail."
-          : "Email isn't set up yet, add it in Settings, Integrations tab.",
-        "info",
-      );
-    }
-
     send(conversationId, trimmed, {
-      mode: sendMode,
+      mode,
       // "" lets the backend resolve: chip override > mode's model > default
       model: useChat.getState().modelOverride[conversationId] || "",
       provider: "local",

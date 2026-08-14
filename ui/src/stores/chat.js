@@ -34,6 +34,11 @@ const EMPTY_SLICE = Object.freeze({
   // A pending ask_user question, or null. Not a message: it is a live control,
   // and answering it replaces it with the user's own message.
   ask: null,
+  // Charts produced by tools this turn, in arrival order. Held on the slice
+  // like `activity` rather than pushed into `messages`: they belong to the
+  // turn that fetched them, and they are rebuilt from the tool result each
+  // time rather than persisted as model text.
+  charts: [],
   // `stopped` is deliberately separate from `error`: a cancelled turn is a
   // normal ending, and putting it in `error` is what made Stop look like a
   // crash. Cleared on the next send, like `error`.
@@ -125,7 +130,7 @@ export const useChat = create((set, get) => ({
       // clears when the user ignores the question and types something else —
       // a stale question offering choices about a finished topic is worse than
       // no question at all.
-      activity: [], memoryUsed: [], ask: null, streaming: true,
+      activity: [], memoryUsed: [], ask: null, charts: [], streaming: true,
       error: null, stopped: false,
     });
 
@@ -201,6 +206,9 @@ export const useChat = create((set, get) => ({
           case "ask_user":
             get()._patch(cid, { ask: data });
             break;
+          case "chart":
+            get()._patch(cid, { charts: [...cur.charts, data] });
+            break;
           case "memory_used":
             get()._patch(cid, { memoryUsed: data.items });
             break;
@@ -216,8 +224,8 @@ export const useChat = create((set, get) => ({
           case "done": {
             const done = get().slice(cid);
             get()._patch(cid, {
-              messages: [...done.messages, { id: data.message_id, role: "assistant", content: done.draft.content, provider: done.draft.provider, activity: done.activity }],
-              draft: null, activity: [],
+              messages: [...done.messages, { id: data.message_id, role: "assistant", content: done.draft.content, provider: done.draft.provider, activity: done.activity, charts: done.charts }],
+              draft: null, activity: [], charts: [],
             });
             break;
           }

@@ -196,8 +196,61 @@ class StockHistoryTool(_FinanceBase):
     def approval_summary(self, args: HistoryArgs) -> str:
         return f"Fetch {args.period} history for {', '.join(args.symbols)}"
 
+    # How the period reads in the caption. "5d" is a label, not a sentence.
+    _SPAN = {"5d": "5 days", "1mo": "1 month", "3mo": "3 months",
+             "6mo": "6 months", "1y": "1 year", "5y": "5 years"}
+
     async def execute(self, args: HistoryArgs, ctx: ToolContext) -> ToolResult:
-        return await self._query("history", args.symbols, args.period)
+        result = await self._query("history", args.symbols, args.period)
+        if result.ok:
+            result.chart = self._chart(result.content, args.period)
+        return result
+
+    def _chart(self, content: str, period: str) -> dict | None:
+        """Turn the fetched series into something the transcript can draw.
+
+        Returns None rather than an empty chart when there is nothing to plot:
+        a chart frame with no line is worse than no chart, because it looks
+        like a rendering bug rather than an absence of data.
+        """
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError:
+            return None
+
+        series, summaries = [], []
+        for sym, rows in data.items():
+            # A per-symbol failure is a dict with `failed`, not a list.
+            if not isinstance(rows, list) or len(rows) < 2:
+                continue
+            points = [{"t": r["date"], "v": r["close"]} for r in rows
+                      if isinstance(r, dict) and "date" in r and "close" in r]
+            if len(points) < 2:
+                continue
+            series.append({"label": sym, "points": points})
+
+            first, last = points[0]["v"], points[-1]["v"]
+            if first:
+                pct = (last - first) / first * 100
+                # "up 51.9%" reads as a fact; "51.9%" leaves the reader to work
+                # out the direction from a sign they may not see.
+                way = "up" if pct >= 0 else "down"
+                summaries.append(f"{sym} {way} {abs(pct):.1f}%, from {first:,.2f} to {last:,.2f}")
+
+        if not series:
+            return None
+        span = self._SPAN.get(period, period)
+        return {
+            "kind": "line",
+            "series": series,
+            "title": ", ".join(s["label"] for s in series),
+            "subtitle": f"{span} · daily closes",
+            # Stated on the chart itself, not just in the panel: this picture
+            # will be scrolled back to long after the "updated 3:42pm" line at
+            # the edge of the screen has gone.
+            "note": "Delayed ~15 min",
+            "summary": f"Over {span}: " + "; ".join(summaries) + ". Daily closes.",
+        }
 
 
 class WatchlistFetcher(_FinanceBase):

@@ -62,6 +62,23 @@ class ToolResult:
     # asking is a model that answered its own question. Typed as a plain dict so
     # this module, the contract every tool depends on, stays free of UI types.
     ask: dict[str, Any] | None = None
+    # Something to DRAW rather than describe:
+    #   {kind: "line", title, subtitle, currency, series: [{label, points:
+    #    [{t, v}]}], summary}
+    #
+    # WHY THE UI GETS ITS OWN COPY instead of rendering the model's prose: a
+    # price series read back as a sentence is both unreadable and unverifiable,
+    # and asking a 7B model to transcribe 250 numbers into a chart spec is
+    # asking it to make one up. This payload comes straight from the tool
+    # result, so the picture cannot disagree with the data it was built from.
+    #
+    # `summary` is the accessible one-liner ("NVDA over 1y: up 51.9%, from
+    # $78.12 to $118.63"). It is computed HERE, from the same points the chart
+    # draws, so the caption can never contradict the line — see the endpoint
+    # handling in finance_query._downsample for the other half of that promise.
+    #
+    # A plain dict, like `ask`, so this module stays free of UI types.
+    chart: dict[str, Any] | None = None
 
 
 class Tool:

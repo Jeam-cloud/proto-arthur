@@ -23,6 +23,10 @@ MEMORY_USED = "memory_used"        # {items: [{id, text}]}
 # because it is terminal: nothing else is coming until the person answers. The
 # answer is sent as an ordinary user message, so nothing downstream is special.
 ASK_USER = "ask_user"              # {question, options: [{label, description}], multi}
+# Something to DRAW, straight from a tool result rather than from the model's
+# description of it. Does NOT end the turn (unlike ASK_USER): the model still
+# has to say what the picture means.
+CHART = "chart"                    # {kind, title, subtitle, note, series[], summary}
 TITLE = "title"                    # {conversation_id, title}
 ERROR = "error"                    # {code, message}
 DONE = "done"                      # {message_id, conversation_id}
