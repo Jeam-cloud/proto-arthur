@@ -648,6 +648,8 @@ async def _remember_workspace(s: AppState, root: str) -> None:
 # ---------- finance ----------
 
 WATCHLIST_KEY = "finance_watchlist"
+# Symbol -> company name. Written once per symbol; see get_watchlist_data.
+NAMES_KEY = "finance_symbol_names"
 
 
 @router.get("/finance/watchlist")
@@ -687,7 +689,22 @@ async def get_watchlist_data(request: Request) -> dict:
     if not symbols:
         return {"rows": {}, "symbols": [], "fetched_at": time.time(), "ok": True}
 
-    result = await s.watchlist.fetch(symbols)
+    # Company names are cached FOREVER, deliberately. Looking one up is
+    # yfinance's `.info` call — the slow, rate-limited one — and a company's
+    # name does not change. Sending the ones we already know means the
+    # expensive call runs once per symbol for the life of the install instead
+    # of on every refresh, which is what made the first version of this route
+    # time out and trip the circuit breaker.
+    known = await s.db.get_setting(NAMES_KEY, {}) or {}
+    result = await s.watchlist.fetch(symbols, names=known)
+    if result.ok:
+        rows = json.loads(result.content)
+        learned = {
+            sym: row["name"] for sym, row in rows.items()
+            if isinstance(row, dict) and row.get("name") and row["name"] != sym
+        }
+        if any(known.get(k) != v for k, v in learned.items()):
+            await s.db.set_setting(NAMES_KEY, {**known, **learned})
     if not result.ok:
         # Reported as a 200 with ok=false rather than a 5xx: the failure is
         # upstream and expected (rate limits, Yahoo changing shape, the circuit
@@ -695,7 +712,7 @@ async def get_watchlist_data(request: Request) -> dict:
         # an exception.
         return {"rows": {}, "symbols": symbols, "fetched_at": time.time(),
                 "ok": False, "error": result.content}
-    return {"rows": json.loads(result.content), "symbols": symbols,
+    return {"rows": rows, "symbols": symbols,
             "fetched_at": time.time(), "ok": True}
 
 

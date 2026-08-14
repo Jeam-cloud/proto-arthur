@@ -49,9 +49,16 @@ def _downsample(rows, limit):
 def _name_of(ticker, sym):
     """Display name, or the symbol if Yahoo won't say.
 
-    `.info` is the heavy, rate-limit-prone call in yfinance, so this is
-    best-effort and never fatal: a row with a symbol and no name is perfectly
-    usable, a row that failed because a name lookup 429'd is not.
+    `.info` IS THE EXPENSIVE CALL IN yfinance — it is the one that is slow and
+    that rate-limits, unlike `fast_info` which is a light quote endpoint. Every
+    caller here must therefore treat it as optional: a row showing a ticker and
+    no company name is perfectly usable; a row that failed because a name
+    lookup 429'd is not.
+
+    Callers should avoid it entirely when they already know the name — see the
+    `names` argument to watchlist(). Company names effectively never change, so
+    this should run once per symbol for the life of an install, not on every
+    refresh.
     """
     try:
         info = ticker.info or {}
@@ -114,30 +121,70 @@ def history(symbols, period):
     return out
 
 
-def watchlist(symbols):
-    """Everything one watchlist row needs, for every row, in ONE container run.
+def _batch_sparklines(symbols):
+    """One HTTP request for every symbol's closes, instead of one per symbol.
+
+    `yf.download` accepts a list and returns a column-grouped frame. For a
+    six-row watchlist this is the difference between one request and six, which
+    matters because the whole op runs inside a container with a fixed timeout
+    and Yahoo rate-limits aggressively.
+
+    Returns {sym: [closes]} and never raises — a missing sparkline empties one
+    cell, it does not fail the row.
+    """
+    out = {sym: [] for sym in symbols}
+    if not symbols:
+        return out
+    try:
+        df = yf.download(
+            tickers=symbols, period=SPARK_PERIOD, interval="1d",
+            group_by="ticker", auto_adjust=True, progress=False, threads=True,
+        )
+    except Exception:
+        return out
+
+    for sym in symbols:
+        try:
+            # Single-symbol downloads come back un-nested; multi-symbol are
+            # keyed by ticker. Handle both rather than special-casing len==1.
+            col = df[sym]["Close"] if len(symbols) > 1 else df["Close"]
+            closes = [round(float(c), 4) for c in col.dropna().tolist()]
+            out[sym] = _downsample(closes, SPARK_POINTS)
+        except Exception:
+            out[sym] = []
+    return out
+
+
+def watchlist(symbols, names=None):
+    """Everything the panel needs for every row, in ONE container run.
 
     WHY THIS OP EXISTS: the panel needs a quote AND a sparkline per symbol.
-    Done with the existing ops that is one `quote` call plus a `history` call
-    per five symbols — three container starts for a six-row list, each with a
-    45s timeout, on a feed that is 15 minutes delayed anyway. Batching it here
-    makes the whole panel one round trip.
+    Built from the existing ops that is a `quote` call plus a `history` call
+    per five symbols — three container starts for a six-row list, each with its
+    own timeout, on a feed that is 15 minutes delayed anyway.
+
+    THE COST MODEL MATTERS HERE, and getting it wrong is what made the first
+    version of this fail outright. Per symbol there are three possible calls:
+
+      fast_info   cheap   — always needed, it is the quote
+      history     medium  — now batched into ONE request for all symbols
+      .info       EXPENSIVE — the rate-limiting one; only for unknown names
+
+    `names` carries the names the caller already has, so the expensive call
+    runs once per symbol ever rather than on every refresh. A six-row watchlist
+    settles at six cheap calls plus one batch download.
     """
     symbols = symbols[:20]
+    names = names or {}
+    sparks = _batch_sparklines(symbols)
     out = {}
     for sym in symbols:
         try:
             t = yf.Ticker(sym)
             row = _quote_fields(t)
-            row["name"] = _name_of(t, sym)
-            try:
-                df = t.history(period=SPARK_PERIOD)
-                closes = [round(float(c), 4) for c in df["Close"].tolist()]
-                row["spark"] = _downsample(closes, SPARK_POINTS)
-            except Exception:
-                # A quote without a sparkline is still a usable row. The panel
-                # just leaves that cell empty rather than failing the symbol.
-                row["spark"] = []
+            known = names.get(sym)
+            row["name"] = known or _name_of(t, sym)
+            row["spark"] = sparks.get(sym) or []
             out[sym] = row
         except Exception as e:
             out[sym] = {"failed": True, "error": str(e)[:160]}
@@ -153,7 +200,7 @@ def main() -> None:
         elif op == "history":
             result = history(symbols, period)
         elif op == "watchlist":
-            result = watchlist(symbols)
+            result = watchlist(symbols, req.get("names"))
         else:
             raise ValueError(f"unknown op: {op}")
         print(json.dumps({"ok": True, "data": result}))

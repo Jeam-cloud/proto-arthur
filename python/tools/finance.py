@@ -19,7 +19,16 @@ from pydantic import BaseModel, Field, field_validator
 from sandbox.runner import SandboxRunner
 from tools.base import Risk, TaskMode, Tool, ToolContext, ToolResult
 
-FINANCE_IMAGE = "arthur-finance:1"
+# BUMP THIS WHENEVER finance_query.py CHANGES.
+#
+# The script is COPYed into the image, and ensure_image() returns early if the
+# tag already exists locally — it never rebuilds. So an edit to the script is
+# invisible on any machine that has already built the previous tag, and the
+# symptom is the worst kind: new code, old behaviour, no error anywhere.
+#
+# :2 — batched sparkline download, names passed in from the app's cache
+#      instead of an `.info` call per symbol on every refresh.
+FINANCE_IMAGE = "arthur-finance:2"
 CACHE_TTL_S = 15 * 60
 BREAKER_FAILS = 3
 BREAKER_COOLDOWN_S = 10 * 60
@@ -53,21 +62,44 @@ class _FinanceBase(Tool):
     def __init__(self, sandbox: SandboxRunner):
         self._sandbox = sandbox
 
-    async def _query(self, op: str, symbols: list[str], period: str = "1mo") -> ToolResult:
+    async def _query(
+        self, op: str, symbols: list[str], period: str = "1mo",
+        names: dict[str, str] | None = None, timeout_s: int = 45,
+    ) -> ToolResult:
         if not self._breaker.ok():
-            return ToolResult(ok=False, summary="finance data temporarily unavailable",
-                              content="Market data is temporarily unavailable (repeated Yahoo Finance failures). Try again in a few minutes.")
+            wait = max(1, int((self._breaker.open_until - time.time()) / 60))
+            return ToolResult(
+                ok=False, summary="finance data paused",
+                content=(
+                    f"Paused after {BREAKER_FAILS} failed attempts in a row. "
+                    f"Retrying in about {wait} min. The cause was whatever the last "
+                    "attempt reported — Docker not running, the container timing out, "
+                    "or Yahoo rate-limiting."
+                ),
+            )
 
         key = f"{op}:{','.join(sorted(symbols))}:{period}"
         cached = self._cache.get(key)
         if cached and time.time() - cached[0] < CACHE_TTL_S:
             return ToolResult(ok=True, content=cached[1], summary=f"{op} (cached)")
 
-        payload = json.dumps({"op": op, "symbols": symbols, "period": period})
+        # Docker checked FIRST and reported as itself. Rolling a missing daemon
+        # into the generic failure path meant three attempts against something
+        # that was never going to work, and then a message blaming "repeated
+        # Yahoo Finance failures" for a problem Yahoo had no part in.
+        if not await self._sandbox.is_available():
+            return ToolResult(
+                ok=False, summary="Docker not running",
+                content=("Market data runs in a container and Docker isn't running. "
+                         "Start Docker Desktop and try again."),
+            )
+
+        payload = json.dumps({"op": op, "symbols": symbols, "period": period,
+                              "names": names or {}})
         try:
             await self._sandbox.ensure_image(FINANCE_IMAGE, "finance.Dockerfile")
             res = await self._sandbox.run(
-                FINANCE_IMAGE, [], stdin_data=payload, network="bridge", timeout_s=45
+                FINANCE_IMAGE, [], stdin_data=payload, network="bridge", timeout_s=timeout_s
             )
             data = json.loads(res.stdout.strip().splitlines()[-1])
         except Exception as e:
@@ -137,5 +169,10 @@ class WatchlistFetcher(_FinanceBase):
     upstream, so they have to back off together.
     """
 
-    async def fetch(self, symbols: list[str]) -> ToolResult:
-        return await self._query("watchlist", symbols)
+    async def fetch(
+        self, symbols: list[str], names: dict[str, str] | None = None,
+    ) -> ToolResult:
+        # 90s rather than the tools' 45: this op covers every row on the panel,
+        # and the first run for an unseen symbol still pays for one `.info`
+        # lookup. Later refreshes reuse the cached names and finish quickly.
+        return await self._query("watchlist", symbols, names=names, timeout_s=90)
