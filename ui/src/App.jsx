@@ -7,7 +7,7 @@ import { useBackend } from "./stores/backend";
 import { useConversations } from "./stores/conversations";
 import { useSettings } from "./stores/settings";
 import { useResearch } from "./stores/research";
-import ModeRail, { LogoMark } from "./components/ModeRail";
+import ModeRail, { LogoMark, MODES } from "./components/ModeRail";
 import Sidebar from "./components/Sidebar";
 import ModelHub from "./components/ModelHub";
 import CommandPalette from "./components/CommandPalette";
@@ -72,6 +72,27 @@ export default function App() {
       if (mod && e.key === "n") { e.preventDefault(); useConversations.getState().createNew(); setView("chat"); }
       if (mod && e.key === "k") { e.preventDefault(); setPaletteOpen((o) => !o); }
       if (mod && e.key === ",") { e.preventDefault(); setView("settings"); }
+      // Ctrl+1..7 start a chat in that mode, in rail order. The flyout prints
+      // these next to each name, so they have to actually work — advertising a
+      // shortcut that does nothing is worse than not advertising one.
+      //
+      // Disabled modes are skipped rather than started: pressing Ctrl+5 with
+      // Docker off would otherwise create a Finance chat with no tools, which
+      // is the dead end the rail's own greying-out exists to prevent. The
+      // `status` check mirrors ModeRail.stateOf.
+      if (mod && !e.shiftKey && !e.altKey && /^[1-7]$/.test(e.key)) {
+        const m = MODES[Number(e.key) - 1];
+        if (m) {
+          const blocked = m.soon
+            || (m.needsDocker && status && !status.docker_up)
+            || (m.needsEmail && status && !status.email_configured);
+          if (!blocked) {
+            e.preventDefault();
+            useConversations.getState().createNew({ mode: m.id });
+            setView("chat");
+          }
+        }
+      }
       // Esc unwinds one layer at a time, innermost first. The hub handles its
       // own Esc (it needs to refuse while a download is running), so it's
       // checked here only to stop this handler from also kicking you out of
@@ -84,7 +105,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [paletteOpen, hubOpen]);
+  }, [paletteOpen, hubOpen, status]);
 
   if (bootError || phase === "failed") {
     return (

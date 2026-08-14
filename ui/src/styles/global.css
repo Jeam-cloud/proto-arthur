@@ -118,27 +118,99 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 .app { display: flex; height: 100%; }
 .main-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
 
-/* ---------- mode rail (far-left icon column, mirrors the mock) ---------- */
+/* ---------- mode rail (far-left icon column + its flyout) ---------- */
+/* The hover region covers the rail AND the panel, so crossing from an icon to
+   the row beside it never leaves it and never starts the close timer. */
+.rail-zone { position: relative; display: flex; flex-shrink: 0; z-index: 20; }
 .mode-rail {
   width: 62px; flex-shrink: 0; background: var(--bg2); border-right: 1px solid var(--border);
-  display: flex; flex-direction: column; align-items: center; padding: 14px 0 12px;
+  display: flex; flex-direction: column; align-items: center; padding: 13px 0 11px;
 }
-.mode-rail .logo { width: 32px; height: 32px; border-radius: 10px; margin-bottom: 0; }
-.rail-sep { width: 24px; height: 1px; background: var(--border); margin: 14px 0 12px; flex-shrink: 0; }
+.mode-rail .logo { width: 30px; height: 30px; border-radius: 9px; margin-bottom: 0; }
+.rail-sep { width: 22px; height: 1px; background: var(--border); margin: 14px 0 11px; flex-shrink: 0; }
+/* The gap between General and the rest used to be a bare `height: 46px` spacer
+   in the JSX — an arbitrary hole that read as a spacing mistake rather than as
+   a grouping. A hairline says the same thing and means it. */
+.rail-sep.subtle { margin: 8px 0 9px; opacity: 0.55; }
+.rail-group { display: flex; flex-direction: column; gap: 4px; }
 .rail-btn {
-  width: 42px; height: 42px; border-radius: 12px; border: none; background: none;
+  width: 38px; height: 38px; border-radius: 10px; border: none; background: none;
   color: var(--tmut); display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0; margin-bottom: 5px; transition: background 0.13s, color 0.13s;
+  flex-shrink: 0; transition: background 0.13s, color 0.13s;
 }
-.rail-btn:hover { background: var(--muted); color: var(--text); }
+.rail-btn:hover:not(:disabled) { background: var(--muted); color: var(--text); }
 /* Active rail item = a raised surface (--emph) with full-strength text, NOT a
    solid accent fill. An earlier pass used the accent here; the updated mockup
    walks that back, and it's the right call -- the rail can have two things lit
    at once (a mode AND the hub/settings page you're on), and two solid white
    blocks in one 62px column fights for attention. */
 .rail-btn.active { background: var(--emph); color: var(--text); }
-.rail-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.rail-btn:disabled { opacity: 0.42; cursor: not-allowed; }
+/* The modes get their spacing from .rail-group's gap. The hub and settings
+   buttons sit outside that group, below the spacer, so they need their own —
+   without this they touch, since the old per-button margin is gone. */
+.mode-rail > .rail-btn + .rail-btn { margin-top: 4px; }
 .rail-spacer { flex: 1; }
+
+/* THE FLYOUT — floats over the content, never widens the rail. Growing the
+   rail itself would shove the sidebar and the whole conversation sideways
+   every time the pointer crossed it. */
+.rail-flyout {
+  position: absolute; left: 62px; top: 0; bottom: 0; width: 186px;
+  background: var(--bg2); border-right: 1px solid var(--border);
+  box-shadow: 14px 0 34px rgba(0, 0, 0, 0.42);
+  padding: 13px 10px 11px; display: flex; flex-direction: column;
+  /* Slides out from behind the rail rather than fading in place: the movement
+     is what tells you it belongs to the column it came from. */
+  animation: rail-out 0.19s cubic-bezier(.16, 1, .3, 1);
+}
+@keyframes rail-out {
+  from { opacity: 0; transform: translateX(-10px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.rail-flyout-head {
+  font-size: 8.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--tmut); padding: 8px;
+}
+.rail-rows { display: flex; flex-direction: column; gap: 4px; }
+/* FIXED HEIGHT, always. The second line lives inside the same 38px rather than
+   adding to it — a row that grows on hover would push every row below it down,
+   so pointing at Research would move Code out from under the pointer. */
+.rail-row {
+  position: relative; display: flex; flex-direction: column; justify-content: center;
+  height: 38px; flex-shrink: 0; padding: 0 10px; border: none; background: none;
+  border-radius: 10px; text-align: left; color: var(--tmut); font-size: 13px;
+  transition: background 0.12s, color 0.12s;
+  animation: rail-row-in 0.22s cubic-bezier(.16, 1, .3, 1) both;
+}
+@keyframes rail-row-in {
+  from { opacity: 0; transform: translateX(-6px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.rail-row:hover:not(:disabled) { background: var(--muted); color: var(--text); }
+.rail-row.active { background: var(--emph); color: var(--text); }
+.rail-row.active .rail-row-label { font-weight: 600; }
+.rail-row:disabled { opacity: 0.55; cursor: not-allowed; }
+.rail-row-label { line-height: 1.25; }
+.rail-row-key {
+  position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+  font-family: var(--mono); font-size: 10px; color: var(--tmut);
+  opacity: 0; transition: opacity 0.12s;
+}
+/* The shortcut appears on the row you are pointing at, not on all seven at
+   once — a column of key hints competes with the names for the same glance. */
+.rail-row:hover .rail-row-key { opacity: 1; }
+/* Second line. Only ever one of these two is present on a row. */
+.rail-row-blurb, .rail-row-reason { font-size: 10.5px; line-height: 1.3; }
+.rail-row-blurb {
+  color: var(--tmut); opacity: 0; transition: opacity 0.14s;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rail-row:hover .rail-row-blurb, .rail-row.active .rail-row-blurb { opacity: 0.8; }
+/* A reason is always visible: it explains why the row cannot be used, and
+   hiding it behind a hover would leave a dimmed row with no explanation —
+   exactly the problem this panel exists to solve. */
+.rail-row-reason { color: var(--yellow); }
 
 /* ---------- sidebar (conversations) ---------- */
 .sidebar {
