@@ -110,6 +110,35 @@ class ArchiveRequest(BaseModel):
     archived: bool = True
 
 
+class WatchlistRequest(BaseModel):
+    """The symbols the user wants on their watchlist.
+
+    Validated the same way tool arguments are, because these strings end up
+    inside the finance container: a "symbol" is a ticker and nothing else, so
+    an injected value cannot smuggle a payload across that boundary.
+
+    Capped at 20 — the panel is a glance, not a screener, and every symbol is
+    one more upstream lookup on a feed that rate-limits.
+    """
+    symbols: list[str] = Field(default_factory=list, max_length=20)
+
+    @field_validator("symbols")
+    @classmethod
+    def clean(cls, v: list[str]) -> list[str]:
+        out: list[str] = []
+        for s in v:
+            s = s.strip().upper()
+            if not s:
+                continue
+            if not (1 <= len(s) <= 12 and s.replace(".", "").replace("-", "").replace("=", "").isalnum()):
+                raise ValueError(f"invalid ticker: {s!r}")
+            # De-duplicated here rather than in the UI: the same symbol twice is
+            # two rows fetching the same data and two places to remove it from.
+            if s not in out:
+                out.append(s)
+        return out
+
+
 class ConversationModelRequest(BaseModel):
     """The model this conversation should use from now on.
 

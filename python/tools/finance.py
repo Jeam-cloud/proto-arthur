@@ -124,3 +124,18 @@ class StockHistoryTool(_FinanceBase):
 
     async def execute(self, args: HistoryArgs, ctx: ToolContext) -> ToolResult:
         return await self._query("history", args.symbols, args.period)
+
+
+class WatchlistFetcher(_FinanceBase):
+    """NOT a tool — the watchlist panel's data source.
+
+    It deliberately has no `name`/`Args`/`description`, so the registry never
+    offers it to the model: the panel is the user's own view of symbols they
+    chose, not something a turn should be able to fetch or change. It subclasses
+    _FinanceBase purely to inherit the cache and the circuit breaker, which must
+    be shared with the tools — the panel and a `stock_quote` call hit the same
+    upstream, so they have to back off together.
+    """
+
+    async def fetch(self, symbols: list[str]) -> ToolResult:
+        return await self._query("watchlist", symbols)

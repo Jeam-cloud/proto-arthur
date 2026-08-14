@@ -33,6 +33,7 @@ from tools.coding import (
     DeleteFileTool, EditFileTool, ListDirTool, ReadFileTool, WriteFileTool,
 )
 from tools.email_service import EmailRouter, SmtpImapBackend
+from tools.finance import WatchlistFetcher
 
 
 class FakeVault:
@@ -122,6 +123,10 @@ async def app_state(settings, db, fake_llm, embedder, vault) -> AppState:
         changesets=changesets, undos=undos, registry=registry, agent=agent, chat=chat,
         email_router=email_router, transcriber=None, byok=None,
         research=research,
+        # Built on the fake sandbox like everything else here, so the watchlist
+        # routes are exercised against the same no-Docker path the tests use
+        # for every other container-backed tool.
+        watchlist=WatchlistFetcher(sandbox),
     )
 
 

@@ -44,7 +44,7 @@ from tools.email_service import (
     EmailListTool, EmailRouter, EmailSearchTool, EmailSendTool,
     SmtpImapBackend,
 )
-from tools.finance import StockHistoryTool, StockQuoteTool
+from tools.finance import StockHistoryTool, StockQuoteTool, WatchlistFetcher
 from tools.research import QuickSearchTool, WebResearchTool
 from tools.search import FindFilesTool, SearchFilesTool
 from voice.transcriber import Transcriber
@@ -75,6 +75,7 @@ class AppState:
     transcriber: Transcriber
     byok: BYOKRouter
     research: ResearchEngine
+    watchlist: WatchlistFetcher
 
 
 async def build_state(settings: Settings) -> AppState:
@@ -154,4 +155,7 @@ async def build_state(settings: Settings) -> AppState:
         changesets=changesets, undos=undos, registry=registry, agent=agent, chat=chat,
         email_router=email_router, transcriber=Transcriber(), byok=byok,
         research=research,
+        # Shares the finance cache and circuit breaker with the tools above:
+        # panel and model hit the same upstream, so they back off together.
+        watchlist=WatchlistFetcher(sandbox),
     )

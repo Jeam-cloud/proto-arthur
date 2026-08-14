@@ -17,7 +17,9 @@ resolves any pending approval to "denied". Nothing leaks.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
@@ -33,7 +35,8 @@ from core.api.schemas import (
     MemoryUpdate, PersonaBody,
     PullRequest, RenameRequest, ResearchExportRequest, ResearchFindSourcesRequest,
     ResearchPlanRequest, ResearchRunRequest, ResearchSynthesizeRequest, SecretBody, SettingsPatch,
-    AttachPathsRequest, ChangesRequest, NewConversation, UndoRequest, WorkspaceRequest,
+    AttachPathsRequest, ChangesRequest, NewConversation, UndoRequest, WatchlistRequest,
+    WorkspaceRequest,
 )
 from core.code_apply import apply_changeset
 from research import citations as research_citations
@@ -640,6 +643,60 @@ async def _remember_workspace(s: AppState, root: str) -> None:
     recents = [r for r in recents if r != root][:MAX_RECENT_ROOTS - 1]
     await s.db.set_setting(RECENT_ROOTS_KEY, [root, *recents])
     await s.db.set_setting("workspace_root", root)
+
+
+# ---------- finance ----------
+
+WATCHLIST_KEY = "finance_watchlist"
+
+
+@router.get("/finance/watchlist")
+async def get_watchlist(request: Request) -> dict:
+    """The symbols only. Cheap, no upstream call, safe to hit on every mount."""
+    symbols = await state(request).db.get_setting(WATCHLIST_KEY, []) or []
+    return {"symbols": symbols}
+
+
+@router.put("/finance/watchlist")
+async def put_watchlist(request: Request, body: WatchlistRequest) -> dict:
+    """Replace the list.
+
+    APP-WIDE, not per-conversation. A watchlist is a standing view of what the
+    user follows — unlike mode, folder and model, which belong to a single
+    chat, it should be the same list whichever Finance conversation is open.
+    """
+    await state(request).db.set_setting(WATCHLIST_KEY, body.symbols)
+    return {"ok": True, "symbols": body.symbols}
+
+
+@router.get("/finance/watchlist/data")
+async def get_watchlist_data(request: Request) -> dict:
+    """Quotes and sparklines for the saved symbols, in one upstream round trip.
+
+    `fetched_at` is returned so the UI can print how old the numbers are. It is
+    NOT optional decoration: Yahoo's feed is ~15 minutes delayed and this
+    response may additionally be served from a 15-minute cache, so a price can
+    be half an hour old while looking current. Every surface that shows one has
+    to be able to say when it was taken.
+
+    An empty watchlist returns 200 with no rows rather than an error — nothing
+    has gone wrong, there is simply nothing on it yet.
+    """
+    s = state(request)
+    symbols = await s.db.get_setting(WATCHLIST_KEY, []) or []
+    if not symbols:
+        return {"rows": {}, "symbols": [], "fetched_at": time.time(), "ok": True}
+
+    result = await s.watchlist.fetch(symbols)
+    if not result.ok:
+        # Reported as a 200 with ok=false rather than a 5xx: the failure is
+        # upstream and expected (rate limits, Yahoo changing shape, the circuit
+        # breaker holding off), and the panel needs to render a retry state, not
+        # an exception.
+        return {"rows": {}, "symbols": symbols, "fetched_at": time.time(),
+                "ok": False, "error": result.content}
+    return {"rows": json.loads(result.content), "symbols": symbols,
+            "fetched_at": time.time(), "ok": True}
 
 
 @router.get("/workspace/recents")

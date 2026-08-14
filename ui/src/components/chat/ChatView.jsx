@@ -10,6 +10,7 @@ import AskUser from "./AskUser";
 import WorkspaceBar from "../code/WorkspaceBar";
 import FileTree from "../code/FileTree";
 import ChangesPanel from "../code/ChangesPanel";
+import WatchlistPanel from "../finance/WatchlistPanel";
 import { useWorkspace } from "../../stores/workspace";
 import { useChanges } from "../../stores/changes";
 import { useAttachments } from "../../stores/attachments";
@@ -223,6 +224,10 @@ export default function ChatView({ mode }) {
           anything: the path is the hard part to remember, the sentence around
           it is the user's. */}
       {mode === "code" && <FileTree onPick={(p) => requestInsert(`\`${p}\` `)} />}
+      {/* Finance's watchlist takes the same right-hand slot Code's file tree
+          uses. Both are "the context this mode works against", and putting
+          them in one place means a mode's panel is always in the same spot. */}
+      {mode === "finance" && <WatchlistPanel />}
       </div>
 
       {/* Directly above the composer, so the last thing between "the agent
