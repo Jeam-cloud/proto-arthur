@@ -44,6 +44,11 @@
   --red: #fca5a5;
   --orange: #fb923c;
   --radius: 10px;
+  /* The house easing curve, from the mockup. Fast out of the gate and a long
+     settle — it reads as responsive without the springy overshoot that makes
+     a UI feel like it is showing off. Use it for state changes; keep the
+     bouncier cubic-bezier(.16,1,.3,1) for things that appear from nothing. */
+  --ease: cubic-bezier(.32, .72, 0, 1);
   --sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --mono: "Cascadia Code", Consolas, "SF Mono", ui-monospace, monospace;
   --font-scale: 1;
@@ -118,99 +123,78 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 .app { display: flex; height: 100%; }
 .main-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
 
-/* ---------- mode rail (far-left icon column + its flyout) ---------- */
-/* The hover region covers the rail AND the panel, so crossing from an icon to
-   the row beside it never leaves it and never starts the close timer. */
-.rail-zone { position: relative; display: flex; flex-shrink: 0; z-index: 20; }
+/* ---------- mode rail (far-left column: icons WITH their names) ---------- */
+/* 96px, not 62px. The extra 34px buys the names outright, which is what the
+   column was previously asking seven monochrome glyphs to convey on their own.
+   See ModeRail.jsx for why that was not working. */
 .mode-rail {
-  width: 62px; flex-shrink: 0; background: var(--bg2); border-right: 1px solid var(--border);
+  width: 96px; flex-shrink: 0; background: var(--bg2);
+  border-right: 1px solid var(--border);
   display: flex; flex-direction: column; align-items: center; padding: 13px 0 11px;
 }
-.mode-rail .logo { width: 30px; height: 30px; border-radius: 9px; margin-bottom: 0; }
-.rail-sep { width: 22px; height: 1px; background: var(--border); margin: 14px 0 11px; flex-shrink: 0; }
-/* The gap between General and the rest used to be a bare `height: 46px` spacer
-   in the JSX — an arbitrary hole that read as a spacing mistake rather than as
-   a grouping. A hairline says the same thing and means it. */
-.rail-sep.subtle { margin: 8px 0 9px; opacity: 0.55; }
-.rail-group { display: flex; flex-direction: column; gap: 4px; }
+.mode-rail .logo { width: 30px; height: 30px; border-radius: 9px; margin-bottom: 0; flex-shrink: 0; }
+.rail-sep { width: 64px; height: 1px; background: var(--border); margin: 13px 0 9px; flex-shrink: 0; }
+
+/* Scrolls rather than squashing: seven modes plus two footer items is already
+   tall, and a short window must not shrink the rows into each other. */
+.rail-items {
+  display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 0 7px;
+  flex: 1 1 0; min-height: 0; overflow-y: auto;
+}
+.rail-foot { display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 6px 7px 0; }
+
 .rail-btn {
-  width: 38px; height: 38px; border-radius: 10px; border: none; background: none;
-  color: var(--tmut); display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0; transition: background 0.13s, color 0.13s;
+  position: relative; width: 100%; border: none; background: none;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 9px 0 7px; border-radius: 10px; color: var(--tmut); font-family: inherit;
+  transition: background 0.22s var(--ease), color 0.22s var(--ease), opacity 0.22s var(--ease);
 }
 .rail-btn:hover:not(:disabled) { background: var(--muted); color: var(--text); }
 /* Active rail item = a raised surface (--emph) with full-strength text, NOT a
-   solid accent fill. An earlier pass used the accent here; the updated mockup
-   walks that back, and it's the right call -- the rail can have two things lit
-   at once (a mode AND the hub/settings page you're on), and two solid white
-   blocks in one 62px column fights for attention. */
+   solid accent fill. An earlier pass used the accent here; the mockup walks
+   that back, and it's the right call -- the rail can have two things lit at
+   once (a mode AND the hub/settings page you're on), and two solid white
+   blocks in one column fight for attention. */
 .rail-btn.active { background: var(--emph); color: var(--text); }
-.rail-btn:disabled { opacity: 0.42; cursor: not-allowed; }
-/* The modes get their spacing from .rail-group's gap. The hub and settings
-   buttons sit outside that group, below the spacer, so they need their own —
-   without this they touch, since the old per-button margin is gone. */
-.mode-rail > .rail-btn + .rail-btn { margin-top: 4px; }
-.rail-spacer { flex: 1; }
+.rail-btn.active .rail-label { font-weight: 600; }
+.rail-btn:disabled { opacity: 0.42; cursor: default; }
+.rail-label { font-size: 10.5px; font-weight: 500; letter-spacing: -0.005em; }
+.rail-foot .rail-label { font-size: 10px; }
 
-/* THE FLYOUT — floats over the content, never widens the rail. Growing the
-   rail itself would shove the sidebar and the whole conversation sideways
-   every time the pointer crossed it. */
-.rail-flyout {
-  position: absolute; left: 62px; top: 0; bottom: 0; width: 186px;
-  background: var(--bg2); border-right: 1px solid var(--border);
-  box-shadow: 14px 0 34px rgba(0, 0, 0, 0.42);
-  padding: 13px 10px 11px; display: flex; flex-direction: column;
-  /* Slides out from behind the rail rather than fading in place: the movement
-     is what tells you it belongs to the column it came from. */
-  animation: rail-out 0.19s cubic-bezier(.16, 1, .3, 1);
+/* THE TICK is the part you actually see. `--emph` on `--bg2` is a 9% white
+   wash; on its own it was almost invisible, which is what made the whole rail
+   read as inert. Animated on opacity only -- a bar that also slid or scaled
+   would draw the eye to the transition rather than to the selection. */
+.rail-tick {
+  position: absolute; left: 0; top: 9px; bottom: 9px; width: 2px; border-radius: 2px;
+  background: var(--text); opacity: 0; transition: opacity 0.22s var(--ease);
 }
-@keyframes rail-out {
-  from { opacity: 0; transform: translateX(-10px); }
-  to   { opacity: 1; transform: translateX(0); }
+.rail-btn.active .rail-tick { opacity: 1; }
+
+/* Amber dot = "there is something you can go and do about this". Deliberately
+   absent from Design, which is disabled because it does not exist yet -- a dot
+   there would be an invitation to fix something unfixable. */
+.rail-dot {
+  position: absolute; top: 8px; right: 14px; width: 5px; height: 5px;
+  border-radius: 50%; background: var(--yellow);
 }
-.rail-flyout-head {
-  font-size: 8.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
-  color: var(--tmut); padding: 8px;
+
+/* Replaces `title=`. Native tooltips have a ~1s delay, cannot be styled, and
+   are not shown at all on a disabled button in most browsers -- which is
+   exactly where the explanation was needed. */
+.rail-tip {
+  position: fixed; left: 104px; transform: translateY(-50%);
+  z-index: 90; max-width: 220px; pointer-events: none;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 8px 11px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  animation: tip-in 0.14s var(--ease);
 }
-.rail-rows { display: flex; flex-direction: column; gap: 4px; }
-/* FIXED HEIGHT, always. The second line lives inside the same 38px rather than
-   adding to it — a row that grows on hover would push every row below it down,
-   so pointing at Research would move Code out from under the pointer. */
-.rail-row {
-  position: relative; display: flex; flex-direction: column; justify-content: center;
-  height: 38px; flex-shrink: 0; padding: 0 10px; border: none; background: none;
-  border-radius: 10px; text-align: left; color: var(--tmut); font-size: 13px;
-  transition: background 0.12s, color 0.12s;
-  animation: rail-row-in 0.22s cubic-bezier(.16, 1, .3, 1) both;
+@keyframes tip-in {
+  from { opacity: 0; transform: translateY(-50%) translateX(-4px); }
+  to   { opacity: 1; transform: translateY(-50%) translateX(0); }
 }
-@keyframes rail-row-in {
-  from { opacity: 0; transform: translateX(-6px); }
-  to   { opacity: 1; transform: translateX(0); }
-}
-.rail-row:hover:not(:disabled) { background: var(--muted); color: var(--text); }
-.rail-row.active { background: var(--emph); color: var(--text); }
-.rail-row.active .rail-row-label { font-weight: 600; }
-.rail-row:disabled { opacity: 0.55; cursor: not-allowed; }
-.rail-row-label { line-height: 1.25; }
-.rail-row-key {
-  position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
-  font-family: var(--mono); font-size: 10px; color: var(--tmut);
-  opacity: 0; transition: opacity 0.12s;
-}
-/* The shortcut appears on the row you are pointing at, not on all seven at
-   once — a column of key hints competes with the names for the same glance. */
-.rail-row:hover .rail-row-key { opacity: 1; }
-/* Second line. Only ever one of these two is present on a row. */
-.rail-row-blurb, .rail-row-reason { font-size: 10.5px; line-height: 1.3; }
-.rail-row-blurb {
-  color: var(--tmut); opacity: 0; transition: opacity 0.14s;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.rail-row:hover .rail-row-blurb, .rail-row.active .rail-row-blurb { opacity: 0.8; }
-/* A reason is always visible: it explains why the row cannot be used, and
-   hiding it behind a hover would leave a dimmed row with no explanation —
-   exactly the problem this panel exists to solve. */
-.rail-row-reason { color: var(--yellow); }
+.rail-tip-label { font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.rail-tip-sub { font-size: 11.5px; color: var(--tmut); margin-top: 2px; line-height: 1.4; }
 
 /* ---------- sidebar (conversations) ---------- */
 .sidebar {
@@ -225,7 +209,17 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 /* The collapsed strip is 46px wide, so the rail's 42px buttons would fill it
    edge to edge. Scale them down here rather than adding inline styles at every
    call site. */
-.sidebar-collapsed .rail-btn { width: 30px; height: 30px; border-radius: 8px; margin-bottom: 0; }
+/* The sidebar's own icon buttons. These used to borrow `.rail-btn`, which was
+   fine while a rail button was a plain 42px square — it is now a labelled
+   column, and inheriting that turned these into squashed two-line buttons with
+   no second line. Same class-collision the composer hit with `.icon-btn`. */
+.sidebar-icon-btn {
+  width: 30px; height: 30px; border-radius: 8px; border: none; background: none;
+  color: var(--tmut); display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; transition: background 0.13s, color 0.13s;
+}
+.sidebar-icon-btn:hover { background: var(--muted); color: var(--text); }
+.sidebar-icon-btn.sm { width: 28px; height: 28px; }
 .sidebar-resize-handle {
   position: absolute; top: 0; right: -3px; width: 6px; height: 100%; cursor: col-resize; z-index: 6;
 }

@@ -65,10 +65,10 @@ export default function Sidebar({ view, mode, setView, onOpenPalette }) {
   if (collapsed) {
     return (
       <div className="sidebar-collapsed">
-        <button className="rail-btn" title="Expand sidebar" onClick={() => setCollapsed(false)}>
+        <button className="sidebar-icon-btn" title="Expand sidebar" onClick={() => setCollapsed(false)}>
           <PanelLeftOpen size={17} strokeWidth={1.7} />
         </button>
-        <button className="rail-btn" title="Search (Ctrl+K)" onClick={onOpenPalette}>
+        <button className="sidebar-icon-btn" title="Search (Ctrl+K)" onClick={onOpenPalette}>
           <Search size={16} strokeWidth={1.8} />
         </button>
       </div>
@@ -168,7 +168,7 @@ export default function Sidebar({ view, mode, setView, onOpenPalette }) {
           <div className="sidebar-title">Arthur</div>
           <div className="sidebar-mode-label">{modeLabel} mode</div>
         </div>
-        <button className="rail-btn" style={{ width: 28, height: 28 }} title="Collapse sidebar" onClick={() => setCollapsed(true)}>
+        <button className="sidebar-icon-btn sm" title="Collapse sidebar" onClick={() => setCollapsed(true)}>
           <PanelLeftClose size={16} strokeWidth={1.7} />
         </button>
       </div>
