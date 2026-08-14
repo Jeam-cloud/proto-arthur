@@ -31,7 +31,8 @@ log = logging.getLogger(__name__)
 #
 # :2 — batched sparkline download, names passed in from the app's cache
 #      instead of an `.info` call per symbol on every refresh.
-FINANCE_IMAGE = "arthur-finance:2"
+# :3 — request arrives via argv instead of stdin (see the call site).
+FINANCE_IMAGE = "arthur-finance:3"
 CACHE_TTL_S = 15 * 60
 BREAKER_FAILS = 3
 BREAKER_COOLDOWN_S = 10 * 60
@@ -101,8 +102,15 @@ class _FinanceBase(Tool):
                               "names": names or {}})
         try:
             await self._sandbox.ensure_image(FINANCE_IMAGE, "finance.Dockerfile")
+            # PASSED AS ARGV, NOT STDIN. Piping stdin into a container goes
+            # through docker-py's attach_socket, which does not behave the same
+            # on Windows named pipes — when the write does not land the script
+            # blocks forever in stdin.read() and gets killed by the timeout,
+            # having done nothing. Argv needs no socket and works identically
+            # everywhere. The list form means Docker execs directly, so the
+            # JSON is never shell-interpreted.
             res = await self._sandbox.run(
-                FINANCE_IMAGE, [], stdin_data=payload, network="bridge", timeout_s=timeout_s
+                FINANCE_IMAGE, [payload], network="bridge", timeout_s=timeout_s
             )
         except Exception as e:
             self._breaker.record(False)

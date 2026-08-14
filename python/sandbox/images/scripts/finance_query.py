@@ -191,8 +191,29 @@ def watchlist(symbols, names=None):
     return out
 
 
+def _read_request() -> dict:
+    """The request, from argv if given, else stdin.
+
+    ARGV IS THE PRIMARY PATH ON PURPOSE. Piping stdin into a container relies
+    on docker-py's attach_socket, which behaves differently on Windows named
+    pipes than on Unix sockets — and when the write does not land, this script
+    blocks in stdin.read() waiting for an EOF that never arrives, prints
+    nothing, and gets killed by the timeout. The symptom is a container that
+    "times out" while having done no work at all.
+
+    The payload here is a few hundred bytes of tickers, so it fits in argv
+    comfortably. It is passed as a list to Docker (exec form, no shell), so
+    quotes and braces in the JSON need no escaping and nothing is interpreted.
+
+    stdin is kept as a fallback so an older image and a newer app still work.
+    """
+    if len(sys.argv) > 1 and sys.argv[1].strip():
+        return json.loads(sys.argv[1])
+    return json.loads(sys.stdin.read())
+
+
 def main() -> None:
-    req = json.loads(sys.stdin.read())
+    req = _read_request()
     op, symbols, period = req.get("op"), req.get("symbols", []), req.get("period", "1mo")
     try:
         if op == "quote":
