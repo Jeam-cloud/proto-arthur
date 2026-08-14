@@ -144,10 +144,30 @@ def _batch_sparklines(symbols):
         return out
 
     for sym in symbols:
+        # SHAPE-SNIFFED, NOT COUNT-SNIFFED. yfinance returns either a flat
+        # frame or one with MultiIndex columns depending on version, on
+        # `group_by`, and on how many tickers came back — NOT reliably on how
+        # many were requested. Branching on len(symbols) therefore worked for
+        # some installs and silently produced no sparkline on others, which is
+        # exactly what a one-symbol watchlist hit. Try both and take whichever
+        # answers.
+        col = None
+        for get in (
+            lambda: df[sym]["Close"],      # MultiIndex, grouped by ticker
+            lambda: df["Close"][sym],      # MultiIndex, grouped by field
+            lambda: df["Close"],           # flat, single ticker
+        ):
+            try:
+                candidate = get()
+                if candidate is not None and len(candidate):
+                    col = candidate
+                    break
+            except Exception:
+                continue
+        if col is None:
+            out[sym] = []
+            continue
         try:
-            # Single-symbol downloads come back un-nested; multi-symbol are
-            # keyed by ticker. Handle both rather than special-casing len==1.
-            col = df[sym]["Close"] if len(symbols) > 1 else df["Close"]
             closes = [round(float(c), 4) for c in col.dropna().tolist()]
             out[sym] = _downsample(closes, SPARK_POINTS)
         except Exception:

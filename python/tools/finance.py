@@ -32,7 +32,9 @@ log = logging.getLogger(__name__)
 # :2 — batched sparkline download, names passed in from the app's cache
 #      instead of an `.info` call per symbol on every refresh.
 # :3 — request arrives via argv instead of stdin (see the call site).
-FINANCE_IMAGE = "arthur-finance:3"
+# :4 — sparkline extraction sniffs the frame SHAPE instead of assuming one
+#      from the symbol count, which left one-symbol watchlists with no chart.
+FINANCE_IMAGE = "arthur-finance:4"
 CACHE_TTL_S = 15 * 60
 BREAKER_FAILS = 3
 BREAKER_COOLDOWN_S = 10 * 60
