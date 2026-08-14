@@ -33,8 +33,28 @@ def _pdf_text(data: bytes) -> tuple[str, int]:
     return "\n\n".join(pages), len(read)
 
 
+def _read_request() -> dict:
+    """The request, from argv if given, else stdin.
+
+    ARGV IS THE PRIMARY PATH ON PURPOSE. Piping stdin into a container relies
+    on docker-py's attach_socket, which behaves differently on Windows named
+    pipes than on Unix sockets — and when the write does not land, this script
+    blocks in stdin.read() waiting for an EOF that never arrives, prints
+    nothing, and is killed by the timeout. The failure looks like a slow fetch
+    while no fetch was ever attempted.
+
+    A list of URLs fits in argv comfortably. Docker receives it as a list and
+    execs directly, so nothing is shell-interpreted.
+
+    stdin stays as a fallback so an older image and a newer app still work.
+    """
+    if len(sys.argv) > 1 and sys.argv[1].strip():
+        return json.loads(sys.argv[1])
+    return json.loads(sys.stdin.read())
+
+
 def main() -> None:
-    payload = json.loads(sys.stdin.read())
+    payload = _read_request()
     urls = payload.get("urls", [])[:8]
     for url in urls:
         row = {"url": url, "title": "", "text": "", "error": None, "is_pdf": False, "pages": 0}

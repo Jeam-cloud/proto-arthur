@@ -31,7 +31,7 @@ from tools.base import Risk, TaskMode, Tool, ToolContext, ToolResult
 # Tag bumped to :2 when PDF extraction (pypdf) was added to the image.
 # ensure_image only checks whether the TAG exists, so changing the Dockerfile
 # without changing the tag would silently keep serving the old image.
-RESEARCH_IMAGE = "arthur-research:2"
+RESEARCH_IMAGE = "arthur-research:3"  # :3 — request via argv, not stdin
 
 
 def chunk_text(text: str, size: int = 1200, overlap: int = 150) -> list[str]:
@@ -146,7 +146,11 @@ class WebResearchTool(Tool):
         try:
             await self._sandbox.ensure_image(RESEARCH_IMAGE, "research.Dockerfile")
             res = await self._sandbox.run(
-                RESEARCH_IMAGE, [], stdin_data=payload,
+                # Argv, not stdin: docker-py's attach_socket does not deliver
+                # reliably over Windows named pipes, and a container that never
+                # receives stdin blocks in read() until the timeout kills it —
+                # looking like a slow fetch that never actually happened.
+                RESEARCH_IMAGE, [payload],
                 network="bridge",  # fetching is the job; still no creds inside
                 timeout_s=60, mem_limit="768m",
             )

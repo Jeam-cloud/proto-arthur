@@ -49,7 +49,7 @@ log = logging.getLogger(__name__)
 
 Emit = Callable[[str, dict[str, Any]], Awaitable[None]]
 
-RESEARCH_IMAGE = "arthur-research:2"  # :2 adds pypdf — see sandbox/images/research.Dockerfile
+RESEARCH_IMAGE = "arthur-research:3"  # :2 pypdf; :3 request via argv — see sandbox/images/research.Dockerfile
 
 # Depth is a budget, not a quality setting. Everything downstream (how many
 # providers, how many pages, whether a gap pass runs) is derived from here so
@@ -596,7 +596,11 @@ class ResearchEngine:
         try:
             await self._sandbox.ensure_image(RESEARCH_IMAGE, "research.Dockerfile")
             res = await self._sandbox.run(
-                RESEARCH_IMAGE, [], stdin_data=payload,
+                # Argv, not stdin: docker-py's attach_socket does not deliver
+                # reliably over Windows named pipes, and a container that never
+                # receives stdin blocks in read() until the timeout kills it —
+                # looking like a slow fetch that never actually happened.
+                RESEARCH_IMAGE, [payload],
                 network="bridge", timeout_s=90, mem_limit="768m",
             )
             rows = [json.loads(line) for line in res.stdout.splitlines() if line.strip()]
