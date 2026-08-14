@@ -132,7 +132,6 @@ input:focus-visible, textarea:focus-visible { outline: none; }
   border-right: 1px solid var(--border);
   display: flex; flex-direction: column; align-items: center; padding: 13px 0 11px;
 }
-.mode-rail .logo { width: 30px; height: 30px; border-radius: 9px; margin-bottom: 0; flex-shrink: 0; }
 .rail-sep { width: 64px; height: 1px; background: var(--border); margin: 13px 0 9px; flex-shrink: 0; }
 
 /* Scrolls rather than squashing: seven modes plus two footer items is already
@@ -228,6 +227,10 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 .sidebar-header { display: flex; align-items: flex-start; gap: 8px; padding: 16px 14px 12px; }
 .sidebar-title { font-weight: 600; font-size: 15.5px; letter-spacing: -0.02em; }
 .sidebar-mode-label { font-size: 11.5px; color: var(--tmut); margin-top: 2px; }
+/* The accent-filled chip that used to sit behind the mark. The mark is solid
+   now and holds its own at 17px, so nothing in the app wraps it any more —
+   this survives only for the quick widget, which draws a literal "A" and still
+   needs something behind it. */
 .logo {
   width: 32px; height: 32px; background: var(--accent); border-radius: 10px;
   display: flex; align-items: center; justify-content: center;
@@ -956,7 +959,6 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 
 /* ---------- boot screen ---------- */
 .boot { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--tmut); }
-.boot .logo { width: 48px; height: 48px; font-size: 22px; border-radius: 13px; }
 .spinner {
   width: 22px; height: 22px; border: 2px solid var(--emph); border-top-color: var(--accent);
   border-radius: 50%; animation: rotate 0.8s linear infinite;
@@ -1890,11 +1892,16 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 /* ---------- Code mode: the review gate ----------
    Sits between the conversation and the composer. Collapsed it is one line of
    chrome; open it takes the column, because at that moment it IS the task. */
+/* A NOTE, NOT A CARD.
+   This was a full-width bordered box on --bg2, which gave a passing remark the
+   same visual weight as the changeset panel directly beneath it — two stacked
+   containers, one of which is a decision to make and the other of which is a
+   sentence you read once. Stripped to bare text and a small icon, it sits
+   where a caption sits and stops competing. */
 .code-idle {
-  display: flex; align-items: center; gap: 10px; flex-shrink: 0;
-  margin: 0 22px 10px; padding: 11px 14px;
-  border: 1px solid var(--border); border-radius: 12px; background: var(--bg2);
-  font-size: 12.5px; color: var(--tmut); line-height: 1.5;
+  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+  margin: 0 24px; padding: 2px 2px 0;
+  font-size: 12px; color: var(--tmut); line-height: 1.5;
 }
 .code-idle > svg { flex-shrink: 0; }
 

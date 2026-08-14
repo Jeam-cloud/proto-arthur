@@ -245,10 +245,10 @@ export default function ChatView({ mode }) {
           truthful thing to be showing. */}
       {mode === "code" && hasFolder && !pendingFiles && !codeReceipt && (
         <div className="code-idle">
-          <ShieldCheck size={15} strokeWidth={1.8} />
+          <ShieldCheck size={13} strokeWidth={1.8} />
           <span>
             {reviewGateOn
-              ? "Arthur edits this folder on its own, then stages every change here for you to review. Nothing is written until you approve it."
+              ? "Arthur edits this folder on its own and stages every change for your review — nothing is written until you approve it."
               // The old copy always described the review-first flow, even with
               // the setting off — telling a user "nothing is written until you
               // approve it" in the one mode where that's no longer true. This

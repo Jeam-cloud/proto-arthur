@@ -41,8 +41,10 @@ export default function WorkspaceBar({ conversationId }) {
 
   const menu = (
     <div className="ws-menu" data-ws-menu>
+      {/* "Change folder", not "Change". On its own the verb sits next to a path
+          and a mode badge and does not say what it acts on. */}
       <button className="btn tiny" onClick={() => setMenuOpen((v) => !v)}>
-        {root ? "Change" : "Choose folder"}
+        {root ? "Change folder" : "Choose folder"}
       </button>
       {menuOpen && (
         <div className="ws-menu-pop">

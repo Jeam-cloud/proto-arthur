@@ -8,7 +8,7 @@ import { LogoMark } from "../ModeRail";
 export default function BootScreen({ slow = false }) {
   return (
     <div className="boot">
-      <div className="logo"><LogoMark size={26} /></div>
+      <LogoMark size={44} />
       <div className="spinner" />
       <div style={{ fontSize: 13 }}>Starting Arthur…</div>
       {slow && (

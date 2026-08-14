@@ -110,7 +110,7 @@ export default function App() {
   if (bootError || phase === "failed") {
     return (
       <div className="boot">
-        <div className="logo"><LogoMark size={26} /></div>
+        <LogoMark size={44} />
         <h3 style={{ color: "var(--red)" }}>Arthur couldn't start</h3>
         <p style={{ maxWidth: 420, textAlign: "center", fontSize: 13 }}>
           {bootError || "The local backend stopped responding. Try restarting the app; if it keeps happening, check the logs folder in Settings."}

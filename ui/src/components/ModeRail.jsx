@@ -29,18 +29,32 @@ import {
 } from "lucide-react";
 import { useBackend } from "../stores/backend";
 
-// Arthur's mark: a peak with a crossbar, drawn inline rather than imported so
-// the rail badge, the boot screen and the onboarding card all render the exact
-// same path at whatever size they need. It's also what build/icon.png and
-// build/tray.png are generated from, so those stay visually identical.
+// Arthur's mark: three solid triangles, one leading and two beneath it.
+//
+// Drawn inline rather than imported so the rail, the boot screen, the
+// onboarding card and the error screen all render the exact same paths at
+// whatever size they need. It's also what build/icon.png and build/tray.png
+// are generated from, so those stay visually identical.
+//
+// FILLED, NOT STROKED, and it no longer sits inside an accent-filled rounded
+// square. The old mark was a 2.4px-stroke outline that needed a solid chip
+// behind it to read at 17px in the rail; solid shapes hold at that size on
+// their own, so the chip is gone and the mark inherits `currentColor` —
+// meaning it takes the colour of whatever it is placed in rather than forcing
+// a light square into a dark column.
+//
+// The two lower triangles are at 72% so the group reads as one mark with a
+// leading element, not as three separate shapes competing.
 export function LogoMark({ size = 18 }) {
   return (
     <svg
-      viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor"
-      strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"
+      viewBox="0 0 96 96" width={size} height={size}
+      fill="currentColor" style={{ flexShrink: 0 }}
+      aria-hidden="true"
     >
-      <path d="M5 20 12 5l7 15" />
-      <path d="M8.6 14.6h6.8" />
+      <path d="M48 10 66 42H30Z" />
+      <path d="M26 50 44 82H8Z" opacity=".72" />
+      <path d="M70 50 88 82H52Z" opacity=".72" />
     </svg>
   );
 }
@@ -137,7 +151,9 @@ export default function ModeRail({
 
   return (
     <div className="mode-rail">
-      <div className="logo"><LogoMark size={17} /></div>
+      {/* No wrapper. The mark is the mark now — a chip behind it would put a
+          light square at the top of a dark column for no reason. */}
+      <LogoMark size={30} />
       <div className="rail-sep" />
 
       <div className="rail-items">

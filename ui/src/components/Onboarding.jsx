@@ -52,9 +52,16 @@ export default function Onboarding() {
 function Welcome({ onNext }) {
   return (
     <>
-      <h1><span className="logo"><LogoMark size={21} /></span> Welcome to Arthur</h1>
-      <div style={{ fontSize: 12.5, color: "var(--tmut)", margin: "-6px 0 18px 48px" }}>
-        Local-first · No account · No subscription
+      {/* The mark sits BESIDE the heading rather than inside it, per the
+          design: at 40px it is a graphic in its own right, not a bullet. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 18 }}>
+        <LogoMark size={40} />
+        <div>
+          <h1 style={{ margin: 0 }}>Welcome to Arthur</h1>
+          <div style={{ fontSize: 12.5, color: "var(--tmut)", marginTop: 3 }}>
+            Local-first · No account · No subscription
+          </div>
+        </div>
       </div>
       <p>
         Arthur runs entirely on this computer, no account, no subscription, and nothing
