@@ -113,8 +113,28 @@ class SandboxRunner:
                 if stdin_data is not None:
                     sock = container.attach_socket(params={"stdin": 1, "stream": 1})
                     container.start()
-                    sock._sock.sendall(stdin_data.encode())
-                    sock._sock.close()
+                    # WINDOWS. docker-py's attach_socket returns different
+                    # objects per platform: on Unix a wrapper whose real socket
+                    # hangs off `._sock`, on Windows an NpipeSocket that IS the
+                    # socket and has no `._sock` at all. Reaching straight for
+                    # `._sock` therefore raised
+                    #
+                    #   'NpipeSocket' object has no attribute '_sock'
+                    #
+                    # on every Windows machine — which meant run_python, both
+                    # research fetch paths and all of Finance had never worked
+                    # there. This app is Windows-first, so that was most of the
+                    # sandboxed feature set.
+                    raw = getattr(sock, "_sock", sock)
+                    raw.sendall(stdin_data.encode())
+                    # Half-close so the child sees EOF on stdin and stops
+                    # reading. Not every transport implements shutdown, hence
+                    # the guard; close() alone is enough for npipe.
+                    try:
+                        raw.shutdown(1)  # SHUT_WR
+                    except (OSError, AttributeError, NotImplementedError):
+                        pass
+                    raw.close()
                 else:
                     container.start()
                 try:

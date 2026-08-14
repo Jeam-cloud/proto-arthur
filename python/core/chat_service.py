@@ -273,7 +273,25 @@ class ChatService:
                 await self._warn_if_code_was_only_printed(final_text, emit)
 
         # 6. sanitize + persist assistant turn
+        #
+        # THE SANITISED TEXT HAS TO GO BACK TO THE SCREEN, not just to the
+        # database. Tokens are streamed raw as they arrive and the renderer
+        # keeps its own accumulation as the final message, so scrubbing only
+        # `final_text` cleaned what was STORED and left what was DISPLAYED
+        # untouched. Two things leaked that way:
+        #
+        #   * spotlight delimiters, which is how <<EXTERNAL 1>>$307.25<<END-
+        #     EXTERNAL 1>> ended up rendered in a reply; and
+        #   * redacted secrets — an API key the model echoed was removed from
+        #     the transcript on disk after the user had already read it.
+        #
+        # DRAFT_REPLACE is the existing mechanism for "what you were shown is
+        # not what to keep" (the agent loop uses it when it recognises a tool
+        # call typed as prose), so the correction reuses it.
+        raw_text = final_text
         final_text = await self._gateway.scan_model_output(final_text)
+        if final_text != raw_text:
+            await emit(events.DRAFT_REPLACE, {"content": final_text})
         # An Ollama `:cloud` model is served from Ollama's infrastructure, not
         # this machine. Recording it as "local" -- which is what happened, since
         # every Ollama call defaults to local -- would make the transcript claim

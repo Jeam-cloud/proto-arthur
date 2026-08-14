@@ -65,7 +65,8 @@ function updatedAt(epochSeconds) {
 
 export default function WatchlistPanel() {
   const {
-    symbols, rows, fetchedAt, loading, loaded, error, load, refresh, add, remove,
+    symbols, rows, fetchedAt, loading, loaded, error,
+    load, refresh, add, remove, dismissError,
   } = useFinance();
   const [draft, setDraft] = useState("");
   const [adding, setAdding] = useState(false);
@@ -171,8 +172,17 @@ export default function WatchlistPanel() {
           </div>
         )}
 
+        {/* DISMISSIBLE, because this notice outlives its own truth. It reports
+            what the LAST fetch hit; once you have read it, it is a stale
+            description of a moment that has passed, and with no way to clear it
+            the panel keeps showing a failure that may no longer be happening.
+            Retry replaces it with a fresh result; the × says "I have read
+            this" without spending another upstream call to find out. */}
         {error && (
           <div className="wl-error">
+            <button className="wl-error-close" aria-label="Dismiss" onClick={dismissError}>
+              <X size={11} strokeWidth={2.2} />
+            </button>
             <span>{error}</span>
             <button className="btn tiny" onClick={() => refresh({ force: true })}>Retry</button>
           </div>

@@ -54,6 +54,11 @@ export const useFinance = create((set, get) => ({
     }
   },
 
+  // Clears the notice without touching the data. The rows already on screen
+  // stay: they were fetched successfully, and the failure being dismissed was
+  // about the attempt after them.
+  dismissError() { set({ error: null }); },
+
   async add(symbol) {
     const sym = String(symbol || "").trim().toUpperCase();
     if (!sym) return;
