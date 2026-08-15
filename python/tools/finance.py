@@ -34,7 +34,8 @@ log = logging.getLogger(__name__)
 # :3 — request arrives via argv instead of stdin (see the call site).
 # :4 — sparkline extraction sniffs the frame SHAPE instead of assuming one
 #      from the symbol count, which left one-symbol watchlists with no chart.
-FINANCE_IMAGE = "arthur-finance:4"
+# :5 — `detail` op for the symbol page (quote + history + .info profile).
+FINANCE_IMAGE = "arthur-finance:5"
 CACHE_TTL_S = 15 * 60
 BREAKER_FAILS = 3
 BREAKER_COOLDOWN_S = 10 * 60

@@ -763,13 +763,38 @@ async def get_symbol_news(request: Request, symbol: str) -> dict:
     name = known.get(sym) or sym
     query = f"{name} ({sym}) stock news" if name != sym else f"{sym} stock news"
 
+    api_key = s.vault.get("tavily")
+    if not api_key:
+        # Not an error state on this page: the rest of it works, and the empty
+        # state can say where to add a key.
+        return {"symbol": sym, "items": [], "ok": True, "unconfigured": True}
+
     try:
-        items = await s.research.quick_search(query, max_results=5)
+        from tavily import TavilyClient
+
+        res = await asyncio.to_thread(
+            lambda: TavilyClient(api_key=api_key).search(
+                query, max_results=5, topic="news",
+            )
+        )
     except Exception as e:
         # Coverage is supplementary. The page is fully usable without it, so a
         # search failure reports itself and changes nothing else.
         log.info("symbol news search failed for %s: %s", sym, e)
         return {"symbol": sym, "items": [], "ok": False, "error": str(e)[:200]}
+
+    items = []
+    for r in (res.get("results") or [])[:5]:
+        url = r.get("url") or ""
+        # The domain is what makes a source checkable at a glance — "reuters.com"
+        # tells you more than a 90-character headline URL.
+        domain = url.split("//")[-1].split("/")[0].removeprefix("www.")
+        items.append({
+            "title": r.get("title") or url,
+            "url": url,
+            "domain": domain,
+            "published": r.get("published_date"),
+        })
     return {"symbol": sym, "items": items, "ok": True}
 
 
