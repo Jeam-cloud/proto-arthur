@@ -11,7 +11,7 @@
 // looking current. The footer prints when the data was taken, and there is a
 // manual Refresh rather than a ticker that updates itself: an auto-refreshing
 // price implies real-time, and it moves numbers while someone is reading them.
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Plus, RefreshCw, X } from "lucide-react";
 import { sparkPath, useFinance } from "../../stores/finance";
 
@@ -65,9 +65,15 @@ function updatedAt(epochSeconds) {
 
 export default function WatchlistPanel() {
   const {
-    symbols, rows, fetchedAt, loading, loaded, error,
-    load, refresh, add, remove, dismissError,
+    symbols, rows, fetchedAt, loading, loaded, error, openSymbol,
+    load, refresh, add, remove, dismissError, open, reorder,
   } = useFinance();
+  // HTML5 drag, not a library: the list is short, the rows are uniform,
+  // and a drag-and-drop dependency for one panel is not a trade worth
+  // making. `dragFrom` is a ref because it changes mid-gesture and must
+  // not re-render the row being dragged.
+  const dragFrom = useRef(null);
+  const [dragOver, setDragOver] = useState(null);
   const [draft, setDraft] = useState("");
   const [adding, setAdding] = useState(false);
 
@@ -127,7 +133,7 @@ export default function WatchlistPanel() {
           </div>
         ))}
 
-        {symbols.map((sym) => {
+        {symbols.map((sym, i) => {
           const row = rows[sym];
           if (!row) return null;
 
@@ -145,7 +151,24 @@ export default function WatchlistPanel() {
           }
 
           return (
-            <div className="wl-row" key={sym}>
+            <button
+              className={`wl-row${sym === openSymbol ? " open" : ""}`
+                + (dragOver === i ? " drop-target" : "")}
+              key={sym}
+              draggable
+              onDragStart={() => { dragFrom.current = i; }}
+              onDragOver={(e) => { e.preventDefault(); setDragOver(i); }}
+              onDragLeave={() => setDragOver((v) => (v === i ? null : v))}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (dragFrom.current !== null) reorder(dragFrom.current, i);
+                dragFrom.current = null;
+                setDragOver(null);
+              }}
+              onDragEnd={() => { dragFrom.current = null; setDragOver(null); }}
+              onClick={() => open(sym)}
+              title={`Open ${sym}`}
+            >
               <div className="wl-id">
                 <div className="wl-sym">{sym}</div>
                 <div className="wl-name">{row.name || sym}</div>
@@ -155,13 +178,14 @@ export default function WatchlistPanel() {
                 <div className="wl-price">{money(row.price, row.currency)}</div>
                 <Change pct={row.change_pct} />
               </div>
-              <button
-                className="wl-remove" title={`Remove ${sym}`}
-                onClick={() => remove(sym)}
+              <span
+                className="wl-remove" title={`Remove ${sym}`} role="button" tabIndex={0}
+                onClick={(e) => { e.stopPropagation(); remove(sym); }}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); remove(sym); } }}
               >
                 <X size={12} strokeWidth={2} />
-              </button>
-            </div>
+              </span>
+            </button>
           );
         })}
 
@@ -192,7 +216,8 @@ export default function WatchlistPanel() {
       {/* The delay is stated permanently, not on hover. It is the single most
           important fact about every number above it. */}
       <div className="wl-foot">
-        Delayed ~15 min{stamp ? ` · updated ${stamp}` : ""}. Arrows carry direction, not just colour.
+        Click a ticker for its page, drag to reorder. Delayed ~15 min{stamp ? ` · updated ${stamp}` : ""}.
+        Arrows carry direction, not just colour.
       </div>
     </div>
   );

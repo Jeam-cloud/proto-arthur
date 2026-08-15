@@ -125,3 +125,17 @@ class NotFoundError(ArthurError):
 
     code = "not_found"
     http_status = 404
+
+
+class BadRequestError(ArthurError):
+    """The request itself is wrong.
+
+    Pydantic covers request BODIES and gives a 422 for free. Path and query
+    parameters have no schema, so anything validated by hand — a ticker in a
+    URL, a period string — had nowhere honest to land: raising a bare
+    ValueError produced a 500, which says "Arthur broke" about input Arthur
+    correctly refused.
+    """
+
+    code = "bad_request"
+    http_status = 400

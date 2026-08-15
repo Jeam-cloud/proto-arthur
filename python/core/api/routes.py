@@ -43,7 +43,7 @@ from research import citations as research_citations
 from research import engine as research_engine
 from research import export as research_export
 from core.deps import AppState
-from core.errors import ArthurError, NotFoundError, VoiceError
+from core.errors import ArthurError, BadRequestError, NotFoundError, VoiceError
 from core.hardware import detect as detect_hardware
 
 log = logging.getLogger(__name__)
@@ -727,7 +727,7 @@ async def get_symbol_detail(request: Request, symbol: str, period: str = "1mo") 
     s = state(request)
     sym = symbol.strip().upper()
     if not (1 <= len(sym) <= 12 and sym.replace(".", "").replace("-", "").replace("=", "").isalnum()):
-        raise ArthurError("invalid_symbol", f"Not a ticker: {symbol!r}", http_status=400)
+        raise BadRequestError(f"Not a ticker: {symbol!r}")
 
     known = await s.db.get_setting(NAMES_KEY, {}) or {}
     result = await s.watchlist.detail(sym, period=period, names=known)

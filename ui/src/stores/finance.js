@@ -54,6 +54,83 @@ export const useFinance = create((set, get) => ({
     }
   },
 
+
+  // ---- symbol page ----------------------------------------------------
+  // `openSymbol` is the whole view state: null means the transcript is on
+  // screen, a ticker means the page is. Kept HERE rather than in ChatView so
+  // the watchlist can show which row is being viewed without prop-drilling.
+  openSymbol: null,
+  detail: null,        // { row, fetched_at }
+  detailLoading: false,
+  detailError: null,
+  news: null,          // { items[], unconfigured? } — supplementary, never blocking
+  period: "1mo",
+
+  open(symbol) {
+    if (!symbol) return;
+    set({ openSymbol: symbol, detail: null, detailError: null, news: null });
+    get().loadDetail(symbol, get().period);
+    get().loadNews(symbol);
+  },
+
+  close() { set({ openSymbol: null, detail: null, news: null, detailError: null }); },
+
+  setPeriod(period) {
+    set({ period });
+    const sym = get().openSymbol;
+    if (sym) get().loadDetail(sym, period);
+  },
+
+  async loadDetail(symbol, period) {
+    set({ detailLoading: true, detailError: null });
+    try {
+      const res = await api.get(`/finance/symbol/${symbol}?period=${period}`);
+      // Guard against a slow response for a symbol the user has since left —
+      // otherwise clicking three rows quickly paints the wrong page.
+      if (get().openSymbol !== symbol) return;
+      set({
+        detail: res.ok ? { row: res.row, fetchedAt: res.fetched_at } : null,
+        detailError: res.ok ? null : (res.error || "Couldn't load this symbol."),
+      });
+    } catch (e) {
+      if (get().openSymbol === symbol) set({ detailError: e.message });
+    } finally {
+      if (get().openSymbol === symbol) set({ detailLoading: false });
+    }
+  },
+
+  async loadNews(symbol) {
+    try {
+      const res = await api.get(`/finance/symbol/${symbol}/news`);
+      if (get().openSymbol !== symbol) return;
+      set({ news: res });
+    } catch {
+      // Coverage is supplementary: the page is fully usable without it, so a
+      // failure here shows an empty section rather than an error.
+      if (get().openSymbol === symbol) set({ news: { items: [], ok: false } });
+    }
+  },
+
+  // Move a symbol to a new position and persist the order.
+  //
+  // The stored list IS the display order — there is no separate sort field, so
+  // reordering is just rewriting the array. Optimistic like add/remove: the row
+  // has already been dragged, and snapping it back while a request flies would
+  // look like the drag failed.
+  async reorder(from, to) {
+    const { symbols } = get();
+    if (from === to || from < 0 || to < 0 || from >= symbols.length || to >= symbols.length) return;
+    const next = [...symbols];
+    next.splice(to, 0, next.splice(from, 1)[0]);
+    set({ symbols: next });
+    try {
+      await api.put("/finance/watchlist", { symbols: next });
+    } catch (e) {
+      set({ symbols });
+      useToasts.getState().push(`Couldn't save the new order: ${e.message}`, "error");
+    }
+  },
+
   // Clears the notice without touching the data. The rows already on screen
   // stay: they were fetched successfully, and the failure being dismissed was
   // about the attempt after them.

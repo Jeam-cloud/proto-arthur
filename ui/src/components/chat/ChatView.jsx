@@ -12,10 +12,12 @@ import FileTree from "../code/FileTree";
 import ChangesPanel from "../code/ChangesPanel";
 import WatchlistPanel from "../finance/WatchlistPanel";
 import ChartCard from "../finance/ChartCard";
+import SymbolPage from "../finance/SymbolPage";
 import { useWorkspace } from "../../stores/workspace";
 import { useChanges } from "../../stores/changes";
 import { useAttachments } from "../../stores/attachments";
 import { useSettings } from "../../stores/settings";
+import { useFinance } from "../../stores/finance";
 import { useFileDrop } from "../../lib/useFileDrop";
 
 // Model selection lives in the composer bar (ModelMenu inside Composer),
@@ -30,6 +32,10 @@ export default function ChatView({ mode }) {
   const loadChanges = useChanges((s) => s.load);
   const pendingFiles = useChanges((s) => s.files);
   const codeReceipt = useChanges((s) => s.receipt);
+  // Finance only. A ticker being open swaps the transcript for its page —
+  // the watchlist and the composer stay, so the conversation is one click
+  // (or one question) away.
+  const openSymbol = useFinance((s) => s.openSymbol);
   const hasFolder = useWorkspace((s) => !!s.root);
   const reviewGateOn = useSettings((s) => !!s.values?.code_review_before_apply);
   // Just the last segment: "Working in atlas" is the project, "Working in
@@ -154,7 +160,9 @@ export default function ChatView({ mode }) {
         className={`chat-body${mode === "code" ? " with-files" : ""}${dragging ? " dropping" : ""}`}
         {...dropHandlers}
       >
-      {showSuggestions ? (
+      {mode === "finance" && openSymbol ? (
+        <SymbolPage />
+      ) : showSuggestions ? (
         <EmptyChat conversationId={activeId} mode={mode} />
       ) : (
         <div className="message-list" ref={listRef} onScroll={onListScroll}>

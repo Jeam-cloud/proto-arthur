@@ -195,6 +195,126 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 .rail-tip-label { font-size: 12.5px; font-weight: 600; white-space: nowrap; }
 .rail-tip-sub { font-size: 11.5px; color: var(--tmut); margin-top: 2px; line-height: 1.4; }
 
+/* ---------- finance: symbol page ---------- */
+/* Fills the main pane like Research mode's run screen. The composer stays
+   below it and the watchlist beside it — see SymbolPage.jsx for why this is
+   not a modal. */
+.symbol-page { flex: 1; min-width: 0; min-height: 0; display: flex; }
+.sp-scroll {
+  flex: 1; overflow-y: auto; padding: 14px 26px 24px; min-width: 0;
+  animation: sp-in 0.24s var(--ease);
+}
+@keyframes sp-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+.sp-head { margin-bottom: 10px; }
+.sp-back {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+  padding: 5px 10px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--muted); color: var(--tmut); font-family: inherit;
+}
+.sp-back:hover { color: var(--text); background: var(--emph); }
+
+.sp-title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.sp-sym { font-family: var(--mono); font-size: 19px; font-weight: 700; letter-spacing: -0.01em; }
+.sp-name { font-size: 13px; color: var(--tmut); }
+
+.sp-price-row {
+  display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; margin: 6px 0 14px;
+}
+.sp-price { font-family: var(--mono); font-size: 30px; font-weight: 600; letter-spacing: -0.02em; }
+.sp-cur { font-size: 11.5px; color: var(--tmut); }
+.sp-change { font-family: var(--mono); font-size: 13px; }
+.sp-change.up { color: var(--green); }
+.sp-change.down { color: var(--red); }
+/* Pushed right and quiet, but never absent. */
+.sp-stamp { margin-left: auto; font-size: 11px; color: var(--tmut); }
+
+.sp-card {
+  border: 1px solid var(--border); border-radius: 13px; background: var(--bg2);
+  padding: 12px 14px; margin-bottom: 12px;
+}
+.sp-chart { display: block; width: 100%; height: 260px; }
+.sp-chart.skeleton { background: var(--muted); border-radius: 9px;
+  animation: sk-pulse 1.3s ease-in-out infinite; }
+.sp-chart.empty { display: flex; align-items: center; justify-content: center;
+  color: var(--tmut); font-size: 12.5px; }
+.sp-chart-line { fill: none; stroke-width: 1.6; stroke-linejoin: round;
+  stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.sp-chart-area { stroke: none; opacity: 0.08; }
+.sp-chart.up .sp-chart-line { stroke: var(--green); }
+.sp-chart.up .sp-chart-area { fill: var(--green); }
+.sp-chart.down .sp-chart-line { stroke: var(--red); }
+.sp-chart.down .sp-chart-area { fill: var(--red); }
+
+.sp-periods { display: flex; align-items: center; gap: 3px; margin-top: 10px; }
+.sp-period {
+  font-size: 11.5px; padding: 4px 10px; border-radius: 7px; border: none;
+  background: none; color: var(--tmut); font-family: inherit;
+  transition: background 0.16s var(--ease), color 0.16s var(--ease);
+}
+.sp-period:hover { color: var(--text); }
+.sp-period.active { background: var(--emph); color: var(--text); font-weight: 600; }
+.sp-daily { margin-left: auto; font-size: 11px; color: var(--tmut); }
+
+/* THE WINDOW FIGURE, and it says which window. The header % is today's; this
+   is the selected period. Both on one screen with nothing distinguishing them
+   is how someone reads "up" on a day they are down. */
+.sp-caption { margin-top: 9px; font-size: 11.5px; color: var(--tmut); line-height: 1.5; }
+
+.sp-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.sp-stats.secondary { margin-top: 10px; }
+.sp-stat {
+  border: 1px solid var(--border); border-radius: 12px; background: var(--bg2); padding: 11px 13px;
+}
+.sp-stat.wide { grid-column: span 1; }
+.sp-stat-label { font-size: 11px; color: var(--tmut); margin-bottom: 6px; }
+.sp-stat-value { font-family: var(--mono); font-size: 16px; font-weight: 600; }
+.sp-stat-value.sm { font-family: var(--sans); font-size: 13px; font-weight: 500; }
+
+/* Where the price sits in the band, not two loose numbers. */
+.sp-range { position: relative; height: 3px; border-radius: 2px; background: var(--emph); margin: 12px 0 6px; }
+.sp-range-mark {
+  position: absolute; top: -4px; width: 2px; height: 11px; border-radius: 1px;
+  background: var(--text); transform: translateX(-1px);
+}
+.sp-range-ends { display: flex; justify-content: space-between;
+  font-family: var(--mono); font-size: 10.5px; color: var(--tmut); }
+
+.sp-about { margin-top: 12px; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--bg2); padding: 11px 13px; }
+.sp-about summary { font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.sp-about p { margin-top: 8px; font-size: 12.5px; color: var(--tmut); line-height: 1.6; }
+.sp-link { display: inline-flex; align-items: center; gap: 4px; margin-top: 8px;
+  font-size: 11.5px; color: var(--tmut); }
+.sp-link:hover { color: var(--text); }
+
+.sp-news { margin-top: 12px; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--bg2); overflow: hidden; }
+.sp-news-head { font-size: 12.5px; font-weight: 600; padding: 11px 13px 4px; }
+.sp-news-item { display: flex; gap: 10px; padding: 9px 13px; align-items: flex-start; }
+.sp-news-item:hover { background: var(--muted); }
+/* Numbered like Research mode's evidence: this is a source, and it should look
+   like one rather than like a link the app is vouching for. */
+.sp-news-n {
+  flex-shrink: 0; width: 17px; height: 17px; border-radius: 5px; background: var(--emph);
+  color: var(--tmut); font-size: 10px; display: flex; align-items: center;
+  justify-content: center; margin-top: 1px;
+}
+.sp-news-body { display: flex; flex-direction: column; min-width: 0; }
+.sp-news-title { font-size: 12.5px; line-height: 1.45; }
+.sp-news-meta { font-size: 10.5px; color: var(--tmut); margin-top: 2px; }
+.sp-news-empty { padding: 4px 13px 13px; font-size: 12px; color: var(--tmut); }
+
+.sp-actions { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-top: 14px; }
+.sp-handoff-note { font-size: 11.5px; color: var(--tmut); }
+
+.sp-error {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+  padding: 10px 12px; border-radius: 10px; font-size: 12px; color: var(--tmut);
+  background: rgba(252, 211, 77, 0.07); border: 1px solid rgba(252, 211, 77, 0.28);
+}
+.sp-error > span { flex: 1; }
+
 /* ---------- finance: chart in the transcript ---------- */
 .chart-card {
   margin: 10px 0; border: 1px solid var(--border); border-radius: 13px;
@@ -256,10 +376,21 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 
 .wl-rows { flex: 1; overflow-y: auto; padding: 0 8px 10px; }
 .wl-row {
-  position: relative; display: flex; align-items: center; gap: 9px;
-  padding: 9px 10px; border-radius: 10px; transition: background 0.16s var(--ease);
+  position: relative; display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 9px 10px; border-radius: 10px; border: none; background: none;
+  text-align: left; font-family: inherit; color: inherit;
+  transition: background 0.16s var(--ease);
 }
 .wl-row:hover { background: var(--muted); }
+/* The row whose page is open. The panel and the page are two views of one
+   selection, so the list has to say which one you are looking at. */
+.wl-row.open { background: var(--emph); }
+.wl-row.open .wl-sym { color: var(--text); }
+/* A line where the row would land, not a highlight on the row underneath —
+   the question during a drag is "where will this go", not "what am I over". */
+.wl-row.drop-target { box-shadow: inset 0 2px 0 var(--accent); }
+.wl-row[draggable="true"] { cursor: grab; }
+.wl-row:active { cursor: grabbing; }
 .wl-id { min-width: 0; flex: 1; }
 .wl-sym { font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
 .wl-name {
