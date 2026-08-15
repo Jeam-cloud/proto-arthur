@@ -264,6 +264,17 @@ class WatchlistFetcher(_FinanceBase):
     upstream, so they have to back off together.
     """
 
+    async def detail(
+        self, symbol: str, period: str = "1mo", names: dict[str, str] | None = None,
+    ) -> ToolResult:
+        """One symbol's full page: quote, history and profile in one run.
+
+        Longer timeout than the watchlist because this one deliberately pays
+        for `.info` — see the docstring on detail() in finance_query.py.
+        """
+        return await self._query("detail", [symbol], period=period,
+                                 names=names, timeout_s=90)
+
     async def fetch(
         self, symbols: list[str], names: dict[str, str] | None = None,
     ) -> ToolResult:

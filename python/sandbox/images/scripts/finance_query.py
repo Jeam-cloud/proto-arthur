@@ -211,6 +211,66 @@ def watchlist(symbols, names=None):
     return out
 
 
+def detail(symbols, period="1mo", names=None):
+    """Everything one symbol page needs, in one container run.
+
+    THIS IS THE ONE PLACE `.info` IS APPROPRIATE. It is yfinance's slow,
+    rate-limited call, and it was pulled out of the watchlist because firing it
+    per symbol on every refresh timed the container out. A detail page is the
+    opposite shape: one symbol, opened deliberately, and the fields it carries
+    (sector, industry, business summary, P/E) do not change intraday — so it is
+    paid for once and cached hard upstream.
+
+    Everything from `.info` is best-effort. The page must be useful with only
+    the price and the chart; a profile that failed to load is a missing row,
+    not a failed request.
+    """
+    sym = (symbols or [""])[0]
+    if not sym:
+        return {}
+    names = names or {}
+    try:
+        t = yf.Ticker(sym)
+        row = _quote_fields(t)
+    except Exception as e:
+        return {sym: {"failed": True, "error": str(e)[:160]}}
+
+    try:
+        df = t.history(period=period if period in VALID_PERIODS else "1mo")
+        rows = [{"date": str(idx.date()), "close": round(float(r["Close"]), 4)}
+                for idx, r in df.iterrows()]
+        row["history"] = _downsample(rows, MAX_POINTS)
+    except Exception:
+        row["history"] = []
+
+    row["name"] = names.get(sym) or sym
+    info = {}
+    try:
+        info = t.info or {}
+    except Exception:
+        pass
+    if info:
+        row["name"] = info.get("shortName") or info.get("longName") or row["name"]
+        row["profile"] = {
+            "sector": info.get("sector"),
+            "industry": info.get("industry"),
+            "summary": info.get("longBusinessSummary"),
+            "pe": info.get("trailingPE"),
+            # Yahoo is inconsistent here: some tickers report a fraction, some
+            # a percentage already. Normalised to a percentage so the UI never
+            # has to guess which one it got.
+            "dividend_yield": (
+                info.get("dividendYield") * 100
+                if isinstance(info.get("dividendYield"), (int, float))
+                and info.get("dividendYield") < 1
+                else info.get("dividendYield")
+            ),
+            "employees": info.get("fullTimeEmployees"),
+            "website": info.get("website"),
+        }
+    return {sym: row}
+
+
 def _read_request() -> dict:
     """The request, from argv if given, else stdin.
 
@@ -242,6 +302,8 @@ def main() -> None:
             result = history(symbols, period)
         elif op == "watchlist":
             result = watchlist(symbols, req.get("names"))
+        elif op == "detail":
+            result = detail(symbols, period, req.get("names"))
         else:
             raise ValueError(f"unknown op: {op}")
         print(json.dumps({"ok": True, "data": result}))

@@ -716,6 +716,63 @@ async def get_watchlist_data(request: Request) -> dict:
             "fetched_at": time.time(), "ok": True}
 
 
+@router.get("/finance/symbol/{symbol}")
+async def get_symbol_detail(request: Request, symbol: str, period: str = "1mo") -> dict:
+    """The symbol page: quote, history and company profile.
+
+    Separate from the watchlist route because the cost model is different —
+    this one pays for yfinance's `.info` call, which the watchlist deliberately
+    avoids. See detail() in finance_query.py.
+    """
+    s = state(request)
+    sym = symbol.strip().upper()
+    if not (1 <= len(sym) <= 12 and sym.replace(".", "").replace("-", "").replace("=", "").isalnum()):
+        raise ArthurError("invalid_symbol", f"Not a ticker: {symbol!r}", http_status=400)
+
+    known = await s.db.get_setting(NAMES_KEY, {}) or {}
+    result = await s.watchlist.detail(sym, period=period, names=known)
+    if not result.ok:
+        return {"symbol": sym, "row": None, "fetched_at": time.time(),
+                "ok": False, "error": result.content}
+
+    rows = json.loads(result.content)
+    row = rows.get(sym) or {}
+    name = row.get("name")
+    if name and name != sym and known.get(sym) != name:
+        await s.db.set_setting(NAMES_KEY, {**known, sym: name})
+    return {"symbol": sym, "row": row, "fetched_at": time.time(), "ok": True}
+
+
+@router.get("/finance/symbol/{symbol}/news")
+async def get_symbol_news(request: Request, symbol: str) -> dict:
+    """Recent coverage, from the web search Arthur already has.
+
+    DELIBERATELY NOT yfinance. Its news endpoint has a long-standing bug
+    returning articles unrelated to the requested ticker, and a symbol page
+    confidently showing a competitor's headline is worse than showing none.
+    Tavily is already wired for quick_search, the query is ours to control, and
+    the results carry a real source and date.
+
+    THE COMPANY NAME GOES IN THE QUERY, not just the ticker: bare symbols are
+    ambiguous words ("ALL", "IT", "ON", "KEY"), and searching them returns
+    everything but the company.
+    """
+    s = state(request)
+    sym = symbol.strip().upper()
+    known = await s.db.get_setting(NAMES_KEY, {}) or {}
+    name = known.get(sym) or sym
+    query = f"{name} ({sym}) stock news" if name != sym else f"{sym} stock news"
+
+    try:
+        items = await s.research.quick_search(query, max_results=5)
+    except Exception as e:
+        # Coverage is supplementary. The page is fully usable without it, so a
+        # search failure reports itself and changes nothing else.
+        log.info("symbol news search failed for %s: %s", sym, e)
+        return {"symbol": sym, "items": [], "ok": False, "error": str(e)[:200]}
+    return {"symbol": sym, "items": items, "ok": True}
+
+
 @router.get("/workspace/recents")
 async def workspace_recents(request: Request) -> dict:
     s = state(request)
