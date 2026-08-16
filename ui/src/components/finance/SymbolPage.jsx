@@ -61,17 +61,75 @@ function RangeBar({ low, high, at, currency }) {
   );
 }
 
+const CHART_W = 900;
+const CHART_H = 260;
+const CHART_PAD = 6;
+
 function Chart({ points, currency }) {
+  const [hover, setHover] = React.useState(null);   // index into points
   const values = (points || []).map((p) => p.close);
-  const { line, area } = sparkPath(values, 900, 260, 6);
+  const { line, area } = sparkPath(values, CHART_W, CHART_H, CHART_PAD);
   if (!line) return <div className="sp-chart empty">No price history for this period.</div>;
+
   const up = values[values.length - 1] >= values[0];
+  const min = Math.min(...values), max = Math.max(...values);
+  const span = max - min || 1;
+  const xOf = (i) => CHART_PAD + ((CHART_W - CHART_PAD * 2) * i) / Math.max(values.length - 1, 1);
+  const yOf = (v) => CHART_PAD + (CHART_H - CHART_PAD * 2) * (1 - (v - min) / span);
+
+  const at = hover === null ? null : points[hover];
+  const prev = hover ? points[hover - 1] : null;
+  const pct = at && prev && prev.close ? ((at.close - prev.close) / prev.close) * 100 : null;
+
+  // The tooltip is positioned in PERCENT, not pixels: the SVG stretches to the
+  // pane with preserveAspectRatio="none", so a pixel offset computed against
+  // the 900-unit viewBox would drift as the window resizes.
+  const leftPct = hover === null ? 0 : (xOf(hover) / CHART_W) * 100;
+  const topPct = at ? (yOf(at.close) / CHART_H) * 100 : 0;
+  // Flip to the left of the cursor near the right edge so it never runs off.
+  const flip = leftPct > 62;
+
   return (
-    <svg className={`sp-chart ${up ? "up" : "down"}`} viewBox="0 0 900 260"
-         preserveAspectRatio="none" aria-hidden="true">
-      <path className="sp-chart-area" d={area} />
-      <path className="sp-chart-line" d={line} />
-    </svg>
+    <div
+      className="sp-chart-wrap"
+      onMouseLeave={() => setHover(null)}
+      onMouseMove={(e) => {
+        const r = e.currentTarget.getBoundingClientRect();
+        const frac = (e.clientX - r.left) / r.width;
+        const i = Math.round(frac * (values.length - 1));
+        setHover(Math.max(0, Math.min(values.length - 1, i)));
+      }}
+    >
+      <svg className={`sp-chart ${up ? "up" : "down"}`} viewBox={`0 0 ${CHART_W} ${CHART_H}`}
+           preserveAspectRatio="none" aria-hidden="true">
+        <path className="sp-chart-area" d={area} />
+        <path className="sp-chart-line" d={line} />
+      </svg>
+
+      {at && (
+        <>
+          <span className="sp-cross" style={{ left: `${leftPct}%` }} />
+          <span className="sp-dot" style={{ left: `${leftPct}%`, top: `${topPct}%` }} />
+          <div className={`sp-tip${flip ? " flip" : ""}`} style={{ left: `${leftPct}%` }}>
+            <div className="sp-tip-date">{at.date}</div>
+            <div className="sp-tip-row">
+              <span className="sp-tip-close">{money(at.close, currency)}</span>
+              {pct !== null && (
+                <span className={`sp-tip-chg ${pct >= 0 ? "up" : "down"}`}>
+                  {pct >= 0 ? "▲" : "▼"} {pct >= 0 ? "+" : ""}{pct.toFixed(2)}%
+                </span>
+              )}
+            </div>
+            {/* SAYS WHAT IS NOT HERE. Hovering a financial chart sets an
+                expectation of OHLC and volume, and this feed returns daily
+                closes only. Stating it at the moment of the expectation is
+                cheaper than a footnote nobody reads — and it stops the absence
+                reading as a bug. */}
+            <div className="sp-tip-note">Daily close only — no open, high, low or volume.</div>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -89,6 +147,12 @@ export default function SymbolPage() {
   const hist = row.history || [];
   const currency = row.currency;
   const up = (row.change_pct ?? 0) >= 0;
+  // The quote is here but the profile is not. Distinguished from "still
+  // loading everything" so the note can promise that what is already on
+  // screen is final.
+  const infoPending = !!row.price && !row.profile && !detailError;
+  // A ticker Yahoo does not know returns a row with no price at all.
+  const unknown = !detailLoading && !detailError && detail && !row.price;
 
   // THE HANDOFF. Closes the page first so the transcript is already on screen
   // when the reply starts arriving — the answer must never land behind
@@ -114,6 +178,18 @@ export default function SymbolPage() {
           </button>
         </div>
 
+        {unknown ? (
+          <div className="sp-unknown">
+            <h3>Unknown ticker</h3>
+            <p>
+              Yahoo Finance has no data for <strong>{openSymbol}</strong>. Check the
+              spelling, or try the symbol with its exchange suffix — many
+              non-US listings need one, like <code>ASML.AS</code> or <code>BP.L</code>.
+            </p>
+            <button className="btn" onClick={close}>Back to watchlist</button>
+          </div>
+        ) : (
+        <>
         <div className="sp-title">
           <span className="sp-sym">{openSymbol}</span>
           <span className="sp-name">{name}</span>
@@ -157,13 +233,48 @@ export default function SymbolPage() {
               one is the selected period. They previously sat on one screen with
               nothing saying so, and the day that matters is the day someone
               reads "up" while being down. */}
+          {/* TWO LINES, and the split is the point. The first is the answer
+              to "how has it done", in words. The second is the evidence for
+              it — the endpoints the figure was computed from, plus what the
+              data is and how old. Run together they read as one long
+              disclaimer and the answer gets lost in it. */}
           {windowPct !== null && (
-            <div className="sp-caption">
-              Over the past {SPAN[period]}: {windowPct >= 0 ? "up" : "down"}{" "}
-              {Math.abs(windowPct).toFixed(1)}%. Daily closes, delayed about 15 minutes at source.
-            </div>
+            <>
+              <div className="sp-caption">
+                Over the past {SPAN[period]}:{" "}
+                <span className={windowPct >= 0 ? "up" : "down"}>
+                  {windowPct >= 0 ? "▲" : "▼"} {windowPct >= 0 ? "up" : "down"}{" "}
+                  {Math.abs(windowPct).toFixed(1)}%
+                </span>
+              </div>
+              <div className="sp-caption-sub">
+                {money(hist[0].close, currency)} → {money(hist[hist.length - 1].close, currency)}
+                {" · "}daily closes{" · "}delayed ~15 min at source
+              </div>
+            </>
           )}
         </div>
+
+        {/* Facts that are one word each and need no card. `.info` fills these,
+            so they appear when it lands rather than holding the page. */}
+        {(currency || profile.employees || profile.website) && (
+          <div className="sp-meta">
+            {currency && (
+              <span className="sp-meta-item"><span className="sp-meta-k">Currency</span>{currency}</span>
+            )}
+            {typeof profile.employees === "number" && (
+              <span className="sp-meta-item">
+                <span className="sp-meta-k">Employees</span>{profile.employees.toLocaleString()}
+              </span>
+            )}
+            {profile.website && (
+              <a className="sp-meta-item" href={profile.website} target="_blank" rel="noreferrer">
+                <span className="sp-meta-k">Website</span>
+                {profile.website.replace(/^https?:\/\//, "").replace(/\/$/, "")}
+              </a>
+            )}
+          </div>
+        )}
 
         <div className="sp-stats">
           <div className="sp-stat">
@@ -200,12 +311,25 @@ export default function SymbolPage() {
           <details className="sp-about">
             <summary>About</summary>
             <p>{profile.summary}</p>
-            {profile.website && (
-              <a href={profile.website} target="_blank" rel="noreferrer" className="sp-link">
-                {profile.website.replace(/^https?:\/\//, "")} <ExternalLink size={11} />
-              </a>
-            )}
           </details>
+        )}
+
+        {/* THE PAGE FILLS IN UNEVENLY, AND SAYS WHY.
+            Price, chart and ranges come from the cheap quote call; sector, P/E
+            and the summary come from `.info`, which is the slow, rate-limited
+            one. Without this note the page looks half-broken for a few seconds
+            and the user cannot tell whether the missing fields are coming or
+            simply absent for this ticker. "Everything above is already final"
+            is the important half — it says the numbers on screen will not
+            change under them. */}
+        {infoPending && (
+          <div className="sp-pending">
+            <span className="spinner" />
+            <span>
+              Fetching sector, P/E and the company summary. This is a slower,
+              once-per-symbol call — everything above is already final.
+            </span>
+          </div>
         )}
 
         <div className="sp-news">
@@ -225,7 +349,11 @@ export default function SymbolPage() {
               {news?.unconfigured
                 ? "Add a Tavily key in Settings → Integrations to see recent coverage."
                 : news
-                  ? "No recent coverage found for this symbol."
+                  // NAMED AS NORMAL, not as a failure. A quiet week produces
+                  // no coverage, and an empty section with no explanation
+                  // reads as something that broke — which then makes the user
+                  // doubt the prices above it.
+                  ? `No recent coverage found for ${openSymbol}. That is a normal outcome for a quiet week, not a failure — the price and chart above are unaffected.`
                   : "Looking for recent coverage…"}
             </div>
           )}
@@ -241,6 +369,8 @@ export default function SymbolPage() {
           </button>
           <span className="sp-handoff-note">Answers appear in the conversation</span>
         </div>
+        </>
+        )}
       </div>
     </div>
   );

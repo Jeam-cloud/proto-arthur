@@ -233,7 +233,36 @@ input:focus-visible, textarea:focus-visible { outline: none; }
   border: 1px solid var(--border); border-radius: 13px; background: var(--bg2);
   padding: 12px 14px; margin-bottom: 12px;
 }
+.sp-chart-wrap { position: relative; }
 .sp-chart { display: block; width: 100%; height: 260px; }
+/* Crosshair, marker and readout. Positioned in percent because the SVG
+   stretches with preserveAspectRatio="none" — pixel offsets against the
+   900-unit viewBox would drift as the pane resizes. */
+.sp-cross {
+  position: absolute; top: 0; bottom: 0; width: 1px; background: var(--emph);
+  pointer-events: none; transform: translateX(-0.5px);
+}
+.sp-dot {
+  position: absolute; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--text); pointer-events: none;
+  transform: translate(-3.5px, -3.5px);
+}
+.sp-tip {
+  position: absolute; top: 12px; z-index: 3; pointer-events: none;
+  margin-left: 12px; max-width: 200px;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 9px 11px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+/* Near the right edge it flips to the other side of the cursor rather than
+   running off the pane. */
+.sp-tip.flip { transform: translateX(-100%); margin-left: -12px; }
+.sp-tip-date { font-family: var(--mono); font-size: 11px; color: var(--tmut); margin-bottom: 5px; }
+.sp-tip-row { display: flex; align-items: baseline; gap: 8px; }
+.sp-tip-close { font-family: var(--mono); font-size: 15px; font-weight: 600; }
+.sp-tip-chg { font-family: var(--mono); font-size: 11.5px; }
+.sp-tip-chg.up { color: var(--green); }
+.sp-tip-chg.down { color: var(--red); }
+.sp-tip-note { font-size: 10.5px; color: var(--tmut); margin-top: 5px; line-height: 1.4; }
 .sp-chart.skeleton { background: var(--muted); border-radius: 9px;
   animation: sk-pulse 1.3s ease-in-out infinite; }
 .sp-chart.empty { display: flex; align-items: center; justify-content: center;
@@ -259,7 +288,29 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 /* THE WINDOW FIGURE, and it says which window. The header % is today's; this
    is the selected period. Both on one screen with nothing distinguishing them
    is how someone reads "up" on a day they are down. */
-.sp-caption { margin-top: 9px; font-size: 11.5px; color: var(--tmut); line-height: 1.5; }
+.sp-caption { margin-top: 10px; font-size: 12.5px; color: var(--tmut); line-height: 1.5; }
+.sp-caption .up { color: var(--green); font-weight: 600; }
+.sp-caption .down { color: var(--red); font-weight: 600; }
+/* Mono, because it is the evidence line: two prices and two facts, and mono
+   makes the figures scan as figures rather than as more prose. */
+.sp-caption-sub {
+  margin-top: 3px; font-family: var(--mono); font-size: 11px;
+  color: var(--tmut); opacity: 0.85; line-height: 1.5;
+}
+
+.sp-meta {
+  display: flex; flex-wrap: wrap; gap: 0; margin: 12px 0;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--bg2);
+  overflow: hidden;
+}
+.sp-meta-item {
+  flex: 1; min-width: 150px; display: flex; align-items: center; gap: 10px;
+  padding: 11px 14px; font-family: var(--mono); font-size: 12.5px;
+  border-right: 1px solid var(--border); color: var(--text);
+}
+.sp-meta-item:last-child { border-right: none; }
+a.sp-meta-item:hover { background: var(--muted); }
+.sp-meta-k { font-family: var(--sans); font-size: 11px; color: var(--tmut); margin-right: auto; }
 
 .sp-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
 .sp-stats.secondary { margin-top: 10px; }
@@ -307,6 +358,23 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 
 .sp-actions { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-top: 14px; }
 .sp-handoff-note { font-size: 11.5px; color: var(--tmut); }
+
+/* Progressive arrival, stated. Quiet — it is a status line, not a warning. */
+.sp-pending {
+  display: flex; align-items: flex-start; gap: 10px; margin-top: 12px;
+  padding: 11px 13px; border-radius: 12px; background: var(--bg2);
+  border: 1px solid var(--border); font-size: 12px; color: var(--tmut);
+  line-height: 1.5;
+}
+.sp-pending .spinner { flex-shrink: 0; margin-top: 2px; }
+
+.sp-unknown { padding: 32px 0 8px; max-width: 460px; }
+.sp-unknown h3 { font-size: 16px; font-weight: 600; margin-bottom: 8px; }
+.sp-unknown p { font-size: 13px; color: var(--tmut); line-height: 1.65; margin-bottom: 16px; }
+.sp-unknown code {
+  font-family: var(--mono); font-size: 12px; background: var(--emph);
+  padding: 1px 5px; border-radius: 5px;
+}
 
 .sp-error {
   display: flex; align-items: center; gap: 10px; margin-bottom: 12px;

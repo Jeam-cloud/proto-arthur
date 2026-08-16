@@ -12,7 +12,12 @@
 // manual Refresh rather than a ticker that updates itself: an auto-refreshing
 // price implies real-time, and it moves numbers while someone is reading them.
 import React, { useEffect, useRef, useState } from "react";
-import { Plus, RefreshCw, X } from "lucide-react";
+import { ArrowUp, Copy, MessageSquare, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import ContextMenu from "../ContextMenu";
+import { useChat } from "../../stores/chat";
+import { useConversations } from "../../stores/conversations";
+import { useToasts } from "../../stores/toasts";
+import { copyToClipboard } from "../../lib/clipboard";
 import { sparkPath, useFinance } from "../../stores/finance";
 
 // Direction is never carried by colour alone — roughly 1 in 12 men cannot
@@ -74,6 +79,31 @@ export default function WatchlistPanel() {
   // not re-render the row being dragged.
   const dragFrom = useRef(null);
   const [dragOver, setDragOver] = useState(null);
+  // {sym, x, y} — the same ContextMenu the sidebar uses, rather than a second
+  // implementation of viewport-edge clamping.
+  const [menu, setMenu] = useState(null);
+  const send = useChat((s) => s.send);
+  const activeId = useConversations((s) => s.activeId);
+  const pushToast = useToasts((s) => s.push);
+
+  // Right-click actions. "Explain" follows the same rule as the symbol page:
+  // the question goes to the conversation, because that is where answers live.
+  const menuItems = (sym) => [
+    { label: "Open page", icon: ArrowUp, onClick: () => open(sym) },
+    {
+      label: "Explain today's move", icon: MessageSquare,
+      onClick: () => activeId && send(activeId, `Why did ${sym} move today?`, { mode: "finance" }),
+    },
+    {
+      label: "Copy symbol", icon: Copy,
+      onClick: async () => {
+        await copyToClipboard({ text: sym });
+        pushToast(`${sym} copied.`, "success");
+      },
+    },
+    { divider: true },
+    { label: "Remove from watchlist", icon: Trash2, danger: true, onClick: () => remove(sym) },
+  ];
   const [draft, setDraft] = useState("");
   const [adding, setAdding] = useState(false);
 
@@ -167,6 +197,7 @@ export default function WatchlistPanel() {
               }}
               onDragEnd={() => { dragFrom.current = null; setDragOver(null); }}
               onClick={() => open(sym)}
+              onContextMenu={(e) => { e.preventDefault(); setMenu({ sym, x: e.clientX, y: e.clientY }); }}
               title={`Open ${sym}`}
             >
               <div className="wl-id">
@@ -213,10 +244,18 @@ export default function WatchlistPanel() {
         )}
       </div>
 
+      {menu && (
+        <ContextMenu
+          x={menu.x} y={menu.y}
+          items={menuItems(menu.sym)}
+          onClose={() => setMenu(null)}
+        />
+      )}
+
       {/* The delay is stated permanently, not on hover. It is the single most
           important fact about every number above it. */}
       <div className="wl-foot">
-        Click a ticker for its page, drag to reorder. Delayed ~15 min{stamp ? ` · updated ${stamp}` : ""}.
+        Click for the full page, right-click for more. Drag to reorder. Delayed ~15 min{stamp ? ` · updated ${stamp}` : ""}.
         Arrows carry direction, not just colour.
       </div>
     </div>
