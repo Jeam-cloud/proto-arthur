@@ -486,16 +486,11 @@ a.sp-meta-item:hover { background: var(--muted); }
 .wl-spark.down .wl-spark-line { stroke: var(--red); }
 .wl-spark.down .wl-spark-area { fill: var(--red); }
 
-/* Appears on hover only. A permanent × on every row is a mis-click target on
-   the one screen where the rows are the content. */
-.wl-remove {
-  position: absolute; right: 4px; top: 4px; width: 18px; height: 18px;
-  border: none; border-radius: 5px; background: var(--emph); color: var(--tmut);
-  display: flex; align-items: center; justify-content: center;
-  opacity: 0; transition: opacity 0.12s;
-}
-.wl-row:hover .wl-remove { opacity: 1; }
-.wl-remove:hover { color: var(--red); }
+/* (.wl-remove removed — the row's right-click menu owns removal now. A
+   hover-revealed × sat on top of the row's own click target on the one screen
+   where the rows ARE the content, so the two gestures competed: aiming for a
+   ticker near its right edge opened a page or deleted a row depending on a few
+   pixels.) */
 
 .wl-row.failed { gap: 8px; }
 .wl-row.failed .wl-sym { color: var(--tmut); }

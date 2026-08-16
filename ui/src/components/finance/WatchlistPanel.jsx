@@ -209,13 +209,6 @@ export default function WatchlistPanel() {
                 <div className="wl-price">{money(row.price, row.currency)}</div>
                 <Change pct={row.change_pct} />
               </div>
-              <span
-                className="wl-remove" title={`Remove ${sym}`} role="button" tabIndex={0}
-                onClick={(e) => { e.stopPropagation(); remove(sym); }}
-                onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); remove(sym); } }}
-              >
-                <X size={12} strokeWidth={2} />
-              </span>
             </button>
           );
         })}
