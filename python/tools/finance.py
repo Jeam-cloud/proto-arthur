@@ -208,19 +208,25 @@ class StockHistoryTool(_FinanceBase):
         return result
 
     def _chart(self, content: str, period: str) -> dict | None:
-        """Turn the fetched series into something the transcript can draw.
-
-        Returns None rather than an empty chart when there is nothing to plot:
-        a chart frame with no line is worse than no chart, because it looks
-        like a rendering bug rather than an absence of data.
-        """
         try:
-            data = json.loads(content)
+            return self._chart_from_rows(json.loads(content), period)
         except json.JSONDecodeError:
             return None
 
-        series, summaries = [], []
-        for sym, rows in data.items():
+    @classmethod
+    def _chart_from_rows(cls, data: dict, period: str) -> dict | None:
+        """Turn fetched series into something the transcript can draw.
+
+        Returns None rather than an empty chart when there is nothing to plot:
+        a chart frame with no line looks like a rendering bug, where no chart
+        reads correctly as an absence of data.
+
+        A classmethod because explain_move builds one from history it already
+        has — the alternative was a second copy of this, and two chart builders
+        drift.
+        """
+        series, results = [], []
+        for sym, rows in (data or {}).items():
             # A per-symbol failure is a dict with `failed`, not a list.
             if not isinstance(rows, list) or len(rows) < 2:
                 continue
@@ -229,28 +235,43 @@ class StockHistoryTool(_FinanceBase):
             if len(points) < 2:
                 continue
             series.append({"label": sym, "points": points})
-
             first, last = points[0]["v"], points[-1]["v"]
             if first:
-                pct = (last - first) / first * 100
-                # "up 51.9%" reads as a fact; "51.9%" leaves the reader to work
-                # out the direction from a sign they may not see.
-                way = "up" if pct >= 0 else "down"
-                summaries.append(f"{sym} {way} {abs(pct):.1f}%, from {first:,.2f} to {last:,.2f}")
+                results.append((sym, (last - first) / first * 100, first, last))
 
         if not series:
             return None
-        span = self._SPAN.get(period, period)
+
+        span = cls._SPAN.get(period, period)
+        multi = len(series) > 1
+        # COMPARISONS ARE RANKED, not just listed. Asked to compare two stocks,
+        # the answer is which did better — so the caption sorts by return and
+        # says so, rather than leaving the reader to subtract two percentages.
+        if multi:
+            results.sort(key=lambda r: r[1], reverse=True)
+            parts = [f"{s} {'up' if p >= 0 else 'down'} {abs(p):.1f}%" for s, p, _, _ in results]
+            summary = (f"Over {span}, best to worst: " + "; ".join(parts)
+                       + ". Percentages from each series' own starting price.")
+        else:
+            parts = [f"{s} {'up' if p >= 0 else 'down'} {abs(p):.1f}%, from {f:,.2f} to {l:,.2f}"
+                     for s, p, f, l in results]
+            summary = f"Over {span}: " + "; ".join(parts) + ". Daily closes."
+
         return {
             "kind": "line",
             "series": series,
+            # The renderer normalises multi-series charts to percentages from a
+            # shared zero. Flagged in the payload rather than inferred from the
+            # series count, so the axis label and the caption cannot disagree
+            # about what is being drawn.
+            "normalised": multi,
             "title": ", ".join(s["label"] for s in series),
-            "subtitle": f"{span} · daily closes",
+            "subtitle": f"{span} · daily closes" + (" · % from start" if multi else ""),
             # Stated on the chart itself, not just in the panel: this picture
             # will be scrolled back to long after the "updated 3:42pm" line at
             # the edge of the screen has gone.
             "note": "Delayed ~15 min",
-            "summary": f"Over {span}: " + "; ".join(summaries) + ". Daily closes.",
+            "summary": summary,
         }
 
 

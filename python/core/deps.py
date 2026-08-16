@@ -44,7 +44,9 @@ from tools.email_service import (
     EmailListTool, EmailRouter, EmailSearchTool, EmailSendTool,
     SmtpImapBackend,
 )
-from tools.finance import StockHistoryTool, StockQuoteTool, WatchlistFetcher
+from tools.finance import (
+    ExplainMoveTool, StockHistoryTool, StockQuoteTool, WatchlistFetcher,
+)
 from tools.research import QuickSearchTool, WebResearchTool
 from tools.search import FindFilesTool, SearchFilesTool
 from voice.transcriber import Transcriber
@@ -126,6 +128,8 @@ async def build_state(settings: Settings) -> AppState:
         QuickSearchTool(vault),
         StockQuoteTool(sandbox),
         StockHistoryTool(sandbox),
+        # Needs the vault too: it pairs market data with a news search.
+        ExplainMoveTool(sandbox, vault),
         ReadFileTool(), ListDirTool(), WriteFileTool(), EditFileTool(), DeleteFileTool(),
         ApplyPatchTool(),
         SearchFilesTool(), FindFilesTool(), RunPythonTool(sandbox),

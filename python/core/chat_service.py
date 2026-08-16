@@ -113,7 +113,15 @@ MODE_GUIDANCE = {
     ),
     TaskMode.FINANCE: (
         "Use stock_quote and stock_history for market data — never invent prices. "
-        "Data is ~15min delayed; say so when precision matters."
+        "Data is ~15min delayed; say so when precision matters.\n"
+        "For \"why is X up/down\", call explain_move — it fetches the price, the "
+        "move and the news together, so you do not have to combine three tools. "
+        "It returns headlines from the same period as the move: report what they "
+        "say and whether they plausibly relate, and never state that one CAUSED "
+        "the other. Cite them as [1], [2].\n"
+        "To compare symbols, pass them all to stock_history in ONE call — the "
+        "chart then overlays them as percentages from a shared start, which is "
+        "the only fair comparison between two different prices."
     ),
 }
 
