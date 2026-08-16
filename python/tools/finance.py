@@ -254,6 +254,143 @@ class StockHistoryTool(_FinanceBase):
         }
 
 
+class ExplainMoveArgs(BaseModel):
+    symbol: str = Field(description="One ticker, e.g. 'NVDA'", max_length=12)
+
+    @field_validator("symbol")
+    @classmethod
+    def clean(cls, v: str) -> str:
+        s = v.strip().upper()
+        if not (1 <= len(s) <= 12 and s.replace(".", "").replace("-", "").replace("=", "").isalnum()):
+            raise ValueError(f"invalid ticker: {v!r}")
+        return s
+
+
+class ExplainMoveTool(_FinanceBase):
+    """Why did X move? — gathered in ONE call, so the model only has to write.
+
+    WHY THIS IS A TOOL AND NOT A PROMPT. Answering this properly needs a quote,
+    a month of history, and a news search, then a synthesis. Asked to do that
+    unaided, a 7B model has to choose three tools in the right order, remember
+    the ticker across all of them, and only then write — and the failure we
+    already watched was it announcing "[Using stock_quote(nvda)]" in prose and
+    inventing a price.
+
+    So the orchestration is done here, deterministically, and the model is left
+    with the one part it is actually good at: reading the numbers and the
+    headlines and saying what connects them. The chart and the citations come
+    from the payload, so neither can be fabricated.
+
+    IT DOES NOT ASSERT CAUSATION. The tool returns a move and some coverage
+    from the same window; whether one explains the other is a judgement, and
+    the content says so explicitly. Headlines near a price move are evidence,
+    not a cause — and a confident "X fell BECAUSE Y" is the easiest wrong thing
+    for this feature to say.
+    """
+
+    name = "explain_move"
+    description = (
+        "Why a stock moved: current price, the change, recent history and "
+        "related news, gathered together. Use for 'why is X up/down'."
+    )
+    Args = ExplainMoveArgs
+    risk = Risk.SAFE
+
+    def __init__(self, sandbox: SandboxRunner, vault):
+        super().__init__(sandbox)
+        self._vault = vault
+
+    def approval_summary(self, args: ExplainMoveArgs) -> str:
+        return f"Look up why {args.symbol} moved"
+
+    async def execute(self, args: ExplainMoveArgs, ctx: ToolContext) -> ToolResult:
+        sym = args.symbol
+        quoted = await self._query("detail", [sym], period="1mo", timeout_s=90)
+        if not quoted.ok:
+            return quoted
+
+        try:
+            row = json.loads(quoted.content).get(sym) or {}
+        except json.JSONDecodeError:
+            return ToolResult(ok=False, summary="bad response",
+                              content="Market data returned something unreadable.")
+        if row.get("failed") or row.get("price") is None:
+            return ToolResult(ok=False, summary=f"no data for {sym}",
+                              content=f"No market data for {sym}. Check the ticker.")
+
+        name = row.get("name") or sym
+        pct = row.get("change_pct")
+        direction = "unchanged"
+        if isinstance(pct, (int, float)):
+            direction = "up" if pct > 0 else "down" if pct < 0 else "flat"
+
+        lines = [
+            f"{sym} ({name})",
+            f"Price {row.get('price')} {row.get('currency') or ''}".strip(),
+            f"Previous close {row.get('previous_close')}",
+            f"Change {row.get('change')} ({pct}%) — {direction} today",
+            f"Day range {row.get('day_low')} to {row.get('day_high')}",
+            f"52-week range {row.get('year_low')} to {row.get('year_high')}",
+        ]
+
+        articles = await self._news(sym, name)
+        if articles:
+            lines.append("\nRecent coverage:")
+            lines += [f"[{i}] {a['title']} — {a['domain']}" for i, a in enumerate(articles, 1)]
+            lines.append(
+                "\nThese headlines are from the same period as the move. They are "
+                "EVIDENCE, NOT A CAUSE: say what they report and whether it plausibly "
+                "relates, and do not claim one caused the other. Cite them as [1], [2]."
+            )
+        else:
+            lines.append(
+                "\nNo recent coverage was found. Say so plainly — a move with no "
+                "reporting behind it is a normal outcome, not a gap to fill with a guess."
+            )
+
+        chart = StockHistoryTool._chart_from_rows(
+            {sym: row.get("history") or []}, "1mo",
+        )
+        return ToolResult(
+            ok=True,
+            content="\n".join(lines),
+            summary=f"{sym} {direction} {abs(pct):.2f}%" if isinstance(pct, (int, float)) else sym,
+            detail=f"{len(articles)} sources",
+            chart=chart,
+        )
+
+    async def _news(self, sym: str, name: str) -> list[dict]:
+        """Coverage from Tavily. Never fatal — an explanation with numbers and
+        no headlines is still worth having."""
+        api_key = self._vault.get("tavily")
+        if not api_key:
+            return []
+        # The company NAME as well as the ticker: bare symbols are ambiguous
+        # words (ALL, IT, ON, KEY) and searching them returns everything but
+        # the company. Same lesson as the symbol page's news route.
+        query = f"{name} ({sym}) stock" if name != sym else f"{sym} stock news"
+        try:
+            import asyncio
+
+            from tavily import TavilyClient
+
+            res = await asyncio.to_thread(
+                lambda: TavilyClient(api_key=api_key).search(query, max_results=5, topic="news")
+            )
+        except Exception as e:
+            log.info("explain_move news search failed for %s: %s", sym, e)
+            return []
+        out = []
+        for r in (res.get("results") or [])[:5]:
+            url = r.get("url") or ""
+            out.append({
+                "title": r.get("title") or url,
+                "url": url,
+                "domain": url.split("//")[-1].split("/")[0].removeprefix("www."),
+            })
+        return out
+
+
 class WatchlistFetcher(_FinanceBase):
     """NOT a tool — the watchlist panel's data source.
 
