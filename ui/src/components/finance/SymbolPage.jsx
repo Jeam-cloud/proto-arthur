@@ -361,10 +361,10 @@ export default function SymbolPage() {
 
         {/* Each of these ENDS this page and continues in the conversation. */}
         <div className="sp-actions">
-          <button className="btn" onClick={() => ask(`Why did ${openSymbol} move today?`)}>
+          <button className="btn" onClick={() => ask(`Why did ${openSymbol} move today? Use explain_move.`)}>
             Explain today's move
           </button>
-          <button className="btn" onClick={() => ask(`Compare ${openSymbol} with another symbol over 6 months.`)}>
+          <button className="btn" onClick={() => ask(`Compare ${openSymbol} with a peer over 6 months — pass both symbols to stock_history in one call.`)}>
             Compare with another symbol
           </button>
           <span className="sp-handoff-note">Answers appear in the conversation</span>

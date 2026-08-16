@@ -38,12 +38,17 @@ export default function ChartCard({ chart }) {
   const [hover, setHover] = useState(null);
   const series = chart?.series || [];
 
-  // NORMALISED when there is more than one line. Two prices on one axis makes
-  // the more expensive stock look like the better performer regardless of what
-  // it did — the classic misleading finance chart. Comparing percentages from
-  // a shared zero is the honest version, and it is why the axis labels change
-  // with the mode.
-  const normalise = series.length > 1;
+  // NORMALISED when the payload says so, not when this component counts the
+  // series. The backend already decided — it wrote the caption and the
+  // subtitle against that decision — so inferring it again here is two places
+  // that can disagree about what the picture means. (Falls back to the count
+  // for any older payload without the flag.)
+  //
+  // WHY normalise at all: two prices on one axis makes the more expensive
+  // stock look like the better performer regardless of what it did, which is
+  // the classic misleading finance chart. Percentages from a shared zero is
+  // the honest version.
+  const normalise = chart?.normalised ?? series.length > 1;
 
   const { paths, lo, hi, count } = useMemo(() => {
     const prepared = series.map((s) => {

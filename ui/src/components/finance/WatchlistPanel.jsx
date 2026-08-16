@@ -92,7 +92,7 @@ export default function WatchlistPanel() {
     { label: "Open page", icon: ArrowUp, onClick: () => open(sym) },
     {
       label: "Explain today's move", icon: MessageSquare,
-      onClick: () => activeId && send(activeId, `Why did ${sym} move today?`, { mode: "finance" }),
+      onClick: () => activeId && send(activeId, `Why did ${sym} move today? Use explain_move.`, { mode: "finance" }),
     },
     {
       label: "Copy symbol", icon: Copy,
