@@ -150,6 +150,15 @@ class HoldingBody(BaseModel):
     quantity: float = Field(gt=0, le=1e12)
     cost_basis: float = Field(ge=0, le=1e9)
     purchase_date: str | None = Field(default=None, max_length=10)
+    # WHAT THE COST WAS PAID IN. None means "same as whatever the quote returns"
+    # — the assumption every row made before this field existed, and still the
+    # right one for the common case where you bought in the listing currency.
+    cost_currency: str | None = Field(default=None, min_length=3, max_length=3)
+
+    @field_validator("cost_currency")
+    @classmethod
+    def upper_currency(cls, v: str | None) -> str | None:
+        return v.strip().upper() if v else None
 
     @field_validator("symbol")
     @classmethod
@@ -164,6 +173,12 @@ class HoldingPatch(BaseModel):
     quantity: float | None = Field(default=None, gt=0, le=1e12)
     cost_basis: float | None = Field(default=None, ge=0, le=1e9)
     purchase_date: str | None = Field(default=None, max_length=10)
+    cost_currency: str | None = Field(default=None, min_length=3, max_length=3)
+
+    @field_validator("cost_currency")
+    @classmethod
+    def upper_currency(cls, v: str | None) -> str | None:
+        return v.strip().upper() if v else None
 
 
 class ConversationModelRequest(BaseModel):

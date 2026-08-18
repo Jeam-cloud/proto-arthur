@@ -17,6 +17,11 @@ import { useConfirm } from "../../stores/confirm";
 import { useChat } from "../../stores/chat";
 import { useConversations } from "../../stores/conversations";
 
+// Enough to cover the exchanges Yahoo quotes and the brokers most people use.
+// Not a complete ISO list: a 180-entry dropdown is worse than a short one that
+// covers 99% of cases, and the resolved quote currency is always added.
+const CURRENCIES = ["USD", "CAD", "EUR", "GBP", "JPY", "AUD", "CHF", "HKD", "INR"];
+
 function money(v, currency, digits = 2) {
   if (typeof v !== "number" || !isFinite(v)) return "—";
   try {
@@ -44,7 +49,12 @@ function Signed({ value, pct, currency }) {
 function AddForm({ onDone, initialSymbol = "" }) {
   const addHolding = useFinance((s) => s.addHolding);
   const resolveSymbol = useFinance((s) => s.resolveSymbol);
-  const [f, setF] = useState({ symbol: initialSymbol, quantity: "", cost_basis: "", purchase_date: "" });
+  const [f, setF] = useState({
+    symbol: initialSymbol, quantity: "", cost_basis: "", purchase_date: "",
+    // Empty means "whatever the quote is in" — the right default, and what
+    // every holding entered before this field existed already assumed.
+    cost_currency: "",
+  });
   const [busy, setBusy] = useState(false);
   // What the ticker actually resolved to. See the resolve route for why this
   // exists: "BTC" is a Grayscale trust, not bitcoin, and the only moment that
@@ -87,6 +97,19 @@ function AddForm({ onDone, initialSymbol = "" }) {
         <label>Paid per share</label>
         <input value={f.cost_basis} placeholder="171.20" inputMode="decimal"
                onChange={(e) => setF({ ...f, cost_basis: e.target.value })} />
+      </div>
+      {/* PAID IN, which is not always the currency the thing quotes in. Buying
+          a US-listed instrument through a Canadian broker in CAD is ordinary,
+          and without this the P/L subtracts CAD from USD. Defaults to the
+          resolved quote currency so the common case needs no thought. */}
+      <div className="pf-field narrow">
+        <label>Paid in</label>
+        <select value={f.cost_currency || found?.currency || "USD"}
+                onChange={(e) => setF({ ...f, cost_currency: e.target.value })}>
+          {CURRENCIES.includes(found?.currency) || !found?.currency
+            ? null : <option value={found.currency}>{found.currency}</option>}
+          {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
       </div>
       <button className="btn primary" type="submit" disabled={!ready || busy}>
         {busy ? "Adding…" : "Add"}
@@ -237,6 +260,16 @@ export default function PortfolioPage() {
                   {t.unpriced} holding{t.unpriced > 1 ? "s" : ""} not included — no price available
                 </div>
               )}
+              {/* A total that doesn't describe everything above it has to say
+                  so. The value line still counts these — only the cost-derived
+                  P/L excludes them. */}
+              {!t.pl_covers_all && (
+                <div className="pf-total-note">
+                  P/L excludes {t.fx_blocked} holding{t.fx_blocked > 1 ? "s" : ""} bought
+                  in a different currency from the one it trades in. Total value still includes
+                  {t.fx_blocked > 1 ? " them" : " it"}.
+                </div>
+              )}
             </div>
           );
         })}
@@ -273,12 +306,21 @@ export default function PortfolioPage() {
                 )}
               </span>
               <span className="pf-num">{h.quantity}</span>
-              <span className="pf-num">{money(h.cost_basis, h.currency)}</span>
+              {/* THE COST IS IN THE CURRENCY IT WAS PAID IN, not the quote's.
+                  Formatting CA$88,784 as $88,784 is how a currency mismatch
+                  hides in plain sight. */}
+              <span className="pf-num">{money(h.cost_basis, h.cost_currency)}</span>
               <span className="pf-num">{h.priced ? money(h.price, h.currency) : "—"}</span>
               <span className="pf-num">{h.priced ? money(h.value, h.currency) : "—"}</span>
               <span className="pf-num">
-                {h.priced ? <Signed value={h.pl} pct={h.pl_pct} currency={h.currency} />
-                          : <span className="pf-unpriced-note">no price</span>}
+                {!h.priced ? <span className="pf-unpriced-note">no price</span>
+                  : h.fx_blocked ? (
+                    <span className="pf-fx-blocked"
+                          title={`Paid in ${h.cost_currency}, quoted in ${h.currency}. `
+                            + "Arthur doesn't fetch exchange rates, so this can't be computed honestly."}>
+                      {h.cost_currency} vs {h.currency}
+                    </span>
+                  ) : <Signed value={h.pl} pct={h.pl_pct} currency={h.currency} />}
               </span>
               <span className="pf-actions">
                 <button className="icon-btn-sm" title={`Remove ${h.symbol}`}

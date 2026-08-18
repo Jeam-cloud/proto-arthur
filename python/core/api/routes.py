@@ -794,6 +794,7 @@ async def resolve_symbol(request: Request, symbol: str) -> dict:
 async def add_holding(request: Request, body: HoldingBody) -> dict:
     return await state(request).holdings.add(
         body.symbol, body.quantity, body.cost_basis, body.purchase_date,
+        body.cost_currency,
     )
 
 
@@ -801,7 +802,7 @@ async def add_holding(request: Request, body: HoldingBody) -> dict:
 async def patch_holding(request: Request, hid: str, body: HoldingPatch) -> dict:
     ok = await state(request).holdings.update(
         hid, quantity=body.quantity, cost_basis=body.cost_basis,
-        purchase_date=body.purchase_date,
+        purchase_date=body.purchase_date, cost_currency=body.cost_currency,
     )
     if not ok:
         raise BadRequestError("nothing to update")

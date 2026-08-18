@@ -36,7 +36,7 @@ class HoldingStore:
 
     async def add(
         self, symbol: str, quantity: float, cost_basis: float,
-        purchase_date: str | None = None,
+        purchase_date: str | None = None, cost_currency: str | None = None,
     ) -> dict:
         """A new lot.
 
@@ -48,16 +48,17 @@ class HoldingStore:
         hid, ts = new_id(), now()
         await self._db.write(
             "INSERT INTO holdings(id, symbol, quantity, cost_basis, purchase_date, "
-            "created_at, updated_at) VALUES(?,?,?,?,?,?,?)",
-            (hid, symbol, quantity, cost_basis, purchase_date, ts, ts),
+            "cost_currency, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)",
+            (hid, symbol, quantity, cost_basis, purchase_date, cost_currency, ts, ts),
         )
         return {"id": hid, "symbol": symbol, "quantity": quantity,
                 "cost_basis": cost_basis, "purchase_date": purchase_date,
-                "created_at": ts, "updated_at": ts}
+                "cost_currency": cost_currency, "created_at": ts, "updated_at": ts}
 
     async def update(
         self, hid: str, *, quantity: float | None = None,
         cost_basis: float | None = None, purchase_date: str | None = None,
+        cost_currency: str | None = None,
     ) -> bool:
         sets, args = [], []
         if quantity is not None:
@@ -66,6 +67,8 @@ class HoldingStore:
             sets.append("cost_basis=?"); args.append(cost_basis)
         if purchase_date is not None:
             sets.append("purchase_date=?"); args.append(purchase_date)
+        if cost_currency is not None:
+            sets.append("cost_currency=?"); args.append(cost_currency)
         if not sets:
             return False
         sets.append("updated_at=?"); args.append(now())
@@ -96,15 +99,46 @@ def value_holdings(holdings: list[dict], quotes: dict) -> dict:
         currency = q.get("currency") or "USD"
         cost = h["quantity"] * h["cost_basis"]
 
+        # WHAT THE COST WAS PAID IN, which is not necessarily what the quote
+        # comes back in. NULL means "same as the quote" — see migration 9 for
+        # why that is the honest default for rows entered before this existed.
+        cost_currency = h.get("cost_currency") or currency
+        # THE SUBTRACTION IS ONLY VALID IN ONE CURRENCY. Buying on a Canadian
+        # exchange in CAD an instrument that quotes in USD is ordinary, and
+        # value − cost across that boundary is not a small error, it is a
+        # category error. Arthur does not fetch FX (see the totals rule below),
+        # so the only honest move is to price the position, refuse the P/L, and
+        # say which one is missing.
+        fx_blocked = cost_currency != currency
+
         row = {
             **h,
             "name": q.get("name") or h["symbol"],
             "price": price,
             "currency": currency,
+            "cost_currency": cost_currency,
             "cost_total": round(cost, 2),
             "priced": price is not None,
+            "fx_blocked": fx_blocked,
         }
-        if price is not None:
+        if price is not None and fx_blocked:
+            # The value is real — it is quantity × price, entirely in the
+            # quote's currency and touching the cost basis not at all.
+            row["value"] = round(h["quantity"] * price, 2)
+            row["pl"] = None
+            row["pl_pct"] = None
+            chg = q.get("change")
+            row["day_change"] = round(h["quantity"] * chg, 2) if isinstance(chg, (int, float)) else None
+            # Today's move is likewise pure quote-currency, so it still counts
+            # towards the total; only the cost-derived figures are withheld.
+            t = totals.setdefault(currency, {"value": 0.0, "cost": 0.0, "day_change": 0.0,
+                                             "priced": 0, "unpriced": 0, "fx_blocked": 0})
+            t["value"] += row["value"]
+            if row["day_change"] is not None:
+                t["day_change"] += row["day_change"]
+            t["priced"] += 1
+            t["fx_blocked"] += 1
+        elif price is not None:
             value = h["quantity"] * price
             row["value"] = round(value, 2)
             row["pl"] = round(value - cost, 2)
@@ -154,21 +188,34 @@ def value_holdings(holdings: list[dict], quotes: dict) -> dict:
                 row["cost_suspect"] = price / h["cost_basis"] < 0.02
 
             t = totals.setdefault(currency, {"value": 0.0, "cost": 0.0, "day_change": 0.0,
-                                             "priced": 0, "unpriced": 0})
+                                             "priced": 0, "unpriced": 0, "fx_blocked": 0,
+                                             "_cmp_value": 0.0})
             t["value"] += value
             t["cost"] += cost
+            # THE VALUE THAT HAS A COMPARABLE COST BEHIND IT. Total P/L must be
+            # computed from this and not from `value`, because an FX-blocked
+            # holding contributes its value to the portfolio but deliberately
+            # contributes no cost — subtracting one from the other would
+            # reintroduce, at the total level, exactly the cross-currency error
+            # the row-level check just refused to make.
+            t["_cmp_value"] += value
             if row["day_change"] is not None:
                 t["day_change"] += row["day_change"]
             t["priced"] += 1
         else:
             totals.setdefault(currency, {"value": 0.0, "cost": 0.0, "day_change": 0.0,
-                                         "priced": 0, "unpriced": 0})["unpriced"] += 1
+                                         "priced": 0, "unpriced": 0, "fx_blocked": 0,
+                                         "_cmp_value": 0.0})["unpriced"] += 1
         rows.append(row)
 
     for cur, t in totals.items():
+        cmp_value = t.pop("_cmp_value", 0.0)
         t["value"] = round(t["value"], 2)
         t["cost"] = round(t["cost"], 2)
         t["day_change"] = round(t["day_change"], 2)
-        t["pl"] = round(t["value"] - t["cost"], 2)
-        t["pl_pct"] = round((t["value"] - t["cost"]) / t["cost"] * 100, 2) if t["cost"] else None
+        t["pl"] = round(cmp_value - t["cost"], 2)
+        t["pl_pct"] = round((cmp_value - t["cost"]) / t["cost"] * 100, 2) if t["cost"] else None
+        # So the UI can say "P/L excludes 1 holding" rather than quietly
+        # reporting a total that does not describe everything above it.
+        t["pl_covers_all"] = not t["fx_blocked"]
     return {"holdings": rows, "totals": totals}

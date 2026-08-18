@@ -264,6 +264,22 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX idx_holdings_symbol ON holdings(symbol);
     """,
+
+    # 9 — what currency the cost basis was PAID in.
+    #
+    # Migration 8 had a bug hiding in an omission: it stored a cost basis with
+    # no currency, so everything downstream assumed it matched whatever
+    # currency the quote came back in. That holds right up until someone buys
+    # on a Canadian exchange in CAD an instrument that quotes in USD — then the
+    # P/L subtracts CAD from USD and reports a confident, meaningless number.
+    #
+    # NULL MEANS "SAME AS THE QUOTE", which is exactly what every existing row
+    # already assumed. Backfilling a literal 'USD' would be a guess about rows
+    # we know nothing about; nullable keeps the old behaviour for old data and
+    # lets new rows be explicit.
+    """
+    ALTER TABLE holdings ADD COLUMN cost_currency TEXT;
+    """,
 ]
 
 
