@@ -546,8 +546,25 @@ a.sp-meta-item:hover { background: var(--muted); }
   text-overflow: ellipsis; white-space: nowrap; }
 .pf-num { font-family: var(--mono); font-size: 12.5px; text-align: right; }
 .pf-unpriced-note { font-family: var(--sans); font-size: 11px; color: var(--tmut); }
-.pf-actions { display: flex; justify-content: flex-end; opacity: 0; transition: opacity 0.16s var(--ease); }
+.pf-actions { display: flex; justify-content: flex-end; gap: 2px; opacity: 0; transition: opacity 0.16s var(--ease); }
 .pf-row:hover .pf-actions { opacity: 1; }
+/* Keyboard users never hover, so the actions must appear on focus too —
+   otherwise Edit and Remove are unreachable without a mouse. */
+.pf-row:focus-within .pf-actions { opacity: 1; }
+
+/* Editing in place. The row keeps its grid so the columns do not jump when it
+   switches modes — a table that reflows on edit makes you re-find your row. */
+.pf-row.editing { background: var(--muted); }
+.pf-edit-input {
+  width: 100%; height: 29px; padding: 0 8px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text);
+  font-family: var(--mono); font-size: 12.5px; text-align: right;
+}
+.pf-edit-input.sym { text-align: left; font-weight: 700; text-transform: uppercase; }
+.pf-edit-input:focus { outline: none; border-color: var(--accent); }
+.pf-edit-cost { display: flex; gap: 5px; align-items: center; }
+.pf-edit-input.cur { width: 68px; flex-shrink: 0; text-align: left; }
+.pf-edit-actions { display: flex; gap: 5px; justify-content: flex-end; grid-column: span 2; }
 
 .pf-empty { padding: 40px 0 8px; max-width: 560px; }
 .pf-empty h3 { font-size: 17px; font-weight: 600; margin-bottom: 8px; }

@@ -70,6 +70,43 @@ class TestValuation:
         assert "cost_suspect" not in out["holdings"][0]
         assert out["holdings"][0]["pl_pct"] is None
 
+class TestEditing:
+    """Correcting a lot without destroying the parts that were right."""
+
+    async def _make(self, client, **kw):
+        body = {"symbol": "BTC", "quantity": 0.000222, "cost_basis": 88784.0, **kw}
+        return (await client.post("/finance/portfolio", json=body)).json()
+
+    async def test_the_ticker_can_be_corrected_in_place(self, client):
+        # The exact mistake: plain BTC is a Grayscale trust. Fixing it must not
+        # cost the quantity, which was right all along.
+        made = await self._make(client)
+        r = await client.patch(f"/finance/portfolio/{made['id']}",
+                               json={"symbol": "BTC-CAD", "cost_basis": 157657.66,
+                                     "cost_currency": "CAD"})
+        assert r.status_code == 200, r.text
+        row = (await client.get("/finance/portfolio")).json()["holdings"][0]
+        assert row["symbol"] == "BTC-CAD"
+        assert row["cost_basis"] == 157657.66
+        assert row["cost_currency"] == "CAD"
+        assert row["quantity"] == 0.000222      # untouched
+
+    async def test_a_partial_patch_leaves_everything_else_alone(self, client):
+        made = await self._make(client, cost_currency="CAD")
+        await client.patch(f"/finance/portfolio/{made['id']}", json={"cost_basis": 41.03})
+        row = (await client.get("/finance/portfolio")).json()["holdings"][0]
+        assert row["cost_basis"] == 41.03
+        assert row["symbol"] == "BTC" and row["cost_currency"] == "CAD"
+
+    async def test_an_invalid_ticker_is_refused_and_changes_nothing(self, client):
+        made = await self._make(client)
+        r = await client.patch(f"/finance/portfolio/{made['id']}",
+                               json={"symbol": "not a ticker!"})
+        assert r.status_code == 422
+        row = (await client.get("/finance/portfolio")).json()["holdings"][0]
+        assert row["symbol"] == "BTC"
+
+
 class TestValidationErrorsAreReadable:
     """A 422 must name the field. "Request failed (422)" is not a message.
 
