@@ -79,7 +79,7 @@ export default function WatchlistPanel() {
   // not re-render the row being dragged.
   const dragFrom = useRef(null);
   const [dragOver, setDragOver] = useState(null);
-  // {sym, x, y} — the same ContextMenu the sidebar uses, rather than a second
+  // {sym, failed, x, y} — the same ContextMenu the sidebar uses, rather than a second
   // implementation of viewport-edge clamping.
   const [menu, setMenu] = useState(null);
   const send = useChat((s) => s.send);
@@ -88,7 +88,24 @@ export default function WatchlistPanel() {
 
   // Right-click actions. "Explain" follows the same rule as the symbol page:
   // the question goes to the conversation, because that is where answers live.
-  const menuItems = (sym) => [
+  //
+  // A FAILED ROW GETS ITS OWN MENU, and it is the one that matters most. A
+  // ticker that will never resolve — a typo, or a listing that needs a suffix
+  // like XEQT.TO — is precisely the row you want to delete, and offering
+  // "Open page" or "Explain today's move" on something with no price is
+  // offering actions that cannot work. Remove is the whole point here.
+  const menuItems = (sym, failed) => (failed ? [
+    { label: "Retry", icon: RefreshCw, onClick: () => refresh({ force: true }) },
+    {
+      label: "Copy symbol", icon: Copy,
+      onClick: async () => {
+        await copyToClipboard({ text: sym });
+        pushToast(`${sym} copied.`, "success");
+      },
+    },
+    { divider: true },
+    { label: "Remove from watchlist", icon: Trash2, danger: true, onClick: () => remove(sym) },
+  ] : [
     { label: "Open page", icon: ArrowUp, onClick: () => open(sym) },
     {
       label: "Explain today's move", icon: MessageSquare,
@@ -103,7 +120,7 @@ export default function WatchlistPanel() {
     },
     { divider: true },
     { label: "Remove from watchlist", icon: Trash2, danger: true, onClick: () => remove(sym) },
-  ];
+  ]);
   const [draft, setDraft] = useState("");
   const [adding, setAdding] = useState(false);
 
@@ -180,10 +197,26 @@ export default function WatchlistPanel() {
           // one bad ticker must not blank the list.
           if (row.failed) {
             return (
-              <div className="wl-row failed" key={sym}>
+              <div
+                className="wl-row failed" key={sym}
+                // The row was a plain div, so right-click fell through to the
+                // panel and there was NO way to delete a ticker that could
+                // never load — the one row most likely to need deleting.
+                onContextMenu={(e) => { e.preventDefault(); setMenu({ sym, failed: true, x: e.clientX, y: e.clientY }); }}
+                title={`${sym} — right-click to retry or remove`}
+              >
                 <span className="wl-sym">{sym}</span>
                 <span className="wl-failed-note">didn't load</span>
                 <button className="btn tiny" onClick={() => refresh({ force: true })}>Retry</button>
+                {/* An explicit remove as well as the menu. Right-click is not
+                    discoverable, and a row you cannot get rid of is the kind
+                    of thing people give up on rather than hunt for. */}
+                <button
+                  className="icon-btn-sm" title={`Remove ${sym} from the watchlist`}
+                  onClick={() => remove(sym)}
+                >
+                  <Trash2 size={12} strokeWidth={2} />
+                </button>
               </div>
             );
           }
@@ -205,7 +238,7 @@ export default function WatchlistPanel() {
               }}
               onDragEnd={() => { dragFrom.current = null; setDragOver(null); }}
               onClick={() => open(sym)}
-              onContextMenu={(e) => { e.preventDefault(); setMenu({ sym, x: e.clientX, y: e.clientY }); }}
+              onContextMenu={(e) => { e.preventDefault(); setMenu({ sym, failed: false, x: e.clientX, y: e.clientY }); }}
               title={`Open ${sym}`}
             >
               <div className="wl-id">
@@ -248,7 +281,7 @@ export default function WatchlistPanel() {
       {menu && (
         <ContextMenu
           x={menu.x} y={menu.y}
-          items={menuItems(menu.sym)}
+          items={menuItems(menu.sym, menu.failed)}
           onClose={() => setMenu(null)}
         />
       )}
