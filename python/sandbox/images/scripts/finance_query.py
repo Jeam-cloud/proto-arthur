@@ -67,6 +67,25 @@ def _name_of(ticker, sym):
         return sym
 
 
+def _pct(value, already_pct_above=None):
+    """Yahoo's ratios, normalised to percentages, in ONE place.
+
+    Margins, growth rates and ownership come back as fractions (0.4632 means
+    46.32%). dividendYield is the inconsistent one — some tickers report a
+    fraction, some report a percentage already — so it passes a threshold above
+    which the value is taken as-is.
+
+    Doing this here rather than in the UI means no screen has to guess which
+    convention it was handed, and the same number cannot render as 46% on one
+    surface and 0.46% on another.
+    """
+    if not isinstance(value, (int, float)):
+        return None
+    if already_pct_above is not None and value > already_pct_above:
+        return round(value, 2)
+    return round(value * 100, 2)
+
+
 def _quote_fields(ticker):
     fi = ticker.fast_info
     price = getattr(fi, "last_price", None)
@@ -251,6 +270,53 @@ def detail(symbols, period="1mo", names=None):
         pass
     if info:
         row["name"] = info.get("shortName") or info.get("longName") or row["name"]
+        # THE RESEARCH LAYER. All of this rides along on the `.info` call the
+        # page already pays for — no extra request. Grouped by the question it
+        # answers rather than by where Yahoo happens to put it, because the
+        # sections on screen are the groups.
+        #
+        # Margins and growth arrive as FRACTIONS from Yahoo (0.4632 = 46.32%)
+        # while dividendYield is inconsistent — normalised in one place here so
+        # no UI has to guess which convention it received.
+        row["research"] = {
+            "valuation": {
+                "pe": info.get("trailingPE"),
+                "forward_pe": info.get("forwardPE"),
+                "price_to_sales": info.get("priceToSalesTrailing12Months"),
+                "price_to_book": info.get("priceToBook"),
+                "peg": info.get("pegRatio"),
+            },
+            "profitability": {
+                "gross_margin": _pct(info.get("grossMargins")),
+                "operating_margin": _pct(info.get("operatingMargins")),
+                "profit_margin": _pct(info.get("profitMargins")),
+                "roe": _pct(info.get("returnOnEquity")),
+                "roa": _pct(info.get("returnOnAssets")),
+            },
+            "health": {
+                "debt_to_equity": info.get("debtToEquity"),
+                "current_ratio": info.get("currentRatio"),
+                "quick_ratio": info.get("quickRatio"),
+                "free_cash_flow": info.get("freeCashflow"),
+                "total_cash": info.get("totalCash"),
+                "total_debt": info.get("totalDebt"),
+            },
+            "growth": {
+                "revenue_growth": _pct(info.get("revenueGrowth")),
+                "earnings_growth": _pct(info.get("earningsGrowth")),
+            },
+            "dividend": {
+                "yield": _pct(info.get("dividendYield"), already_pct_above=1),
+                "rate": info.get("dividendRate"),
+                "payout_ratio": _pct(info.get("payoutRatio")),
+            },
+            "ownership": {
+                "institutions": _pct(info.get("heldPercentInstitutions")),
+                "insiders": _pct(info.get("heldPercentInsiders")),
+                "beta": info.get("beta"),
+                "shares_outstanding": info.get("sharesOutstanding"),
+            },
+        }
         row["profile"] = {
             "sector": info.get("sector"),
             "industry": info.get("industry"),

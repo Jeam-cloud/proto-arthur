@@ -35,7 +35,10 @@ log = logging.getLogger(__name__)
 # :4 — sparkline extraction sniffs the frame SHAPE instead of assuming one
 #      from the symbol count, which left one-symbol watchlists with no chart.
 # :5 — `detail` op for the symbol page (quote + history + .info profile).
-FINANCE_IMAGE = "arthur-finance:5"
+# :6 — research block on `detail` (valuation, profitability, health, growth,
+#      dividend, ownership), with Yahoo's fraction/percent inconsistency
+#      normalised once at the source.
+FINANCE_IMAGE = "arthur-finance:6"
 CACHE_TTL_S = 15 * 60
 BREAKER_FAILS = 3
 BREAKER_COOLDOWN_S = 10 * 60

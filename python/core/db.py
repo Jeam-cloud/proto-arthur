@@ -234,6 +234,36 @@ MIGRATIONS: list[str] = [
     """
     ALTER TABLE conversations ADD COLUMN model TEXT;
     """,
+
+    # 8 — portfolio holdings.
+    #
+    # HAND-ENTERED AND LOCAL. This is the most sensitive data in the app: what
+    # someone is curious about is a watchlist, what they OWN is different. It
+    # lives in this file and goes nowhere — no account, no sync, no server —
+    # which is the one claim a local-first app can make here that a hosted one
+    # cannot.
+    #
+    # QUANTITY AND COST ARE REAL, NOT INTEGER. Fractional shares are normal now,
+    # and a cost basis is a price. Storing either as an integer would silently
+    # round someone's position.
+    #
+    # `purchase_date` is nullable ON PURPOSE. Every required field is a person
+    # deciding not to bother, and the date is not needed to value a holding —
+    # only to do the return maths we are deliberately NOT doing (see the brief:
+    # no IRR, no time-weighted return, because that needs a full transaction
+    # history we are not asking for).
+    """
+    CREATE TABLE holdings (
+        id TEXT PRIMARY KEY,
+        symbol TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        cost_basis REAL NOT NULL,
+        purchase_date TEXT,
+        created_at REAL NOT NULL,
+        updated_at REAL NOT NULL
+    );
+    CREATE INDEX idx_holdings_symbol ON holdings(symbol);
+    """,
 ]
 
 

@@ -13,6 +13,7 @@ import ChangesPanel from "../code/ChangesPanel";
 import WatchlistPanel from "../finance/WatchlistPanel";
 import ChartCard from "../finance/ChartCard";
 import SymbolPage from "../finance/SymbolPage";
+import PortfolioPage from "../finance/PortfolioPage";
 import { useWorkspace } from "../../stores/workspace";
 import { useChanges } from "../../stores/changes";
 import { useAttachments } from "../../stores/attachments";
@@ -36,6 +37,7 @@ export default function ChatView({ mode }) {
   // the watchlist and the composer stay, so the conversation is one click
   // (or one question) away.
   const openSymbol = useFinance((s) => s.openSymbol);
+  const financeView = useFinance((s) => s.view);
   const hasFolder = useWorkspace((s) => !!s.root);
   const reviewGateOn = useSettings((s) => !!s.values?.code_review_before_apply);
   // Just the last segment: "Working in atlas" is the project, "Working in
@@ -162,6 +164,8 @@ export default function ChatView({ mode }) {
       >
       {mode === "finance" && openSymbol ? (
         <SymbolPage />
+      ) : mode === "finance" && financeView === "portfolio" ? (
+        <PortfolioPage />
       ) : showSuggestions ? (
         <EmptyChat conversationId={activeId} mode={mode} />
       ) : (

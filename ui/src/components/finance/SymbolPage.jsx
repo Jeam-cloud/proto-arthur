@@ -13,6 +13,7 @@
 import React from "react";
 import { ArrowLeft, ExternalLink } from "lucide-react";
 import { sparkPath, useFinance } from "../../stores/finance";
+import ResearchSections from "./ResearchSections";
 import { useChat } from "../../stores/chat";
 import { useConversations } from "../../stores/conversations";
 
@@ -135,7 +136,7 @@ function Chart({ points, currency }) {
 
 export default function SymbolPage() {
   const {
-    openSymbol, detail, detailLoading, detailError, news, period,
+    openSymbol, detail, detailLoading, detailError, news, period, view,
     close, setPeriod, loadDetail,
   } = useFinance();
   const send = useChat((s) => s.send);
@@ -174,7 +175,7 @@ export default function SymbolPage() {
       <div className="sp-scroll">
         <div className="sp-head">
           <button className="sp-back" onClick={close}>
-            <ArrowLeft size={14} strokeWidth={2} /> Watchlist
+            <ArrowLeft size={14} strokeWidth={2} /> {view === "portfolio" ? "Portfolio" : "Watchlist"}
           </button>
         </div>
 
@@ -358,6 +359,8 @@ export default function SymbolPage() {
             </div>
           )}
         </div>
+
+        <ResearchSections symbol={openSymbol} research={row.research} onAsk={ask} />
 
         {/* Each of these ENDS this page and continues in the conversation. */}
         <div className="sp-actions">

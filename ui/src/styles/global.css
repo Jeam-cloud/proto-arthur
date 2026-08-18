@@ -383,6 +383,138 @@ a.sp-meta-item:hover { background: var(--muted); }
 }
 .sp-error > span { flex: 1; }
 
+/* ---------- finance: research layer ---------- */
+/* Accordion rows, not a dashboard of tiles. Forty ratios laid out as cards
+   look like research and teach nothing; a list you open one section at a time
+   is something a beginner can actually walk down. */
+.rs { margin-top: 14px; border: 1px solid var(--border); border-radius: 13px;
+  background: var(--bg2); overflow: hidden; }
+.rs-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; }
+.rs-head h3 { font-size: 13px; font-weight: 600; margin-right: auto; }
+
+.rs-section { border-top: 1px solid var(--border); }
+.rs-toggle {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  padding: 10px 14px; background: none; border: none; font-family: inherit;
+  font-size: 12.5px; color: var(--text);
+  transition: background 0.16s var(--ease);
+}
+.rs-toggle:hover { background: var(--muted); }
+.rs-caret { color: var(--tmut); flex-shrink: 0; transition: transform 0.18s var(--ease); }
+.rs-section.open .rs-caret { transform: rotate(90deg); }
+.rs-label { font-weight: 600; }
+/* The period is never optional. A P/E built on a quarter reported months ago
+   is a bigger source of error than the 15-minute price delay. */
+.rs-period { margin-left: auto; font-size: 10.5px; color: var(--tmut); }
+
+.rs-rows { padding: 2px 14px 12px 33px; animation: sp-in 0.18s var(--ease); }
+.rs-row {
+  display: flex; align-items: center; gap: 10px; padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.rs-row:last-of-type { border-bottom: none; }
+.rs-row-label { font-size: 12px; color: var(--tmut); }
+.rs-row-value { margin-left: auto; font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
+/* The workhorse of the whole section: every figure can be asked about in
+   context. Faded until hover so a column of them doesn't read as clutter. */
+.rs-ask {
+  flex-shrink: 0; width: 21px; height: 21px; display: flex; align-items: center;
+  justify-content: center; border-radius: 6px; border: none; background: none;
+  color: var(--tmut); opacity: 0.45;
+  transition: opacity 0.16s var(--ease), background 0.16s var(--ease);
+}
+.rs-row:hover .rs-ask { opacity: 1; }
+.rs-ask:hover { background: var(--emph); color: var(--text); }
+.rs-explain {
+  margin-top: 10px; font-size: 11.5px; padding: 5px 10px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--muted); color: var(--tmut);
+  font-family: inherit;
+}
+.rs-explain:hover { color: var(--text); background: var(--emph); }
+/* Missing data is the normal case for ETFs, ADRs and most non-US listings —
+   one line, not six empty rows. */
+.rs-empty { padding: 0 14px 12px 33px; font-size: 12px; color: var(--tmut); line-height: 1.5; }
+
+/* ---------- finance: portfolio ---------- */
+.pf-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.pf-head h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.01em; margin-right: auto; }
+
+/* ONE BLOCK PER CURRENCY. Never summed across — see value_holdings() for why
+   a converted total would be a guess. */
+.pf-totals {
+  display: flex; flex-wrap: wrap; gap: 0; margin-bottom: 10px;
+  border: 1px solid var(--border); border-radius: 13px; background: var(--bg2);
+  overflow: hidden;
+}
+.pf-total { flex: 1; min-width: 160px; padding: 12px 15px; border-right: 1px solid var(--border); }
+.pf-total:last-child { border-right: none; }
+.pf-total-label { font-size: 11px; color: var(--tmut); margin-bottom: 5px; }
+.pf-total-value { font-family: var(--mono); font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
+.pf-total-note {
+  flex-basis: 100%; padding: 9px 15px; font-size: 11.5px; color: var(--tmut);
+  border-top: 1px solid var(--border); background: var(--muted);
+}
+.pf-fx-note { font-size: 11.5px; color: var(--tmut); line-height: 1.55; margin-bottom: 12px; }
+
+/* Direction carries an arrow as well as a colour — same rule as the watchlist. */
+.pf-up { color: var(--green); }
+.pf-down { color: var(--red); }
+.pf-flat { color: var(--tmut); }
+.pf-pct { font-size: 0.82em; opacity: 0.85; }
+
+.pf-add {
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px;
+  padding: 13px 15px; margin-bottom: 12px;
+  border: 1px solid var(--border); border-radius: 13px; background: var(--bg2);
+}
+.pf-field { display: flex; flex-direction: column; gap: 5px; }
+.pf-field label { font-size: 11px; color: var(--tmut); }
+.pf-field input {
+  width: 130px; height: 33px; padding: 0 10px; border-radius: 9px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text);
+  font-family: var(--mono); font-size: 12.5px;
+}
+.pf-field input:focus { outline: none; border-color: var(--accent); }
+.pf-add-note { flex-basis: 100%; font-size: 11px; color: var(--tmut); }
+
+/* CSS grid, not a <table>: the columns must stay aligned across rows while
+   each cell holds arbitrary markup (a link, an arrow, a button). */
+.pf-table {
+  border: 1px solid var(--border); border-radius: 13px; background: var(--bg2); overflow: hidden;
+}
+.pf-row {
+  display: grid; grid-template-columns: minmax(0, 2fr) repeat(5, minmax(0, 1fr)) 34px;
+  align-items: center; gap: 10px; padding: 10px 15px;
+  border-bottom: 1px solid var(--border); font-size: 12.5px;
+}
+.pf-row:last-child { border-bottom: none; }
+.pf-header { font-size: 10.5px; color: var(--tmut); text-transform: uppercase;
+  letter-spacing: 0.05em; background: var(--muted); }
+/* A holding with no price keeps its row and its typed-in figures — dimming it
+   says "not valued", which is true; hiding it would say "gone", which is not. */
+.pf-row.unpriced { opacity: 0.62; }
+.pf-sym { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pf-link {
+  font-family: var(--mono); font-size: 13px; font-weight: 700; text-align: left;
+  background: none; border: none; color: var(--text); padding: 0;
+}
+.pf-link:hover { color: var(--accent); text-decoration: underline; }
+.pf-name { font-size: 11px; color: var(--tmut); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.pf-num { font-family: var(--mono); font-size: 12.5px; text-align: right; }
+.pf-unpriced-note { font-family: var(--sans); font-size: 11px; color: var(--tmut); }
+.pf-actions { display: flex; justify-content: flex-end; opacity: 0; transition: opacity 0.16s var(--ease); }
+.pf-row:hover .pf-actions { opacity: 1; }
+
+.pf-empty { padding: 40px 0 8px; max-width: 560px; }
+.pf-empty h3 { font-size: 17px; font-weight: 600; margin-bottom: 8px; }
+.pf-empty p { font-size: 13px; color: var(--tmut); line-height: 1.65; margin-bottom: 16px; }
+.pf-or { font-size: 12px; color: var(--tmut); margin: 14px 0 8px; }
+.pf-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Said once, permanently, rather than as a badge on every row. */
+.pf-privacy { margin-top: 16px; font-size: 11px; color: var(--tmut); line-height: 1.5; }
+.pf-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+
 /* ---------- finance: chart in the transcript ---------- */
 .chart-card {
   margin: 10px 0; border: 1px solid var(--border); border-radius: 13px;
@@ -434,6 +566,16 @@ a.sp-meta-item:hover { background: var(--muted); }
   display: flex; align-items: center; gap: 4px; padding: 11px 10px 8px; flex-shrink: 0;
 }
 .wl-title { font-size: 12px; font-weight: 600; color: var(--tmut); flex: 1; }
+/* Switches the MAIN PANE, not this panel — the watchlist stays visible so you
+   can click a ticker while the portfolio is open. A text toggle rather than an
+   icon because "Portfolio" has no glyph anyone reads unambiguously. */
+.wl-tab {
+  font-size: 11px; padding: 3px 9px; border-radius: 7px; border: 1px solid transparent;
+  background: none; color: var(--tmut); font-family: inherit;
+  transition: background 0.16s var(--ease), color 0.16s var(--ease);
+}
+.wl-tab:hover { color: var(--text); background: var(--muted); }
+.wl-tab.on { background: var(--emph); color: var(--text); font-weight: 600; }
 .wl-add { display: flex; gap: 6px; padding: 0 10px 8px; flex-shrink: 0; }
 .wl-add input {
   flex: 1; min-width: 0; background: var(--muted); border: 1px solid var(--border);

@@ -35,10 +35,12 @@ from core.api.schemas import (
     MemoryUpdate, PersonaBody,
     PullRequest, RenameRequest, ResearchExportRequest, ResearchFindSourcesRequest,
     ResearchPlanRequest, ResearchRunRequest, ResearchSynthesizeRequest, SecretBody, SettingsPatch,
-    AttachPathsRequest, ChangesRequest, NewConversation, UndoRequest, WatchlistRequest,
+    AttachPathsRequest, ChangesRequest, HoldingBody, HoldingPatch, NewConversation,
+    UndoRequest, WatchlistRequest,
     WorkspaceRequest,
 )
 from core.code_apply import apply_changeset
+from core.holdings import value_holdings
 from research import citations as research_citations
 from research import engine as research_engine
 from research import export as research_export
@@ -714,6 +716,74 @@ async def get_watchlist_data(request: Request) -> dict:
                 "ok": False, "error": result.content}
     return {"rows": rows, "symbols": symbols,
             "fetched_at": time.time(), "ok": True}
+
+
+@router.get("/finance/portfolio")
+async def get_portfolio(request: Request) -> dict:
+    """Holdings, valued.
+
+    TWO SPEEDS IN ONE RESPONSE, and the split matters. The holdings themselves
+    are local and instant; the prices are a container call against a delayed,
+    rate-limited feed. So the rows always come back — with quantity and cost
+    basis, which are facts the user typed — and the market columns are filled
+    in where a quote arrived.
+
+    That means an upstream outage costs you the VALUATION, not the portfolio.
+    A screen that says "we couldn't load your holdings" when it merely couldn't
+    price them is telling the user their data is gone.
+    """
+    s = state(request)
+    holdings = await s.holdings.list_all()
+    if not holdings:
+        return {"holdings": [], "totals": {}, "fetched_at": time.time(), "ok": True}
+
+    symbols = await s.holdings.symbols()
+    known = await s.db.get_setting(NAMES_KEY, {}) or {}
+    result = await s.watchlist.fetch(symbols, names=known)
+
+    quotes = {}
+    priced_ok = result.ok
+    if priced_ok:
+        quotes = json.loads(result.content)
+        learned = {sym: r["name"] for sym, r in quotes.items()
+                   if isinstance(r, dict) and r.get("name") and r["name"] != sym}
+        if any(known.get(k) != v for k, v in learned.items()):
+            await s.db.set_setting(NAMES_KEY, {**known, **learned})
+
+    valued = value_holdings(holdings, quotes)
+    return {
+        **valued,
+        "fetched_at": time.time(),
+        "ok": priced_ok,
+        "error": None if priced_ok else result.content,
+    }
+
+
+@router.post("/finance/portfolio")
+async def add_holding(request: Request, body: HoldingBody) -> dict:
+    return await state(request).holdings.add(
+        body.symbol, body.quantity, body.cost_basis, body.purchase_date,
+    )
+
+
+@router.patch("/finance/portfolio/{hid}")
+async def patch_holding(request: Request, hid: str, body: HoldingPatch) -> dict:
+    ok = await state(request).holdings.update(
+        hid, quantity=body.quantity, cost_basis=body.cost_basis,
+        purchase_date=body.purchase_date,
+    )
+    if not ok:
+        raise BadRequestError("nothing to update")
+    return {"ok": True}
+
+
+@router.delete("/finance/portfolio/{hid}")
+async def delete_holding(request: Request, hid: str) -> dict:
+    # No soft delete and no undo window: unlike a conversation, this is
+    # hand-entered data that cannot be re-fetched, so the UI confirms first
+    # rather than offering to reverse afterwards.
+    await state(request).holdings.remove(hid)
+    return {"ok": True}
 
 
 @router.get("/finance/symbol/{symbol}")

@@ -71,7 +71,7 @@ function updatedAt(epochSeconds) {
 export default function WatchlistPanel() {
   const {
     symbols, rows, fetchedAt, loading, loaded, error, openSymbol,
-    load, refresh, add, remove, dismissError, open, reorder,
+    load, refresh, add, remove, dismissError, open, reorder, view, setView,
   } = useFinance();
   // HTML5 drag, not a library: the list is short, the rows are uniform,
   // and a drag-and-drop dependency for one panel is not a trade worth
@@ -123,6 +123,14 @@ export default function WatchlistPanel() {
     <div className="watchlist">
       <div className="wl-head">
         <span className="wl-title">Watchlist</span>
+        {/* Navigates the MAIN PANE, not this panel — the watchlist stays put so
+            you can click a ticker while the portfolio is open. */}
+        <button
+          className={`wl-tab${view === "portfolio" ? " on" : ""}`}
+          onClick={() => setView(view === "portfolio" ? "watchlist" : "portfolio")}
+        >
+          Portfolio
+        </button>
         <button
           className="icon-btn-sm" title="Add a symbol"
           onClick={() => setAdding((v) => !v)}

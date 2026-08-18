@@ -17,6 +17,7 @@ from core.config import Settings
 from core.conversations import ConversationStore
 from core.db import Database
 from core.deps import AppState
+from core.holdings import HoldingStore
 from core.personas import PersonaStore
 from memory.service import MemoryService
 from memory.vector_store import InMemoryVectorStore
@@ -127,6 +128,7 @@ async def app_state(settings, db, fake_llm, embedder, vault) -> AppState:
         # routes are exercised against the same no-Docker path the tests use
         # for every other container-backed tool.
         watchlist=WatchlistFetcher(sandbox),
+        holdings=HoldingStore(db),
     )
 
 

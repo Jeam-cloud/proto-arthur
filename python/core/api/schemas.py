@@ -139,6 +139,33 @@ class WatchlistRequest(BaseModel):
         return out
 
 
+class HoldingBody(BaseModel):
+    """One lot the user says they own.
+
+    Three fields required, date optional — every extra required field is a
+    person deciding not to bother, and the date is not needed to value a
+    holding. Quantity is a float because fractional shares are normal.
+    """
+    symbol: str = Field(max_length=12)
+    quantity: float = Field(gt=0, le=1e12)
+    cost_basis: float = Field(ge=0, le=1e9)
+    purchase_date: str | None = Field(default=None, max_length=10)
+
+    @field_validator("symbol")
+    @classmethod
+    def clean(cls, v: str) -> str:
+        s = v.strip().upper()
+        if not (1 <= len(s) <= 12 and s.replace(".", "").replace("-", "").replace("=", "").isalnum()):
+            raise ValueError(f"invalid ticker: {v!r}")
+        return s
+
+
+class HoldingPatch(BaseModel):
+    quantity: float | None = Field(default=None, gt=0, le=1e12)
+    cost_basis: float | None = Field(default=None, ge=0, le=1e9)
+    purchase_date: str | None = Field(default=None, max_length=10)
+
+
 class ConversationModelRequest(BaseModel):
     """The model this conversation should use from now on.
 

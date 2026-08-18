@@ -131,6 +131,76 @@ export const useFinance = create((set, get) => ({
     }
   },
 
+  // ---- portfolio --------------------------------------------------------
+  // `view` is "watchlist" | "portfolio" — which face the right panel and the
+  // main pane are showing. Kept beside openSymbol so one store owns the whole
+  // of Finance mode's navigation.
+  view: "watchlist",
+  holdings: [],
+  totals: {},          // per CURRENCY — never summed across, no FX is fetched
+  pfLoaded: false,
+  pfLoading: false,
+  pfPricingFailed: false,   // holdings arrived, prices did not
+  pfError: null,
+
+  setView(view) { set({ view }); if (view === "portfolio") get().loadPortfolio(); },
+
+  async loadPortfolio() {
+    set({ pfLoading: true, pfError: null });
+    try {
+      const res = await api.get("/finance/portfolio");
+      set({
+        holdings: res.holdings || [],
+        totals: res.totals || {},
+        // A pricing failure is NOT a load failure. The holdings are local and
+        // always come back; only the valuation is missing, and the UI has to
+        // be able to say which.
+        pfPricingFailed: !res.ok,
+        pfError: res.ok ? null : (res.error || "Couldn't price your holdings."),
+        pfLoaded: true,
+      });
+    } catch (e) {
+      set({ pfError: e.message, pfLoaded: true });
+    } finally {
+      set({ pfLoading: false });
+    }
+  },
+
+  async addHolding({ symbol, quantity, cost_basis, purchase_date }) {
+    try {
+      await api.post("/finance/portfolio", {
+        symbol, quantity: Number(quantity), cost_basis: Number(cost_basis),
+        purchase_date: purchase_date || null,
+      });
+      await get().loadPortfolio();
+      return true;
+    } catch (e) {
+      useToasts.getState().push(`Couldn't add ${symbol}: ${e.message}`, "error");
+      return false;
+    }
+  },
+
+  async updateHolding(id, patch) {
+    try {
+      await api.patch(`/finance/portfolio/${id}`, patch);
+      await get().loadPortfolio();
+    } catch (e) {
+      useToasts.getState().push(e.message, "error");
+    }
+  },
+
+  async removeHolding(id) {
+    // No optimistic removal and no undo: this is hand-entered data that cannot
+    // be re-fetched, so the caller confirms first (see ConfirmDialog) and the
+    // row leaves only once the server agrees.
+    try {
+      await api.del(`/finance/portfolio/${id}`);
+      await get().loadPortfolio();
+    } catch (e) {
+      useToasts.getState().push(e.message, "error");
+    }
+  },
+
   // Clears the notice without touching the data. The rows already on screen
   // stay: they were fetched successfully, and the failure being dismissed was
   // about the attempt after them.

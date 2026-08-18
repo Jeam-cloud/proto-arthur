@@ -21,6 +21,7 @@ from core.chat_service import ChatService
 from core.config import Settings
 from core.attachments import AttachmentStore
 from core.conversations import ConversationStore
+from core.holdings import HoldingStore
 from core.db import Database
 from core.ollama_client import OllamaClient
 from core.personas import PersonaStore
@@ -78,6 +79,7 @@ class AppState:
     byok: BYOKRouter
     research: ResearchEngine
     watchlist: WatchlistFetcher
+    holdings: HoldingStore
 
 
 async def build_state(settings: Settings) -> AppState:
@@ -162,4 +164,5 @@ async def build_state(settings: Settings) -> AppState:
         # Shares the finance cache and circuit breaker with the tools above:
         # panel and model hit the same upstream, so they back off together.
         watchlist=WatchlistFetcher(sandbox),
+        holdings=HoldingStore(db),
     )
