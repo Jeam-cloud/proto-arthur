@@ -454,7 +454,9 @@ a.sp-meta-item:hover { background: var(--muted); }
   height: 26px; width: 130px; border-radius: 7px; background: var(--emph);
   animation: sk-pulse 1.4s ease-in-out infinite;
 }
-.pf-sk.sm { height: 10px; width: 100%; max-width: 74px; }
+.pf-sk.sm { height: 10px; width: 100%; max-width: 74px; margin-left: auto; }
+/* Except in the first column, which is left-aligned like its ticker. */
+.pf-sym .pf-sk.sm { margin-left: 0; }
 
 /* ONE BLOCK PER CURRENCY. Never summed across — see value_holdings() for why
    a converted total would be a guess. */

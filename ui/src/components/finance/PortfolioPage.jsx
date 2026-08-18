@@ -245,13 +245,16 @@ function EditRow({ h, onDone }) {
       </span>
       <span className="pf-num" />
       <span className="pf-num" />
+      {/* Spans the last two columns (P/L + actions), so the six cells above
+          plus this pair still total the row's seven tracks. An extra trailing
+          cell here would create an implicit eighth column and knock the edit
+          row out of alignment with every row around it. */}
       <span className="pf-edit-actions">
         <button className="btn tiny" onClick={onDone} disabled={busy}>Cancel</button>
         <button className="btn tiny primary" onClick={save} disabled={!ready || busy}>
           {busy ? "…" : "Save"}
         </button>
       </span>
-      <span />
     </div>
   );
 }
