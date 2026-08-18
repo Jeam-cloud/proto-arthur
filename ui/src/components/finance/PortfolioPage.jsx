@@ -61,7 +61,25 @@ function AddForm({ onDone, initialSymbol = "" }) {
   // is cheap to discover is while the cost basis is still being typed.
   const [found, setFound] = useState(null);
 
-  const ready = f.symbol.trim() && Number(f.quantity) > 0 && f.cost_basis !== "";
+  // TYPED NUMBERS ARE NOT NUMBERS. People paste "88,784.00" or "$88,784" —
+  // exactly the format this page prints them in — and Number() returns NaN,
+  // which JSON.stringify writes as `null`, which the API rejects as a 422 with
+  // no useful message. Cleaning the obvious separators here means the form
+  // accepts what a person would reasonably type.
+  const num = (raw) => {
+    const cleaned = String(raw ?? "").replace(/[\s,$£€]/g, "");
+    const n = Number(cleaned);
+    return cleaned !== "" && isFinite(n) ? n : null;
+  };
+  const quantity = num(f.quantity);
+  const costBasis = num(f.cost_basis);
+  // Checks the VALUES, not merely that the boxes are non-empty — the old test
+  // (`f.cost_basis !== ""`) happily let "88,784.00" through to become null.
+  const ready = f.symbol.trim() && quantity !== null && quantity > 0
+    && costBasis !== null && costBasis >= 0;
+  // Typed something, but not a number Arthur can use.
+  const badNumber = (f.quantity !== "" && quantity === null)
+    || (f.cost_basis !== "" && costBasis === null);
 
   // On blur, not on every keystroke: each call is a container start against a
   // rate-limited feed, and "AAP" on the way to "AAPL" is not a question worth
@@ -81,6 +99,9 @@ function AddForm({ onDone, initialSymbol = "" }) {
     // noise in the row.
     const ok = await addHolding({
       ...f,
+      // The parsed numbers, not the raw strings — the store must never be the
+      // place that discovers a field was unusable.
+      quantity, cost_basis: costBasis,
       cost_currency: f.cost_currency && f.cost_currency !== found?.currency
         ? f.cost_currency : null,
     });
@@ -142,6 +163,15 @@ function AddForm({ onDone, initialSymbol = "" }) {
           Yahoo doesn't recognise <strong>{found.symbol}</strong>. You can still
           save it — the holding is kept, it just won't be priced. Canadian
           listings usually need a suffix, like <code>XEQT.TO</code>.
+        </div>
+      )}
+      {/* Said HERE, next to the fields, rather than as a toast after a failed
+          request. "Request failed (422)" tells a person nothing about which
+          box to fix. */}
+      {badNumber && (
+        <div className="pf-add-error">
+          Shares and price need to be plain numbers — <code>88784.00</code>, not
+          <code>$88,784.00</code>.
         </div>
       )}
       {/* Named as optional so nobody stalls looking for it. Every extra

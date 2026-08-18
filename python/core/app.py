@@ -19,6 +19,8 @@ from fastapi.responses import JSONResponse
 from core.api.routes import public, router
 from core.config import Settings, get_settings
 from core.deps import AppState, build_state
+from fastapi.exceptions import RequestValidationError
+
 from core.errors import ArthurError
 
 log = logging.getLogger(__name__)
@@ -65,6 +67,39 @@ def create_app(settings: Settings | None = None, state: AppState | None = None) 
         return JSONResponse(
             status_code=exc.http_status,
             content={"error": {"code": exc.code, "message": exc.message, **exc.detail}},
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(
+        _request: Request, exc: RequestValidationError,
+    ) -> JSONResponse:
+        """Turn FastAPI's validation errors into Arthur's error envelope.
+
+        WHY THIS EXISTS: FastAPI answers a bad body with
+        `{"detail": [{"loc": [...], "msg": "..."}]}`, which does not match the
+        `{"error": {code, message}}` shape the renderer's client looks for. The
+        client therefore fell back to its generic text and the user saw
+        "Request failed (422)" — a message that names neither the field nor the
+        problem, on the one class of error that is ALWAYS about a specific
+        field the user can see and fix.
+
+        Only the FIRST error is reported. A form with three empty boxes
+        produces three entries saying the same thing, and a wall of validator
+        prose is not more actionable than one sentence.
+        """
+        errors = exc.errors()
+        first = errors[0] if errors else {}
+        # Drop the "body"/"query" prefix — the user knows where they typed.
+        path = [str(p) for p in first.get("loc", []) if p not in ("body", "query", "path")]
+        field = ".".join(path)
+        msg = first.get("msg", "is not valid")
+        return JSONResponse(
+            status_code=422,
+            content={"error": {
+                "code": "invalid_request",
+                "message": f"{field}: {msg}" if field else msg,
+                "fields": [".".join(str(p) for p in e.get("loc", [])[1:]) for e in errors],
+            }},
         )
 
     app.include_router(public)

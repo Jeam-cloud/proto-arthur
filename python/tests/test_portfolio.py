@@ -70,6 +70,41 @@ class TestValuation:
         assert "cost_suspect" not in out["holdings"][0]
         assert out["holdings"][0]["pl_pct"] is None
 
+class TestValidationErrorsAreReadable:
+    """A 422 must name the field. "Request failed (422)" is not a message.
+
+    The real failure: typing "88,784.00" — the format this page PRINTS numbers
+    in — makes Number() return NaN, JSON.stringify writes NaN as null, and the
+    API rejects a field the user can see they filled in.
+    """
+
+    async def test_a_null_number_names_the_field(self, client):
+        r = await client.post("/finance/portfolio", json={
+            "symbol": "BTC-CAD", "quantity": 0.000222, "cost_basis": None})
+        assert r.status_code == 422
+        body = r.json()
+        # Arthur's envelope, not FastAPI's `detail` list — otherwise the
+        # renderer's client cannot find a message and falls back to its generic
+        # text, which is the whole bug.
+        assert "error" in body, body
+        assert "cost_basis" in body["error"]["message"]
+        assert body["error"]["code"] == "invalid_request"
+
+    async def test_a_bad_ticker_says_so(self, client):
+        r = await client.post("/finance/portfolio", json={
+            "symbol": "not a ticker!", "quantity": 1, "cost_basis": 1})
+        assert r.status_code == 422
+        assert "symbol" in r.json()["error"]["message"]
+
+    async def test_a_valid_crypto_pair_is_accepted(self, client):
+        # BTC-CAD / XRP-USD must pass the ticker validator — the hyphen is the
+        # normal form for a crypto-fiat pair.
+        for sym in ("BTC-CAD", "XRP-USD", "BTC-USD"):
+            r = await client.post("/finance/portfolio", json={
+                "symbol": sym, "quantity": 1.0, "cost_basis": 100.0})
+            assert r.status_code == 200, (sym, r.text)
+
+
 class TestCostCurrency:
     """Buying in one currency something that quotes in another.
 

@@ -182,8 +182,17 @@ export const useFinance = create((set, get) => ({
 
   async addHolding({ symbol, quantity, cost_basis, purchase_date, cost_currency }) {
     try {
+      // Guarded here as well as in the form. NaN survives Number() silently
+      // and JSON.stringify writes it as `null`, so an unparsed field reaches
+      // the API as a missing one — a 422 that names a field the user filled in.
+      const qty = Number(quantity), cost = Number(cost_basis);
+      if (!isFinite(qty) || !isFinite(cost)) {
+        useToasts.getState().push(
+          `Couldn't add ${symbol}: shares and price must be plain numbers.`, "error");
+        return false;
+      }
       await api.post("/finance/portfolio", {
-        symbol, quantity: Number(quantity), cost_basis: Number(cost_basis),
+        symbol, quantity: qty, cost_basis: cost,
         purchase_date: purchase_date || null,
         cost_currency: cost_currency || null,
       });
