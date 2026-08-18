@@ -76,9 +76,20 @@ function AddForm({ onDone, initialSymbol = "" }) {
     e.preventDefault();
     if (!ready || busy) return;
     setBusy(true);
-    const ok = await addHolding(f);
+    // Only sent when it differs from the quote — a cost_currency equal to the
+    // listing currency is the default, and storing it explicitly would just be
+    // noise in the row.
+    const ok = await addHolding({
+      ...f,
+      cost_currency: f.cost_currency && f.cost_currency !== found?.currency
+        ? f.cost_currency : null,
+    });
     setBusy(false);
-    if (ok) { setF({ symbol: "", quantity: "", cost_basis: "", purchase_date: "" }); onDone?.(); }
+    if (ok) {
+      setF({ symbol: "", quantity: "", cost_basis: "", purchase_date: "", cost_currency: "" });
+      setFound(null);
+      onDone?.();
+    }
   };
 
   return (
@@ -156,7 +167,7 @@ export default function PortfolioPage() {
   const setChecking = (h) => ask({
     title: `${h.symbol} — these figures look off`,
     body:
-      `You entered ${money(h.cost_basis, h.currency)} per share, but ${h.symbol} `
+      `You entered ${money(h.cost_basis, h.cost_currency)} per share, but ${h.symbol} `
       + `(${h.name}) trades at ${money(h.price, h.currency)}. That gap is too large `
       + "to be a market move.\n\n"
       + "The usual cause is a ticker that isn't the thing you hold — crypto symbols "
@@ -175,7 +186,7 @@ export default function PortfolioPage() {
     title: `Remove ${h.symbol} from your portfolio?`,
     // Explicit about what cannot be recovered: unlike a chat, these numbers
     // were typed by hand and Arthur cannot fetch them again.
-    body: `The ${h.quantity} shares and the ${money(h.cost_basis, h.currency)} `
+    body: `The ${h.quantity} shares and the ${money(h.cost_basis, h.cost_currency)} `
       + "cost basis you entered are deleted. Arthur can't recover them — they "
       + "were never stored anywhere else.",
     confirmLabel: "Remove holding",

@@ -70,6 +70,73 @@ class TestValuation:
         assert "cost_suspect" not in out["holdings"][0]
         assert out["holdings"][0]["pl_pct"] is None
 
+class TestCostCurrency:
+    """Buying in one currency something that quotes in another.
+
+    Ordinary for anyone with a Canadian or European broker holding US-listed
+    stock, and before cost_currency existed the P/L simply subtracted CAD from
+    USD and reported the result with a confident arrow on it.
+    """
+
+    def test_a_cross_currency_cost_refuses_to_produce_a_pl(self):
+        out = value_holdings(
+            [{"id": "1", "symbol": "BTC", "quantity": 2,
+              "cost_basis": 100.0, "cost_currency": "CAD"}],
+            {"BTC": {"price": 50.0, "currency": "USD", "change": 1.0}},
+        )
+        row = out["holdings"][0]
+        assert row["fx_blocked"] is True
+        assert row["pl"] is None and row["pl_pct"] is None
+        # The VALUE is still real: quantity x price, entirely in USD, never
+        # touching the cost basis.
+        assert row["value"] == 100.0
+        # As is today's move — also pure quote currency.
+        assert row["day_change"] == 2.0
+
+    def test_the_total_pl_excludes_what_the_row_refused(self):
+        # THE BUG THIS PINS: if the total added the FX-blocked holding's value
+        # but not its cost, it would reintroduce at the total level exactly the
+        # cross-currency subtraction the row just declined to make.
+        out = value_holdings(
+            [{"id": "1", "symbol": "A", "quantity": 1, "cost_basis": 10.0},
+             {"id": "2", "symbol": "B", "quantity": 1,
+              "cost_basis": 999.0, "cost_currency": "CAD"}],
+            {"A": {"price": 15.0, "currency": "USD"},
+             "B": {"price": 100.0, "currency": "USD"}},
+        )
+        t = out["totals"]["USD"]
+        assert t["value"] == 115.0        # both positions counted
+        assert t["cost"] == 10.0          # only the comparable one
+        assert t["pl"] == 5.0             # 15 - 10, NOT 115 - 10
+        assert t["pl_pct"] == 50.0
+        assert t["fx_blocked"] == 1
+        assert t["pl_covers_all"] is False
+
+    def test_no_cost_currency_means_the_quotes_currency(self):
+        # Every row written before migration 9 has NULL here, and its old
+        # behaviour must be preserved exactly.
+        out = value_holdings(
+            [{"id": "1", "symbol": "A", "quantity": 1, "cost_basis": 10.0,
+              "cost_currency": None}],
+            {"A": {"price": 15.0, "currency": "CAD"}},
+        )
+        row = out["holdings"][0]
+        assert row["fx_blocked"] is False
+        assert row["cost_currency"] == "CAD"
+        assert row["pl"] == 5.0
+        assert out["totals"]["CAD"]["pl_covers_all"] is True
+
+    def test_matching_currency_stated_explicitly_is_not_blocked(self):
+        out = value_holdings(
+            [{"id": "1", "symbol": "A", "quantity": 1, "cost_basis": 10.0,
+              "cost_currency": "USD"}],
+            {"A": {"price": 15.0, "currency": "USD"}},
+        )
+        assert out["holdings"][0]["fx_blocked"] is False
+        assert out["holdings"][0]["pl"] == 5.0
+
+
+class TestValuationMore:
     def test_an_unpriced_holding_survives_with_its_cost(self):
         out = value_holdings(
             [{"id": "1", "symbol": "DEAD", "quantity": 3, "cost_basis": 10}],

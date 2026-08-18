@@ -475,6 +475,16 @@ a.sp-meta-item:hover { background: var(--muted); }
   font-family: var(--mono); font-size: 12.5px;
 }
 .pf-field input:focus { outline: none; border-color: var(--accent); }
+.pf-field.narrow input, .pf-field.narrow select { width: 84px; }
+.pf-field select {
+  height: 33px; padding: 0 8px; border-radius: 9px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text);
+  font-family: var(--mono); font-size: 12.5px;
+}
+.pf-field select:focus { outline: none; border-color: var(--accent); }
+/* Not an error state — the holding is fine and its value is real, only the
+   cost-derived figure is withheld. Muted, not amber. */
+.pf-fx-blocked { font-family: var(--sans); font-size: 11px; color: var(--tmut); cursor: help; }
 .pf-add-note { flex-basis: 100%; font-size: 11px; color: var(--tmut); }
 /* What the ticker resolved to. Informational, not a warning — most of the time
    it is a quiet confirmation that you typed the right thing. */

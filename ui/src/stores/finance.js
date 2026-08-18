@@ -180,11 +180,12 @@ export const useFinance = create((set, get) => ({
     }
   },
 
-  async addHolding({ symbol, quantity, cost_basis, purchase_date }) {
+  async addHolding({ symbol, quantity, cost_basis, purchase_date, cost_currency }) {
     try {
       await api.post("/finance/portfolio", {
         symbol, quantity: Number(quantity), cost_basis: Number(cost_basis),
         purchase_date: purchase_date || null,
+        cost_currency: cost_currency || null,
       });
       await get().loadPortfolio();
       return true;
