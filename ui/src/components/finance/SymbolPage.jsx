@@ -136,7 +136,7 @@ function Chart({ points, currency }) {
 
 export default function SymbolPage() {
   const {
-    openSymbol, detail, detailLoading, detailError, news, period, view,
+    openSymbol, detail, detailLoading, detailError, news, period,
     close, setPeriod, loadDetail,
   } = useFinance();
   const send = useChat((s) => s.send);
@@ -175,7 +175,7 @@ export default function SymbolPage() {
       <div className="sp-scroll">
         <div className="sp-head">
           <button className="sp-back" onClick={close}>
-            <ArrowLeft size={14} strokeWidth={2} /> {view === "portfolio" ? "Portfolio" : "Watchlist"}
+            <ArrowLeft size={14} strokeWidth={2} /> Conversation
           </button>
         </div>
 

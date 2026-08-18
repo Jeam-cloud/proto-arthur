@@ -73,7 +73,16 @@ export const useFinance = create((set, get) => ({
     get().loadNews(symbol);
   },
 
-  close() { set({ openSymbol: null, detail: null, news: null, detailError: null }); },
+  // ALWAYS BACK TO THE CONVERSATION, never to whatever was underneath.
+  //
+  // The symbol page used to restore the previous view, so opening a ticker
+  // from the portfolio and closing it put you back on the portfolio. That
+  // sounds correct and reads as a maze: the page is a detour, the transcript
+  // is home, and a back button whose destination changes depending on how you
+  // arrived is the thing that made this confusing. One exit, always the same.
+  close() {
+    set({ openSymbol: null, detail: null, news: null, detailError: null, view: "watchlist" });
+  },
 
   setPeriod(period) {
     set({ period });

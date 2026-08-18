@@ -437,7 +437,24 @@ a.sp-meta-item:hover { background: var(--muted); }
 
 /* ---------- finance: portfolio ---------- */
 .pf-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
-.pf-head h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.01em; margin-right: auto; }
+.pf-head h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
+/* "entered by you" is the whole product boundary in three words: nothing here
+   came from a broker. */
+.pf-count { font-size: 12.5px; color: var(--tmut); margin-right: auto; }
+
+/* NAMES WHICH HALF IS PENDING. A bare spinner over a portfolio reads as "your
+   holdings are loading" — the one thing that would be alarming, and untrue. */
+.pf-loading-note {
+  display: flex; align-items: center; gap: 9px; margin-bottom: 12px;
+  font-size: 12.5px; color: var(--tmut);
+}
+.pf-loading-note .spinner { flex-shrink: 0; }
+
+.pf-sk {
+  height: 26px; width: 130px; border-radius: 7px; background: var(--emph);
+  animation: sk-pulse 1.4s ease-in-out infinite;
+}
+.pf-sk.sm { height: 10px; width: 100%; max-width: 74px; }
 
 /* ONE BLOCK PER CURRENCY. Never summed across — see value_holdings() for why
    a converted total would be a guess. */

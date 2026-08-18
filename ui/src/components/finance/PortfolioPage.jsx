@@ -11,7 +11,7 @@
 // NO ADVICE. No "consider rebalancing", no "overweight", no scoring. The same
 // boundary as the rest of Finance mode: Arthur shows, the person decides.
 import React, { useEffect, useState } from "react";
-import { AlertTriangle, Pencil, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useFinance } from "../../stores/finance";
 import { useConfirm } from "../../stores/confirm";
 import { useChat } from "../../stores/chat";
@@ -259,7 +259,7 @@ function EditRow({ h, onDone }) {
 export default function PortfolioPage() {
   const {
     holdings, totals, pfLoaded, pfLoading, pfPricingFailed, pfError,
-    loadPortfolio, removeHolding, symbols, open,
+    loadPortfolio, removeHolding, symbols, open, setView,
   } = useFinance();
   const ask = useConfirm((s) => s.ask);
   const send = useChat((s) => s.send);
@@ -301,7 +301,7 @@ export default function PortfolioPage() {
     onConfirm: () => removeHolding(h.id),
   });
 
-  if (pfLoaded && !holdings.length) {
+  if (pfLoaded && !pfLoading && !holdings.length) {
     return (
       <div className="symbol-page">
         <div className="sp-scroll">
@@ -340,10 +340,32 @@ export default function PortfolioPage() {
       <div className="sp-scroll">
         <div className="pf-head">
           <h2>Portfolio</h2>
+          <span className="pf-count">
+            {holdings.length} holding{holdings.length === 1 ? "" : "s"}, entered by you
+          </span>
           <button className="btn" onClick={() => setAdding(true)}>
             <Plus size={13} strokeWidth={2} /> Add holding
           </button>
+          {/* Manual, like the watchlist's. An auto-refreshing portfolio implies
+              real-time data it does not have, and moves your own money around
+              on screen while you are reading it. */}
+          <button className="icon-btn-sm" title="Refresh prices" disabled={pfLoading}
+                  onClick={loadPortfolio}>
+            <RefreshCw size={13} strokeWidth={1.9} className={pfLoading ? "spin" : ""} />
+          </button>
         </div>
+
+        {/* THE LOADING LINE SAYS WHICH HALF IS PENDING. Quantities and cost
+            basis are local and already final; only the valuation is in flight.
+            Without that sentence a spinner over a portfolio reads as "your
+            holdings are loading", which is the one thing that would be
+            alarming — and untrue. */}
+        {pfLoading && (
+          <div className="pf-loading-note">
+            <span className="spinner" />
+            Your quantities and cost are local and already final. Fetching prices to value them.
+          </div>
+        )}
 
         {/* A PRICING failure, not a data failure — said in those words, because
             "couldn't load your holdings" when the holdings are right there
@@ -355,6 +377,23 @@ export default function PortfolioPage() {
               {pfError ? ` ${pfError}` : ""}
             </span>
             <button className="btn tiny" onClick={loadPortfolio}>Retry</button>
+          </div>
+        )}
+
+        {/* Skeletons only when there is nothing yet to show. A REFRESH keeps
+            the old figures on screen and dims nothing — they were true a
+            minute ago, and blanking them to re-fetch the same numbers is a
+            worse answer than a slightly stale one. */}
+        {pfLoading && !currencies.length && (
+          <div className="pf-totals">
+            {["Total value", "Unrealised P/L", "Today"].map((label, i) => (
+              <div className="pf-total" key={label}>
+                <div className="pf-total-label">{label}</div>
+                {/* Staggered so the three read as one loading group rather
+                    than three unrelated pulses. */}
+                <div className="pf-sk" style={{ animationDelay: `${i * 0.08}s` }} />
+              </div>
+            ))}
           </div>
         )}
 
@@ -408,6 +447,18 @@ export default function PortfolioPage() {
             <span>Holding</span><span>Shares</span><span>Cost</span>
             <span>Price</span><span>Value</span><span>P/L</span><span />
           </div>
+          {pfLoading && !holdings.length && [0, 1, 2, 3].map((i) => (
+            <div className="pf-row" key={`sk${i}`}>
+              <span className="pf-sym"><div className="pf-sk sm" style={{ animationDelay: `${i * 0.06}s` }} /></span>
+              <span className="pf-num"><div className="pf-sk sm" /></span>
+              <span className="pf-num"><div className="pf-sk sm" /></span>
+              <span className="pf-num"><div className="pf-sk sm" /></span>
+              <span className="pf-num"><div className="pf-sk sm" /></span>
+              <span className="pf-num"><div className="pf-sk sm" /></span>
+              <span />
+            </div>
+          ))}
+
           {holdings.map((h) => (editing === h.id ? (
             <EditRow key={h.id} h={h} onDone={() => setEditing(null)} />
           ) : (
@@ -468,6 +519,10 @@ export default function PortfolioPage() {
             className="btn"
             onClick={() => {
               if (!activeId) return;
+              // BACK TO THE TRANSCRIPT, always. The answer arrives in the
+              // conversation, so leaving the user on the portfolio means the
+              // reply streams into a screen they cannot see.
+              setView("watchlist");
               const priced = holdings.filter((h) => h.priced);
               if (!priced.length) return;
               const lines = priced.map((h) =>
