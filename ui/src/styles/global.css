@@ -550,6 +550,19 @@ a.sp-meta-item:hover { background: var(--muted); }
 .pf-row:last-child { border-bottom: none; }
 .pf-header { font-size: 10.5px; color: var(--tmut); text-transform: uppercase;
   letter-spacing: 0.05em; background: var(--muted); }
+.pf-header span[title] { cursor: help; }
+
+/* ALIGNMENT IS SET BY COLUMN POSITION, NOT BY CLASS.
+   The header cells are bare <span>s and the data cells carry .pf-num, so the
+   headers defaulted to left while every figure under them sat right — the
+   columns visibly did not line up. Targeting the grid position instead means a
+   header and its data cannot disagree: there is one rule, and it applies to
+   whatever is in that slot. Columns 2-6 are figures; 1 is the ticker, 7 the
+   row actions. */
+.pf-row > *:nth-child(n + 2):nth-child(-n + 6) { text-align: right; }
+/* Fixed-width digits, so a column of figures forms straight edges instead of
+   drifting with whichever glyphs happen to be in each number. */
+.pf-row { font-variant-numeric: tabular-nums; }
 /* A holding with no price keeps its row and its typed-in figures — dimming it
    says "not valued", which is true; hiding it would say "gone", which is not. */
 .pf-row.unpriced { opacity: 0.62; }

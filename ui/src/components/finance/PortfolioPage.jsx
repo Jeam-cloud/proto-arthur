@@ -443,9 +443,23 @@ export default function PortfolioPage() {
                             onDone={() => setAdding(false)} />}
 
         <div className="pf-table">
+          {/* LABELS SAY PER-UNIT OR TOTAL, because mixing the two silently is
+              what made this table hard to read: "Cost" was per share while
+              "Value" was the whole position, so the two numbers sitting side
+              by side could not be compared and nothing on screen said so.
+              "Paid each" and "Price now" can only mean one thing.
+
+              The titles are the column's definition — this is a screen full of
+              terms of art, and a tooltip is cheaper than a legend nobody
+              scrolls to. */}
           <div className="pf-row pf-header">
-            <span>Holding</span><span>Shares</span><span>Cost</span>
-            <span>Price</span><span>Value</span><span>P/L</span><span />
+            <span title="The ticker Arthur prices, and what that ticker actually is">Holding</span>
+            <span title="How many units you hold — shares, coins or ounces">Quantity</span>
+            <span title="What you paid per unit, in the currency you paid in">Paid each</span>
+            <span title="What one unit trades at now. Delayed about 15 minutes">Price now</span>
+            <span title="Quantity x price now — what the whole position is worth today">Value</span>
+            <span title="Value minus what you paid. Unrealised: nothing has been sold">P/L</span>
+            <span />
           </div>
           {pfLoading && !holdings.length && [0, 1, 2, 3].map((i) => (
             <div className="pf-row" key={`sk${i}`}>
