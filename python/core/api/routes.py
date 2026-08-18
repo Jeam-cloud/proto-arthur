@@ -801,7 +801,7 @@ async def add_holding(request: Request, body: HoldingBody) -> dict:
 @router.patch("/finance/portfolio/{hid}")
 async def patch_holding(request: Request, hid: str, body: HoldingPatch) -> dict:
     ok = await state(request).holdings.update(
-        hid, quantity=body.quantity, cost_basis=body.cost_basis,
+        hid, symbol=body.symbol, quantity=body.quantity, cost_basis=body.cost_basis,
         purchase_date=body.purchase_date, cost_currency=body.cost_currency,
     )
     if not ok:

@@ -56,11 +56,13 @@ class HoldingStore:
                 "cost_currency": cost_currency, "created_at": ts, "updated_at": ts}
 
     async def update(
-        self, hid: str, *, quantity: float | None = None,
+        self, hid: str, *, symbol: str | None = None, quantity: float | None = None,
         cost_basis: float | None = None, purchase_date: str | None = None,
         cost_currency: str | None = None,
     ) -> bool:
         sets, args = [], []
+        if symbol is not None:
+            sets.append("symbol=?"); args.append(symbol)
         if quantity is not None:
             sets.append("quantity=?"); args.append(quantity)
         if cost_basis is not None:

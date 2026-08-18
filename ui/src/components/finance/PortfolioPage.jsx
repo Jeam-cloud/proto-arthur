@@ -11,7 +11,7 @@
 // NO ADVICE. No "consider rebalancing", no "overweight", no scoring. The same
 // boundary as the rest of Finance mode: Arthur shows, the person decides.
 import React, { useEffect, useState } from "react";
-import { AlertTriangle, Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, Pencil, Plus, Trash2 } from "lucide-react";
 import { useFinance } from "../../stores/finance";
 import { useConfirm } from "../../stores/confirm";
 import { useChat } from "../../stores/chat";
@@ -181,6 +181,81 @@ function AddForm({ onDone, initialSymbol = "" }) {
   );
 }
 
+// One row, in edit mode.
+//
+// WHY EDITING AND NOT DELETE-AND-RETYPE. The mistakes people actually make
+// here are single-field: the wrong ticker, or a cost basis that's really the
+// current price. Forcing a delete throws away the three fields they got right
+// to fix the one they didn't, and it makes correcting a number feel like a
+// destructive act — so people leave wrong data in place instead.
+function EditRow({ h, onDone }) {
+  const updateHolding = useFinance((s) => s.updateHolding);
+  const [f, setF] = useState({
+    symbol: h.symbol,
+    quantity: String(h.quantity),
+    cost_basis: String(h.cost_basis),
+    cost_currency: h.cost_currency || "",
+  });
+  const [busy, setBusy] = useState(false);
+
+  const parse = (raw) => {
+    const cleaned = String(raw ?? "").replace(/[\s,$£€]/g, "");
+    const n = Number(cleaned);
+    return cleaned !== "" && isFinite(n) ? n : null;
+  };
+  const quantity = parse(f.quantity);
+  const costBasis = parse(f.cost_basis);
+  const ready = f.symbol.trim() && quantity > 0 && costBasis !== null && costBasis >= 0;
+
+  const save = async () => {
+    if (!ready || busy) return;
+    setBusy(true);
+    // Only the fields that actually changed. PATCH semantics: sending an
+    // unchanged value is harmless but sending ALL of them makes every save
+    // look like a full rewrite in any future audit of this table.
+    const patch = {};
+    if (f.symbol.trim().toUpperCase() !== h.symbol) patch.symbol = f.symbol.trim().toUpperCase();
+    if (quantity !== h.quantity) patch.quantity = quantity;
+    if (costBasis !== h.cost_basis) patch.cost_basis = costBasis;
+    if ((f.cost_currency || null) !== (h.cost_currency || null)) {
+      patch.cost_currency = f.cost_currency || null;
+    }
+    if (Object.keys(patch).length) await updateHolding(h.id, patch);
+    setBusy(false);
+    onDone();
+  };
+
+  return (
+    <div className="pf-row editing">
+      <span className="pf-sym">
+        <input className="pf-edit-input sym" value={f.symbol} autoFocus
+               onChange={(e) => setF({ ...f, symbol: e.target.value.toUpperCase() })} />
+      </span>
+      <span className="pf-num">
+        <input className="pf-edit-input" value={f.quantity} inputMode="decimal"
+               onChange={(e) => setF({ ...f, quantity: e.target.value })} />
+      </span>
+      <span className="pf-num pf-edit-cost">
+        <input className="pf-edit-input" value={f.cost_basis} inputMode="decimal"
+               onChange={(e) => setF({ ...f, cost_basis: e.target.value })} />
+        <select className="pf-edit-input cur" value={f.cost_currency || h.currency}
+                onChange={(e) => setF({ ...f, cost_currency: e.target.value })}>
+          {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+      </span>
+      <span className="pf-num" />
+      <span className="pf-num" />
+      <span className="pf-edit-actions">
+        <button className="btn tiny" onClick={onDone} disabled={busy}>Cancel</button>
+        <button className="btn tiny primary" onClick={save} disabled={!ready || busy}>
+          {busy ? "…" : "Save"}
+        </button>
+      </span>
+      <span />
+    </div>
+  );
+}
+
 export default function PortfolioPage() {
   const {
     holdings, totals, pfLoaded, pfLoading, pfPricingFailed, pfError,
@@ -190,6 +265,9 @@ export default function PortfolioPage() {
   const send = useChat((s) => s.send);
   const activeId = useConversations((s) => s.activeId);
   const [adding, setAdding] = useState(false);
+  // The id of the row being edited, or null. One at a time on purpose: two
+  // open editors means two sets of unsaved changes and no clear Escape.
+  const [editing, setEditing] = useState(null);
 
   // Explains the flagged row in plain language. NOT a confirm-to-act dialog —
   // there is nothing to agree to. It names the likely cause and leaves the
@@ -330,7 +408,9 @@ export default function PortfolioPage() {
             <span>Holding</span><span>Shares</span><span>Cost</span>
             <span>Price</span><span>Value</span><span>P/L</span><span />
           </div>
-          {holdings.map((h) => (
+          {holdings.map((h) => (editing === h.id ? (
+            <EditRow key={h.id} h={h} onDone={() => setEditing(null)} />
+          ) : (
             <div className={`pf-row${h.priced ? "" : " unpriced"}`} key={h.id}>
               <span className="pf-sym">
                 <button className="pf-link" onClick={() => open(h.symbol)}>{h.symbol}</button>
@@ -364,13 +444,17 @@ export default function PortfolioPage() {
                   ) : <Signed value={h.pl} pct={h.pl_pct} currency={h.currency} />}
               </span>
               <span className="pf-actions">
+                <button className="icon-btn-sm" title={`Edit ${h.symbol}`}
+                        onClick={() => setEditing(h.id)}>
+                  <Pencil size={12} />
+                </button>
                 <button className="icon-btn-sm" title={`Remove ${h.symbol}`}
                         onClick={() => confirmRemove(h)}>
                   <Trash2 size={12} />
                 </button>
               </span>
             </div>
-          ))}
+          )))}
         </div>
 
         <div className="pf-foot">

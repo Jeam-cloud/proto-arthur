@@ -170,6 +170,16 @@ class HoldingBody(BaseModel):
 
 
 class HoldingPatch(BaseModel):
+    """Corrections to a lot already entered.
+
+    SYMBOL IS EDITABLE, and that is not an obvious call — changing a holding's
+    ticker arguably makes it a different holding. But the most common mistake
+    on this screen is typing a ticker that resolves to the wrong instrument
+    (plain BTC is a Grayscale trust, not bitcoin), and forcing a delete-and-
+    retype for that also throws away the quantity and cost basis the user got
+    right. Editing preserves what was correct.
+    """
+    symbol: str | None = Field(default=None, max_length=12)
     quantity: float | None = Field(default=None, gt=0, le=1e12)
     cost_basis: float | None = Field(default=None, ge=0, le=1e9)
     purchase_date: str | None = Field(default=None, max_length=10)
@@ -179,6 +189,18 @@ class HoldingPatch(BaseModel):
     @classmethod
     def upper_currency(cls, v: str | None) -> str | None:
         return v.strip().upper() if v else None
+
+    @field_validator("symbol")
+    @classmethod
+    def clean_symbol(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        s = v.strip().upper()
+        # Same rule as HoldingBody — a ticker reaches the finance container, so
+        # it is validated identically no matter which route it arrives on.
+        if not (1 <= len(s) <= 12 and s.replace(".", "").replace("-", "").replace("=", "").isalnum()):
+            raise ValueError(f"invalid ticker: {v!r}")
+        return s
 
 
 class ConversationModelRequest(BaseModel):
