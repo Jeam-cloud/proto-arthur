@@ -116,6 +116,25 @@ def value_holdings(holdings: list[dict], quotes: dict) -> dict:
             chg = q.get("change")
             row["day_change"] = round(h["quantity"] * chg, 2) if isinstance(chg, (int, float)) else None
 
+            # THE WRONG-INSTRUMENT FLAG.
+            #
+            # Ticker collisions are the sharpest edge on this screen. "XRP" is
+            # the Bitwise XRP ETF, not the token; "BTC" is the Grayscale Bitcoin
+            # Mini Trust, not the coin. Someone who types the ticker they know
+            # from a crypto exchange gets a real, tradeable, completely
+            # different instrument — and the cost basis they paid for the coin
+            # is then compared against the price of a share, producing a −99.97%
+            # loss that never happened.
+            #
+            # We cannot know which instrument they meant, so we do NOT correct
+            # or hide anything. We flag the arithmetic as implausible and let
+            # them look. A 20x gap between cost and price is not a market move:
+            # over that distance it is a different security, a currency mix-up,
+            # or a decimal slip, and every one of those is worth a second look.
+            if h["cost_basis"] > 0 and price > 0:
+                ratio = price / h["cost_basis"]
+                row["cost_suspect"] = ratio > 20 or ratio < 0.05
+
             t = totals.setdefault(currency, {"value": 0.0, "cost": 0.0, "day_change": 0.0,
                                              "priced": 0, "unpriced": 0})
             t["value"] += value

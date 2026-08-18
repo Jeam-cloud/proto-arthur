@@ -759,6 +759,37 @@ async def get_portfolio(request: Request) -> dict:
     }
 
 
+@router.get("/finance/resolve/{symbol}")
+async def resolve_symbol(request: Request, symbol: str) -> dict:
+    """What instrument is this ticker, actually?
+
+    EXISTS BECAUSE TICKER COLLISIONS ARE INVISIBLE UNTIL THE MATH IS WRONG.
+    A person who holds bitcoin types "BTC" and gets the Grayscale Bitcoin Mini
+    Trust; "XRP" is the Bitwise XRP ETF. Both are real securities that quote
+    fine, so nothing errors — the mistake only surfaces later as an impossible
+    percentage, by which time it looks like Arthur miscalculated.
+
+    Showing the resolved NAME and price while they are still typing the cost
+    basis is the cheapest possible intervention: "XRP — Bitwise XRP ETF,
+    $11.17" is either what they meant or obviously not.
+
+    Deliberately the cheap fast_info path, not the full .info detail call —
+    this fires on every symbol blur and only needs a name and a price.
+    """
+    sym = symbol.strip().upper()
+    known = await state(request).db.get_setting(NAMES_KEY, {}) or {}
+    result = await state(request).watchlist.fetch([sym], names=known)
+    if not result.ok:
+        # Not knowing is not an error here. The field stays usable and the form
+        # simply cannot offer its confirmation.
+        return {"ok": False, "symbol": sym, "error": result.content}
+    row = (json.loads(result.content) or {}).get(sym) or {}
+    if row.get("failed") or not row.get("price"):
+        return {"ok": False, "symbol": sym, "unknown": True}
+    return {"ok": True, "symbol": sym, "name": row.get("name") or sym,
+            "price": row.get("price"), "currency": row.get("currency")}
+
+
 @router.post("/finance/portfolio")
 async def add_holding(request: Request, body: HoldingBody) -> dict:
     return await state(request).holdings.add(

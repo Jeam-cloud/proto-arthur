@@ -166,6 +166,20 @@ export const useFinance = create((set, get) => ({
     }
   },
 
+  // Name + price for a ticker, for the add form to show what it resolved to.
+  // Returns null rather than throwing: a failed lookup must not block someone
+  // from entering a holding Arthur cannot price.
+  async resolveSymbol(symbol) {
+    const sym = String(symbol || "").trim().toUpperCase();
+    if (!sym) return null;
+    try {
+      const res = await api.get(`/finance/resolve/${sym}`);
+      return res.ok ? res : { ok: false, symbol: sym, unknown: !!res.unknown };
+    } catch {
+      return null;
+    }
+  },
+
   async addHolding({ symbol, quantity, cost_basis, purchase_date }) {
     try {
       await api.post("/finance/portfolio", {
