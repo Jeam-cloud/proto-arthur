@@ -36,6 +36,40 @@ class TestValuation:
         assert out["totals"]["USD"]["value"] == 20
         assert out["totals"]["EUR"]["value"] == 20
 
+    def _suspect(self, cost, price):
+        out = value_holdings(
+            [{"id": "1", "symbol": "X", "quantity": 1, "cost_basis": cost}],
+            {"X": {"price": price, "currency": "USD"}},
+        )
+        return out["holdings"][0].get("cost_suspect")
+
+    def test_a_wrong_instrument_loss_is_flagged(self):
+        # The real case: plain "BTC" is the Grayscale Bitcoin Mini Trust at
+        # ~$28, so a cost basis paid for the coin reads as a 99.97% loss.
+        assert self._suspect(88_784.00, 28.43) is True
+
+    def test_a_huge_genuine_gain_is_never_flagged(self):
+        # THE ASYMMETRY THAT MATTERS. NVDA bought at $12 and held to $300 is a
+        # 2400% return, not a mistake — casting doubt on it would be both wrong
+        # and insulting. Only the loss side is checked. See holdings.py.
+        assert self._suspect(12.0, 300.0) is False
+        assert self._suspect(1.0, 1000.0) is False
+
+    def test_ordinary_moves_are_left_alone(self):
+        assert self._suspect(143.66, 146.23) is False   # +1.8%
+        assert self._suspect(3.07, 11.17) is False      # +264%, believable
+        assert self._suspect(100.0, 40.0) is False      # -60%, a bad year
+
+    def test_a_zero_cost_basis_cannot_divide_by_zero(self):
+        # A gift or a spin-off has no basis and therefore no ratio — the flag
+        # must be absent rather than False-by-accident or an exception.
+        out = value_holdings(
+            [{"id": "1", "symbol": "X", "quantity": 10, "cost_basis": 0.0}],
+            {"X": {"price": 5.0, "currency": "USD"}},
+        )
+        assert "cost_suspect" not in out["holdings"][0]
+        assert out["holdings"][0]["pl_pct"] is None
+
     def test_an_unpriced_holding_survives_with_its_cost(self):
         out = value_holdings(
             [{"id": "1", "symbol": "DEAD", "quantity": 3, "cost_basis": 10}],

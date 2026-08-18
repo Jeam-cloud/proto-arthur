@@ -127,13 +127,31 @@ def value_holdings(holdings: list[dict], quotes: dict) -> dict:
             # loss that never happened.
             #
             # We cannot know which instrument they meant, so we do NOT correct
-            # or hide anything. We flag the arithmetic as implausible and let
-            # them look. A 20x gap between cost and price is not a market move:
-            # over that distance it is a different security, a currency mix-up,
-            # or a decimal slip, and every one of those is worth a second look.
+            # or hide anything — we flag the arithmetic as implausible and let
+            # them look.
+            #
+            # THE TEST IS DELIBERATELY ONE-SIDED, and the asymmetry is the whole
+            # design. The obvious rule is "flag any huge gap either way", but a
+            # 25x GAIN is a real thing that happens: someone who bought NVDA at
+            # $12 and holds it at $300 has a 2400% return and does not need
+            # Arthur casting doubt on the best decision they ever made. Huge
+            # gains are the reward case; flagging them is insulting and wrong.
+            #
+            # A 98% LOSS is different. It is possible — a failed biotech does
+            # it — but it is rare, and it is what nearly every wrong-instrument
+            # mix-up looks like, because the cost basis of the thing you meant
+            # is usually orders of magnitude above the price of the thing you
+            # got. So we accept a small false-positive rate on genuine
+            # disasters to catch the common data-entry trap, and we say
+            # "check this" rather than "this is wrong".
+            #
+            # NOTE THE LIMIT: this cannot catch a mix-up that lands within a
+            # plausible range. XRP-the-token at $3.07 against the Bitwise XRP
+            # ETF at $11.17 reads as a believable 264% gain and is not flagged
+            # here. That case is caught earlier instead, at add time, by the
+            # resolve route naming the instrument before it is saved.
             if h["cost_basis"] > 0 and price > 0:
-                ratio = price / h["cost_basis"]
-                row["cost_suspect"] = ratio > 20 or ratio < 0.05
+                row["cost_suspect"] = price / h["cost_basis"] < 0.02
 
             t = totals.setdefault(currency, {"value": 0.0, "cost": 0.0, "day_change": 0.0,
                                              "priced": 0, "unpriced": 0})

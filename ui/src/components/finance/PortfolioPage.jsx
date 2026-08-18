@@ -11,7 +11,7 @@
 // NO ADVICE. No "consider rebalancing", no "overweight", no scoring. The same
 // boundary as the rest of Finance mode: Arthur shows, the person decides.
 import React, { useEffect, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { AlertTriangle, Plus, Trash2 } from "lucide-react";
 import { useFinance } from "../../stores/finance";
 import { useConfirm } from "../../stores/confirm";
 import { useChat } from "../../stores/chat";
@@ -43,10 +43,24 @@ function Signed({ value, pct, currency }) {
 
 function AddForm({ onDone, initialSymbol = "" }) {
   const addHolding = useFinance((s) => s.addHolding);
+  const resolveSymbol = useFinance((s) => s.resolveSymbol);
   const [f, setF] = useState({ symbol: initialSymbol, quantity: "", cost_basis: "", purchase_date: "" });
   const [busy, setBusy] = useState(false);
+  // What the ticker actually resolved to. See the resolve route for why this
+  // exists: "BTC" is a Grayscale trust, not bitcoin, and the only moment that
+  // is cheap to discover is while the cost basis is still being typed.
+  const [found, setFound] = useState(null);
 
   const ready = f.symbol.trim() && Number(f.quantity) > 0 && f.cost_basis !== "";
+
+  // On blur, not on every keystroke: each call is a container start against a
+  // rate-limited feed, and "AAP" on the way to "AAPL" is not a question worth
+  // asking upstream.
+  const lookup = async () => {
+    const sym = f.symbol.trim().toUpperCase();
+    if (!sym || sym === found?.symbol) return;
+    setFound(await resolveSymbol(sym));
+  };
 
   const submit = async (e) => {
     e.preventDefault();
@@ -61,7 +75,7 @@ function AddForm({ onDone, initialSymbol = "" }) {
     <form className="pf-add" onSubmit={submit}>
       <div className="pf-field">
         <label>Symbol</label>
-        <input value={f.symbol} placeholder="AAPL" autoFocus
+        <input value={f.symbol} placeholder="AAPL" autoFocus onBlur={lookup}
                onChange={(e) => setF({ ...f, symbol: e.target.value.toUpperCase() })} />
       </div>
       <div className="pf-field">
@@ -77,6 +91,25 @@ function AddForm({ onDone, initialSymbol = "" }) {
       <button className="btn primary" type="submit" disabled={!ready || busy}>
         {busy ? "Adding…" : "Add"}
       </button>
+      {/* STATED, NOT ENFORCED. Arthur cannot know which instrument was meant,
+          so it names what the ticker resolved to and stops. Seeing "Bitwise
+          XRP ETF" while typing a cost basis paid for the token is the whole
+          intervention — no blocking, no autocorrect, no guess. */}
+      {found?.ok && (
+        <div className="pf-resolved">
+          <strong>{found.symbol}</strong> is {found.name} — trading at{" "}
+          {money(found.price, found.currency)}. If that isn't what you hold,
+          check the ticker: crypto symbols in particular often resolve to a
+          fund rather than the coin.
+        </div>
+      )}
+      {found && !found.ok && found.unknown && (
+        <div className="pf-resolved">
+          Yahoo doesn't recognise <strong>{found.symbol}</strong>. You can still
+          save it — the holding is kept, it just won't be priced. Canadian
+          listings usually need a suffix, like <code>XEQT.TO</code>.
+        </div>
+      )}
       {/* Named as optional so nobody stalls looking for it. Every extra
           required field is a person deciding not to bother. */}
       <div className="pf-add-note">Purchase date is optional and can be filled in later.</div>
@@ -93,6 +126,23 @@ export default function PortfolioPage() {
   const send = useChat((s) => s.send);
   const activeId = useConversations((s) => s.activeId);
   const [adding, setAdding] = useState(false);
+
+  // Explains the flagged row in plain language. NOT a confirm-to-act dialog —
+  // there is nothing to agree to. It names the likely cause and leaves the
+  // decision (and the data) entirely alone.
+  const setChecking = (h) => ask({
+    title: `${h.symbol} — these figures look off`,
+    body:
+      `You entered ${money(h.cost_basis, h.currency)} per share, but ${h.symbol} `
+      + `(${h.name}) trades at ${money(h.price, h.currency)}. That gap is too large `
+      + "to be a market move.\n\n"
+      + "The usual cause is a ticker that isn't the thing you hold — crypto symbols "
+      + "especially. Plain \"BTC\" is the Grayscale Bitcoin Mini Trust, not bitcoin; "
+      + "\"XRP\" is the Bitwise XRP ETF, not the token. The coins themselves are "
+      + "BTC-USD and XRP-USD.\n\n"
+      + "Arthur has left your numbers exactly as you typed them.",
+    confirmLabel: "Got it",
+  });
 
   useEffect(() => { loadPortfolio(); }, [loadPortfolio]);
 
@@ -211,6 +261,16 @@ export default function PortfolioPage() {
               <span className="pf-sym">
                 <button className="pf-link" onClick={() => open(h.symbol)}>{h.symbol}</button>
                 <span className="pf-name">{h.name}</span>
+                {/* The percentage is arithmetically correct and almost
+                    certainly meaningless — flagged rather than hidden, because
+                    it is the user's data and only they know what they hold. */}
+                {h.cost_suspect && (
+                  <button className="pf-suspect"
+                          title="Why this looks wrong"
+                          onClick={() => setChecking(h)}>
+                    <AlertTriangle size={11} /> check this
+                  </button>
+                )}
               </span>
               <span className="pf-num">{h.quantity}</span>
               <span className="pf-num">{money(h.cost_basis, h.currency)}</span>
@@ -231,11 +291,27 @@ export default function PortfolioPage() {
         </div>
 
         <div className="pf-foot">
+          {/* THE QUESTION CARRIES THE PORTFOLIO WITH IT.
+              The model has no tool that can read the holdings table — it is
+              local, private data — so "explain my portfolio" on its own leaves
+              it no choice but to ask which symbols the user owns, which is a
+              question the screen already answers. Naming the positions and
+              their day changes turns a dead end into a single tool call. */}
           <button
             className="btn"
-            onClick={() => activeId && send(activeId,
-              "Explain today's move in my portfolio — which holdings drove it?",
-              { mode: "finance" })}
+            onClick={() => {
+              if (!activeId) return;
+              const priced = holdings.filter((h) => h.priced);
+              if (!priced.length) return;
+              const lines = priced.map((h) =>
+                `${h.symbol} (${h.quantity} shares, ${typeof h.day_change === "number"
+                  ? `${h.day_change >= 0 ? "+" : "−"}${money(Math.abs(h.day_change), h.currency)} today`
+                  : "today's change unavailable"})`).join("; ");
+              send(activeId,
+                `Explain today's move across my holdings: ${lines}. `
+                + "Use explain_move on the ones that moved most and tell me what drove them.",
+                { mode: "finance" });
+            }}
           >
             Explain today's move
           </button>

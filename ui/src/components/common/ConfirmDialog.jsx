@@ -33,7 +33,11 @@ export default function ConfirmDialog() {
   }, [pending]);
 
   if (!pending) return null;
-  const { title, body, confirmLabel, danger } = pending;
+  const { title, body, confirmLabel, danger, onConfirm } = pending;
+  // NO onConfirm MEANS THERE IS NOTHING TO CONFIRM. Some things raised here
+  // only need explaining (why a figure looks wrong), and offering "Cancel"
+  // against an explanation implies declining it would change something.
+  const informational = !onConfirm;
 
   return (
     <div className="modal-backdrop" onClick={cancel}>
@@ -47,10 +51,10 @@ export default function ConfirmDialog() {
         <h3>{title}</h3>
         <p className="modal-sub">{body}</p>
         <div className="modal-actions">
-          <button className="btn" onClick={cancel}>Cancel</button>
+          {!informational && <button className="btn" onClick={cancel}>Cancel</button>}
           <button
             ref={confirmRef}
-            className={`btn ${danger ? "danger" : "primary"}`}
+            className={`btn ${informational ? "primary" : danger ? "danger" : "primary"}`}
             onClick={run}
           >
             {confirmLabel}
