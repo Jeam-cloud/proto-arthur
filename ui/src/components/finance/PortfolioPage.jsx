@@ -278,47 +278,64 @@ function EditRow({ h, onDone }) {
   };
 
   return (
-    <div className="pf-row editing">
-      <span className="pf-sym">
+    // AN EDIT BAR, NOT A ROW WEARING THE TABLE'S GRID.
+    //
+    // The first attempt kept the seven table columns so nothing would shift
+    // when a row opened. That was wrong twice over: inputs stretched to fill
+    // 1fr tracks and became enormous, and two controls with no column of their
+    // own (the each/total switch, the derived readback) had to be shoved into
+    // cells that meant something else. A form's fields want their own widths
+    // and their own labels; a table's columns want to stay aligned. Trying to
+    // be both produced neither.
+    //
+    // So editing detaches into a compact labelled bar. It reads as a distinct
+    // mode — which it is — and the table underneath keeps its alignment.
+    <div className="pf-row editing" onKeyDown={(e) => {
+      // Enter saves, Escape cancels. The row is a form in all but tag name,
+      // and a form you can only leave with the mouse is a trap.
+      if (e.key === "Enter" && ready && !busy) { e.preventDefault(); save(); }
+      if (e.key === "Escape") { e.preventDefault(); onDone(); }
+    }}>
+      <div className="pf-edit-field grow">
+        <label>Holding</label>
         <input className="pf-edit-input sym" value={f.symbol} autoFocus
                onChange={(e) => setF({ ...f, symbol: e.target.value.toUpperCase() })} />
-      </span>
-      <span className="pf-num">
+      </div>
+      <div className="pf-edit-field">
+        <label>Quantity</label>
         <input className="pf-edit-input" value={f.quantity} inputMode="decimal"
                onChange={(e) => setF({ ...f, quantity: e.target.value })} />
-      </span>
-      <span className="pf-num pf-edit-cost">
+      </div>
+      <div className="pf-edit-field">
+        <label>
+          Paid
+          <span className="pf-mode">
+            <button type="button" className={f.costMode === "unit" ? "on" : ""}
+                    onClick={() => setF({ ...f, costMode: "unit" })}>each</button>
+            <button type="button" className={f.costMode === "total" ? "on" : ""}
+                    onClick={() => setF({ ...f, costMode: "total" })}>total</button>
+          </span>
+        </label>
         <input className="pf-edit-input" value={f.cost_basis} inputMode="decimal"
                onChange={(e) => setF({ ...f, cost_basis: e.target.value })} />
+      </div>
+      <div className="pf-edit-field narrow">
+        <label>In</label>
         <select className="pf-edit-input cur" value={f.cost_currency || h.currency}
                 onChange={(e) => setF({ ...f, cost_currency: e.target.value })}>
           {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
-      </span>
-      <span className="pf-num">
-        <span className="pf-mode">
-          <button type="button" className={f.costMode === "unit" ? "on" : ""}
-                  onClick={() => setF({ ...f, costMode: "unit" })}>each</button>
-          <button type="button" className={f.costMode === "total" ? "on" : ""}
-                  onClick={() => setF({ ...f, costMode: "total" })}>total</button>
-        </span>
-      </span>
+      </div>
       {/* The division, shown — same rule as the add form. */}
-      <span className="pf-num pf-derived">
-        {f.costMode === "total" && costBasis !== null
-          ? `= ${money(costBasis, f.cost_currency || h.currency)} each`
-          : ""}
-      </span>
-      {/* Spans the last two columns (P/L + actions), so the six cells above
-          plus this pair still total the row's seven tracks. An extra trailing
-          cell here would create an implicit eighth column and knock the edit
-          row out of alignment with every row around it. */}
-      <span className="pf-edit-actions">
+      {f.costMode === "total" && costBasis !== null && (
+        <div className="pf-derived">= {money(costBasis, f.cost_currency || h.currency)} each</div>
+      )}
+      <div className="pf-edit-actions">
         <button className="btn tiny" onClick={onDone} disabled={busy}>Cancel</button>
         <button className="btn tiny primary" onClick={save} disabled={!ready || busy}>
           {busy ? "…" : "Save"}
         </button>
-      </span>
+      </div>
     </div>
   );
 }

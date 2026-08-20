@@ -10,6 +10,16 @@
 @import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap');
 
 :root {
+  /* TELLS THE ENGINE THIS APP IS DARK.
+     Without it Chromium renders native controls in its LIGHT theme, and the
+     one place that shows is the part CSS cannot reach: a <select>'s dropdown
+     list is drawn by the browser, not the page, so it appeared as white rows
+     with a blue highlight in the middle of a black app. `color-scheme` is the
+     only supported way to change it — no amount of styling the <select> itself
+     touches the popup. It also fixes scrollbars, focus rings and date pickers
+     for free. */
+  color-scheme: dark;
+
   /* Tokens copied verbatim from the mockup's dark theme object (Arthur.dc.html
      renderVals()). Two things here are deliberately counter-intuitive and were
      wrong in the first pass, so don't "fix" them:
@@ -500,7 +510,10 @@ a.sp-meta-item:hover { background: var(--muted); }
 .pf-mode button.on { background: var(--bg2); color: var(--text); font-weight: 600; }
 /* The derived per-unit figure. Quiet: it is a readback, not an input. */
 .pf-add-note.derived { color: var(--text); font-family: var(--mono); font-size: 11.5px; }
-.pf-derived { font-size: 10.5px; color: var(--tmut); }
+.pf-derived {
+  font-family: var(--mono); font-size: 11px; color: var(--tmut);
+  padding-bottom: 8px; white-space: nowrap;
+}
 .pf-field input {
   width: 130px; height: 33px; padding: 0 10px; border-radius: 9px;
   border: 1px solid var(--border); background: var(--bg); color: var(--text);
@@ -508,12 +521,26 @@ a.sp-meta-item:hover { background: var(--muted); }
 }
 .pf-field input:focus { outline: none; border-color: var(--accent); }
 .pf-field.narrow input, .pf-field.narrow select { width: 84px; }
+/* The CLOSED control, styled to match every other input. `appearance: none`
+   strips the platform chrome (the grey bevel and the OS arrow) so the only
+   thing left is ours — otherwise a select sits in a row of Arthur inputs
+   looking like it belongs to a different application. The arrow is an inline
+   SVG background rather than a pseudo-element because `select` cannot have
+   children rendered inside it. */
+.pf-field select, select.pf-edit-input {
+  appearance: none; -webkit-appearance: none;
+  padding-right: 24px;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none' stroke='%238b9099' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
 .pf-field select {
-  height: 33px; padding: 0 8px; border-radius: 9px;
-  border: 1px solid var(--border); background: var(--bg); color: var(--text);
+  height: 33px; padding: 0 24px 0 9px; border-radius: 9px;
+  border: 1px solid var(--border); background-color: var(--bg); color: var(--text);
   font-family: var(--mono); font-size: 12.5px;
 }
-.pf-field select:focus { outline: none; border-color: var(--accent); }
+.pf-field select:hover, select.pf-edit-input:hover { border-color: var(--emph); }
+.pf-field select:focus, select.pf-edit-input:focus { outline: none; border-color: var(--accent); }
 /* Not an error state — the holding is fine and its value is real, only the
    cost-derived figure is withheld. Muted, not amber. */
 .pf-fx-blocked { font-family: var(--sans); font-size: 11px; color: var(--tmut); cursor: help; }
@@ -558,7 +585,10 @@ a.sp-meta-item:hover { background: var(--muted); }
   border: 1px solid var(--border); border-radius: 13px; background: var(--bg2); overflow: hidden;
 }
 .pf-row {
-  display: grid; grid-template-columns: minmax(0, 2fr) repeat(5, minmax(0, 1fr)) 34px;
+  display: grid; grid-template-columns: minmax(0, 2fr) repeat(5, minmax(0, 1fr)) 60px;
+  /* 60px, not 34: the actions cell holds TWO 26px buttons plus a gap. At 34
+     they overflowed their track and sat on top of the P/L figure — the one
+     number in the row you least want covered. */
   align-items: center; gap: 10px; padding: 10px 15px;
   border-bottom: 1px solid var(--border); font-size: 12.5px;
 }
@@ -597,19 +627,33 @@ a.sp-meta-item:hover { background: var(--muted); }
    otherwise Edit and Remove are unreachable without a mouse. */
 .pf-row:focus-within .pf-actions { opacity: 1; }
 
-/* Editing in place. The row keeps its grid so the columns do not jump when it
-   switches modes — a table that reflows on edit makes you re-find your row. */
-.pf-row.editing { background: var(--muted); }
+/* Editing detaches from the table grid — see EditRow for why forcing a form
+   into seven fixed columns produced giant inputs and homeless controls. */
+.pf-row.editing {
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px;
+  background: var(--muted);
+  /* A left edge marks which row is open, so a wide table still tells you where
+     you are without re-reading the ticker. */
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.pf-edit-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.pf-edit-field.grow { flex: 1; min-width: 130px; max-width: 220px; }
+.pf-edit-field.narrow { width: 78px; flex-shrink: 0; }
+.pf-edit-field label {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 10px; color: var(--tmut); text-transform: uppercase; letter-spacing: 0.05em;
+}
 .pf-edit-input {
-  width: 100%; height: 29px; padding: 0 8px; border-radius: 8px;
+  width: 100%; height: 30px; padding: 0 9px; border-radius: 8px;
   border: 1px solid var(--border); background: var(--bg); color: var(--text);
   font-family: var(--mono); font-size: 12.5px; text-align: right;
 }
 .pf-edit-input.sym { text-align: left; font-weight: 700; text-transform: uppercase; }
 .pf-edit-input:focus { outline: none; border-color: var(--accent); }
-.pf-edit-cost { display: flex; gap: 5px; align-items: center; }
-.pf-edit-input.cur { width: 68px; flex-shrink: 0; text-align: left; }
-.pf-edit-actions { display: flex; gap: 5px; justify-content: flex-end; grid-column: span 2; }
+.pf-edit-input.cur { text-align: left; padding-right: 22px; }
+/* Pushed to the far end so Save/Cancel are always in the same place no matter
+   how many fields the row happens to show. */
+.pf-edit-actions { display: flex; gap: 6px; margin-left: auto; align-items: center; }
 
 .pf-empty { padding: 40px 0 8px; max-width: 560px; }
 .pf-empty h3 { font-size: 17px; font-weight: 600; margin-bottom: 8px; }
