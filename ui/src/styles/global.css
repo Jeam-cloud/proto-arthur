@@ -487,7 +487,20 @@ a.sp-meta-item:hover { background: var(--muted); }
   border: 1px solid var(--border); border-radius: 13px; background: var(--bg2);
 }
 .pf-field { display: flex; flex-direction: column; gap: 5px; }
-.pf-field label { font-size: 11px; color: var(--tmut); }
+.pf-field label { font-size: 11px; color: var(--tmut); display: flex; align-items: center; gap: 7px; }
+/* A two-state switch, sized to sit inside the field's own label — it changes
+   how ONE box is read, so it belongs to that box rather than to the form. */
+.pf-mode { display: inline-flex; gap: 1px; background: var(--emph); border-radius: 6px; padding: 1px; }
+.pf-mode button {
+  font-family: inherit; font-size: 10px; padding: 1px 7px; border-radius: 5px;
+  border: none; background: none; color: var(--tmut); line-height: 1.5;
+  transition: background 0.14s var(--ease), color 0.14s var(--ease);
+}
+.pf-mode button:hover { color: var(--text); }
+.pf-mode button.on { background: var(--bg2); color: var(--text); font-weight: 600; }
+/* The derived per-unit figure. Quiet: it is a readback, not an input. */
+.pf-add-note.derived { color: var(--text); font-family: var(--mono); font-size: 11.5px; }
+.pf-derived { font-size: 10.5px; color: var(--tmut); }
 .pf-field input {
   width: 130px; height: 33px; padding: 0 10px; border-radius: 9px;
   border: 1px solid var(--border); background: var(--bg); color: var(--text);

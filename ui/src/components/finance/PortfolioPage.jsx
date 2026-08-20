@@ -54,6 +54,9 @@ function AddForm({ onDone, initialSymbol = "" }) {
     // Empty means "whatever the quote is in" — the right default, and what
     // every holding entered before this field existed already assumed.
     cost_currency: "",
+    // "unit" | "total" — how to read the Paid box. Presentation only; the
+    // stored cost_basis is always per unit.
+    costMode: "unit",
   });
   const [busy, setBusy] = useState(false);
   // What the ticker actually resolved to. See the resolve route for why this
@@ -72,14 +75,20 @@ function AddForm({ onDone, initialSymbol = "" }) {
     return cleaned !== "" && isFinite(n) ? n : null;
   };
   const quantity = num(f.quantity);
-  const costBasis = num(f.cost_basis);
+  const paid = num(f.cost_basis);
+  // ONE PLACE CONVERTS. Total mode divides by quantity here and nothing
+  // downstream — the store, the API and the table all keep meaning "per unit",
+  // so there is no second definition of cost_basis to drift out of sync.
+  const costBasis = f.costMode === "total" && paid !== null && quantity > 0
+    ? paid / quantity
+    : (f.costMode === "total" ? null : paid);
   // Checks the VALUES, not merely that the boxes are non-empty — the old test
   // (`f.cost_basis !== ""`) happily let "88,784.00" through to become null.
   const ready = f.symbol.trim() && quantity !== null && quantity > 0
     && costBasis !== null && costBasis >= 0;
   // Typed something, but not a number Arthur can use.
   const badNumber = (f.quantity !== "" && quantity === null)
-    || (f.cost_basis !== "" && costBasis === null);
+    || (f.cost_basis !== "" && paid === null);
 
   // On blur, not on every keystroke: each call is a container start against a
   // rate-limited feed, and "AAP" on the way to "AAPL" is not a question worth
@@ -107,7 +116,8 @@ function AddForm({ onDone, initialSymbol = "" }) {
     });
     setBusy(false);
     if (ok) {
-      setF({ symbol: "", quantity: "", cost_basis: "", purchase_date: "", cost_currency: "" });
+      setF({ symbol: "", quantity: "", cost_basis: "", purchase_date: "",
+             cost_currency: "", costMode: f.costMode });   // the mode is a preference, keep it
       setFound(null);
       onDone?.();
     }
@@ -191,9 +201,22 @@ function AddForm({ onDone, initialSymbol = "" }) {
           <code>$88,784.00</code>.
         </div>
       )}
+      {/* THE DIVISION, SHOWN. Someone entering a total is trusting Arthur to
+          derive a per-unit figure they never typed; printing it back turns
+          that into something they can check at a glance. */}
+      {f.costMode === "total" && costBasis !== null && quantity > 0 && (
+        <div className="pf-add-note derived">
+          That's {money(costBasis, f.cost_currency || found?.currency)} per unit
+          across {quantity} units.
+        </div>
+      )}
       {/* Named as optional so nobody stalls looking for it. Every extra
           required field is a person deciding not to bother. */}
-      <div className="pf-add-note">Purchase date is optional and can be filled in later.</div>
+      <div className="pf-add-note">
+        Buying on a schedule? Switch Paid to <strong>total</strong> and enter your
+        broker's book value — Arthur works out the average.
+        Purchase date is optional and can be filled in later.
+      </div>
     </form>
   );
 }
@@ -212,6 +235,10 @@ function EditRow({ h, onDone }) {
     quantity: String(h.quantity),
     cost_basis: String(h.cost_basis),
     cost_currency: h.cost_currency || "",
+    // Opens in the mode the row is STORED in. Showing a total the user never
+    // typed, in a box labelled with the value they did, would be a lie about
+    // their own data.
+    costMode: "unit",
   });
   const [busy, setBusy] = useState(false);
 
@@ -221,7 +248,15 @@ function EditRow({ h, onDone }) {
     return cleaned !== "" && isFinite(n) ? n : null;
   };
   const quantity = parse(f.quantity);
-  const costBasis = parse(f.cost_basis);
+  const paid = parse(f.cost_basis);
+  // THE SAME TOGGLE AS THE ADD FORM, and editing is where it matters most:
+  // topping up a position every fortnight means the number that changes is the
+  // total, not the per-unit average. Without this you would have to divide by
+  // hand on every single top-up — which is the exact arithmetic that put the
+  // wrong cost basis on five of these rows in the first place.
+  const costBasis = f.costMode === "total"
+    ? (paid !== null && quantity > 0 ? paid / quantity : null)
+    : paid;
   const ready = f.symbol.trim() && quantity > 0 && costBasis !== null && costBasis >= 0;
 
   const save = async () => {
@@ -260,8 +295,20 @@ function EditRow({ h, onDone }) {
           {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
       </span>
-      <span className="pf-num" />
-      <span className="pf-num" />
+      <span className="pf-num">
+        <span className="pf-mode">
+          <button type="button" className={f.costMode === "unit" ? "on" : ""}
+                  onClick={() => setF({ ...f, costMode: "unit" })}>each</button>
+          <button type="button" className={f.costMode === "total" ? "on" : ""}
+                  onClick={() => setF({ ...f, costMode: "total" })}>total</button>
+        </span>
+      </span>
+      {/* The division, shown — same rule as the add form. */}
+      <span className="pf-num pf-derived">
+        {f.costMode === "total" && costBasis !== null
+          ? `= ${money(costBasis, f.cost_currency || h.currency)} each`
+          : ""}
+      </span>
       {/* Spans the last two columns (P/L + actions), so the six cells above
           plus this pair still total the row's seven tracks. An extra trailing
           cell here would create an implicit eighth column and knock the edit
