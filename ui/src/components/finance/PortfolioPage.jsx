@@ -121,13 +121,30 @@ function AddForm({ onDone, initialSymbol = "" }) {
                onChange={(e) => setF({ ...f, symbol: e.target.value.toUpperCase() })} />
       </div>
       <div className="pf-field">
-        <label>Shares</label>
+        <label>Units</label>
         <input value={f.quantity} placeholder="40" inputMode="decimal"
                onChange={(e) => setF({ ...f, quantity: e.target.value })} />
       </div>
+      {/* TWO WAYS TO SAY THE SAME THING, because only one of them is a number
+          people actually have.
+          Anyone buying on a schedule has no single purchase price — they have
+          twenty-six of them — but their broker shows a book value, the total
+          they have put in. Asking for "paid per unit" makes that person do
+          division before they can use the screen, and division is where the
+          mistakes come from. Storage is unchanged: cost_basis stays per unit,
+          and total mode just divides. */}
       <div className="pf-field">
-        <label>Paid per share</label>
-        <input value={f.cost_basis} placeholder="171.20" inputMode="decimal"
+        <label>
+          Paid
+          <span className="pf-mode">
+            <button type="button" className={f.costMode === "unit" ? "on" : ""}
+                    onClick={() => setF({ ...f, costMode: "unit" })}>each</button>
+            <button type="button" className={f.costMode === "total" ? "on" : ""}
+                    onClick={() => setF({ ...f, costMode: "total" })}>total</button>
+          </span>
+        </label>
+        <input value={f.cost_basis} inputMode="decimal"
+               placeholder={f.costMode === "total" ? "675.34" : "171.20"}
                onChange={(e) => setF({ ...f, cost_basis: e.target.value })} />
       </div>
       {/* PAID IN, which is not always the currency the thing quotes in. Buying
