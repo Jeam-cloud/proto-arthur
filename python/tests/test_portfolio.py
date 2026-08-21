@@ -70,6 +70,53 @@ class TestValuation:
         assert "cost_suspect" not in out["holdings"][0]
         assert out["holdings"][0]["pl_pct"] is None
 
+class TestSuspectExclusion:
+    """A holding with an implausible cost basis is left out of the TOTAL P/L.
+
+    Not out of the portfolio — its value still counts, because that figure only
+    needs a price. But a cost basis wrong by three orders of magnitude does not
+    nudge the total, it swamps it: one bad row turns a profitable portfolio into
+    a 99% loss with nothing on screen explaining why.
+    """
+
+    def test_a_suspect_row_does_not_swamp_the_total(self):
+        out = value_holdings(
+            [{"id": "1", "symbol": "GOOD", "quantity": 10, "cost_basis": 100.0},
+             # The real BTC case: paid-per-coin against a trust's share price.
+             {"id": "2", "symbol": "BAD", "quantity": 1, "cost_basis": 88_784.0}],
+            {"GOOD": {"price": 150.0, "currency": "USD"},
+             "BAD": {"price": 28.43, "currency": "USD"}},
+        )
+        t = out["totals"]["USD"]
+        assert t["suspect"] == 1
+        assert t["suspect_symbols"] == ["BAD"]
+        # Value counts both positions; P/L is the healthy one alone.
+        assert t["value"] == 1528.43
+        assert t["pl"] == 500.0          # 1500 - 1000, NOT 1528.43 - 89_784
+        assert t["pl_pct"] == 50.0
+        assert t["pl_covers_all"] is False
+        # The row itself keeps every number the user typed.
+        bad = next(r for r in out["holdings"] if r["symbol"] == "BAD")
+        assert bad["cost_suspect"] is True
+        assert bad["pl"] == pytest.approx(28.43 - 88_784.0)
+
+    def test_a_clean_portfolio_still_covers_everything(self):
+        out = value_holdings(
+            [{"id": "1", "symbol": "A", "quantity": 1, "cost_basis": 10.0}],
+            {"A": {"price": 15.0, "currency": "USD"}},
+        )
+        t = out["totals"]["USD"]
+        assert t["suspect"] == 0 and t["suspect_symbols"] == []
+        assert t["pl_covers_all"] is True
+
+    def test_the_private_accumulator_never_reaches_the_client(self):
+        out = value_holdings(
+            [{"id": "1", "symbol": "A", "quantity": 1, "cost_basis": 10.0}],
+            {"A": {"price": 15.0, "currency": "USD"}},
+        )
+        assert "_cmp_value" not in out["totals"]["USD"]
+
+
 class TestEditing:
     """Correcting a lot without destroying the parts that were right."""
 
