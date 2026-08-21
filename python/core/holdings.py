@@ -82,6 +82,18 @@ class HoldingStore:
         await self._db.write("DELETE FROM holdings WHERE id=?", (hid,))
 
 
+def _new_total() -> dict:
+    """One currency's running tally.
+
+    `_cmp_value` is private and popped before the result is returned: it is the
+    subset of value that has a comparable cost behind it, which is what total
+    P/L must be built from. Everything else is reported.
+    """
+    return {"value": 0.0, "cost": 0.0, "day_change": 0.0, "priced": 0,
+            "unpriced": 0, "fx_blocked": 0, "suspect": 0,
+            "suspect_symbols": [], "_cmp_value": 0.0}
+
+
 def value_holdings(holdings: list[dict], quotes: dict) -> dict:
     """Price the holdings and total them.
 
@@ -133,8 +145,7 @@ def value_holdings(holdings: list[dict], quotes: dict) -> dict:
             row["day_change"] = round(h["quantity"] * chg, 2) if isinstance(chg, (int, float)) else None
             # Today's move is likewise pure quote-currency, so it still counts
             # towards the total; only the cost-derived figures are withheld.
-            t = totals.setdefault(currency, {"value": 0.0, "cost": 0.0, "day_change": 0.0,
-                                             "priced": 0, "unpriced": 0, "fx_blocked": 0})
+            t = totals.setdefault(currency, _new_total())
             t["value"] += row["value"]
             if row["day_change"] is not None:
                 t["day_change"] += row["day_change"]
@@ -189,25 +200,31 @@ def value_holdings(holdings: list[dict], quotes: dict) -> dict:
             if h["cost_basis"] > 0 and price > 0:
                 row["cost_suspect"] = price / h["cost_basis"] < 0.02
 
-            t = totals.setdefault(currency, {"value": 0.0, "cost": 0.0, "day_change": 0.0,
-                                             "priced": 0, "unpriced": 0, "fx_blocked": 0,
-                                             "_cmp_value": 0.0})
+            t = totals.setdefault(currency, _new_total())
             t["value"] += value
-            t["cost"] += cost
-            # THE VALUE THAT HAS A COMPARABLE COST BEHIND IT. Total P/L must be
-            # computed from this and not from `value`, because an FX-blocked
-            # holding contributes its value to the portfolio but deliberately
-            # contributes no cost — subtracting one from the other would
-            # reintroduce, at the total level, exactly the cross-currency error
-            # the row-level check just refused to make.
-            t["_cmp_value"] += value
+            if row.get("cost_suspect"):
+                # EXCLUDED FROM THE TOTAL, NOT FROM THE PORTFOLIO. A holding
+                # whose cost basis is off by three orders of magnitude does not
+                # nudge the total P/L, it swamps it: one bad row can turn a
+                # profitable portfolio into a 99% loss and there is no way to
+                # tell from the total that it happened. Its VALUE still counts
+                # (that figure only needs a price, which is sound), and the row
+                # keeps its own numbers. Only the comparison is withheld.
+                t["suspect"] += 1
+                t["suspect_symbols"].append(h["symbol"])
+            else:
+                t["cost"] += cost
+                # THE VALUE THAT HAS A COMPARABLE COST BEHIND IT. Total P/L is
+                # computed from this and not from `value`, because an excluded
+                # holding contributes value but deliberately contributes no
+                # cost — subtracting one from the other would reintroduce, at
+                # the total level, exactly the error the row just refused.
+                t["_cmp_value"] += value
             if row["day_change"] is not None:
                 t["day_change"] += row["day_change"]
             t["priced"] += 1
         else:
-            totals.setdefault(currency, {"value": 0.0, "cost": 0.0, "day_change": 0.0,
-                                         "priced": 0, "unpriced": 0, "fx_blocked": 0,
-                                         "_cmp_value": 0.0})["unpriced"] += 1
+            totals.setdefault(currency, _new_total())["unpriced"] += 1
         rows.append(row)
 
     for cur, t in totals.items():
@@ -219,5 +236,5 @@ def value_holdings(holdings: list[dict], quotes: dict) -> dict:
         t["pl_pct"] = round((cmp_value - t["cost"]) / t["cost"] * 100, 2) if t["cost"] else None
         # So the UI can say "P/L excludes 1 holding" rather than quietly
         # reporting a total that does not describe everything above it.
-        t["pl_covers_all"] = not t["fx_blocked"]
+        t["pl_covers_all"] = not (t["fx_blocked"] or t["suspect"])
     return {"holdings": rows, "totals": totals}
