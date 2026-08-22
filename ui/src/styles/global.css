@@ -544,6 +544,10 @@ a.sp-meta-item:hover { background: var(--muted); }
 }
 /* The currency the cost was PAID in, when it differs from the quote's. */
 .pf-costcur { font-size: 10px; color: var(--tmut); margin-left: 4px; }
+/* The total sits under the per-unit figure at the same weight as the P/L
+   percentage does under its amount — a secondary reading of the same fact,
+   not a competing column. */
+.pf-costtotal { font-size: 10.5px; color: var(--tmut); opacity: 0.75; margin-top: 2px; }
 
 .pf-pl { font-weight: 600; }
 .pf-plpct { font-size: 11px; color: var(--tmut); margin-top: 2px; }

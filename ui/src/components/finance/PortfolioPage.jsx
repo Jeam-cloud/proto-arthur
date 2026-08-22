@@ -175,9 +175,21 @@ function Row({ h, loading, onOpen, onEdit, onRemove, onSuspect }) {
       <td className="c-num">{units(h.quantity)}</td>
       {/* Cost is printed in the currency it was PAID in, which is not always
           the one the instrument quotes in. */}
+      {/* BOTH NUMBERS, because only one of them was ever typed.
+          "Paid each" is derived — you put in $56.06 for a third of a share and
+          Arthur divided it out to $176.51. The per-unit figure has to lead,
+          since it is the only one on the same scale as "Price now" and so the
+          only one that can be compared to it. But showing it alone hides the
+          number the user actually recognises from their own bank statement,
+          which is what made this column need explaining twice. */}
       <td className="c-num mut">
-        {money(h.cost_basis, h.cost_currency)}
-        {h.fx_blocked && <span className="pf-costcur">{h.cost_currency}</span>}
+        <div>
+          {money(h.cost_basis, h.cost_currency)}
+          {h.fx_blocked && <span className="pf-costcur">{h.cost_currency}</span>}
+        </div>
+        <div className="pf-costtotal">
+          {money(h.cost_basis * h.quantity, h.cost_currency)} total
+        </div>
       </td>
       <td className="c-num mut">{noPrice ? "—" : money(h.price, h.currency)}</td>
       <td className="c-num">{noPrice ? "—" : money(h.value, h.currency)}</td>
@@ -456,7 +468,7 @@ export default function PortfolioPage() {
                 <tr>
                   <th title="The ticker as the source resolved it, with the name it returned.">Holding</th>
                   <th title="How many units you told Arthur you hold.">Quantity</th>
-                  <th title="What you paid for ONE unit, in the currency you paid in.">Paid each</th>
+                  <th title="What you paid for ONE unit, with your total underneath. Shown per-unit so it can be compared with Price now.">Paid each</th>
                   <th title="The latest quote for one unit, delayed about 15 minutes.">Price now</th>
                   <th title="Quantity multiplied by the current price.">Value</th>
                   <th title="Value today minus what you paid. Withheld when the two currencies differ.">P/L</th>
