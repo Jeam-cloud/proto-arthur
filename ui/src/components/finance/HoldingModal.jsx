@@ -177,33 +177,45 @@ export default function HoldingModal({ holding, initialSymbol = "", onClose }) {
             )}
           </div>
 
+          {/* TWO EQUAL COLUMNS, and the labels are held to one height so the
+              inputs beneath them share a baseline. The "Paid" label carries a
+              toggle and is therefore taller than the others — left alone, it
+              pushed its own input down and the row read as broken. */}
           <div className="hm-row">
-            <div className="hm-field grow">
+            <div className="hm-field">
               <label htmlFor="hm-qty">Units</label>
               <input id="hm-qty" value={f.quantity} placeholder="40" inputMode="decimal"
                      onChange={(e) => setF({ ...f, quantity: e.target.value })} />
             </div>
-            {/* Anyone buying on a schedule has no single purchase price — they
-                have twenty-six. What they DO have is the broker's book value.
-                Asking for per-unit makes that person divide first, and division
-                is where the wrong cost bases came from. */}
-            <div className="hm-field grow">
-              <label htmlFor="hm-paid">
-                Paid
-                <span className="pf-mode">
-                  <button type="button" className={f.costMode === "each" ? "on" : ""}
-                          onClick={() => setF({ ...f, costMode: "each" })}>each</button>
-                  <button type="button" className={f.costMode === "total" ? "on" : ""}
-                          onClick={() => setF({ ...f, costMode: "total" })}>total</button>
-                </span>
-              </label>
+            <div className="hm-field">
+              <label htmlFor="hm-date">Purchase date <span className="opt">optional</span></label>
+              <input id="hm-date" value={f.purchase_date} placeholder="2024-02-03"
+                     onChange={(e) => setF({ ...f, purchase_date: e.target.value })} />
+            </div>
+          </div>
+
+          {/* Anyone buying on a schedule has no single purchase price — they
+              have twenty-six. What they DO have is the broker's book value.
+              Asking for per-unit makes that person divide first, and division
+              is where the wrong cost bases came from.
+              The currency sits INSIDE the field rather than beside it: it is a
+              unit on this number, not a separate question, and a third box in
+              the row was what made the form feel cramped. */}
+          <div className="hm-field">
+            <label htmlFor="hm-paid">
+              Paid
+              <span className="pf-mode">
+                <button type="button" className={f.costMode === "each" ? "on" : ""}
+                        onClick={() => setF({ ...f, costMode: "each" })}>each</button>
+                <button type="button" className={f.costMode === "total" ? "on" : ""}
+                        onClick={() => setF({ ...f, costMode: "total" })}>total</button>
+              </span>
+            </label>
+            <div className="hm-combo">
               <input id="hm-paid" value={f.cost_basis} inputMode="decimal"
                      placeholder={f.costMode === "total" ? "675.34" : "171.20"}
                      onChange={(e) => setF({ ...f, cost_basis: e.target.value })} />
-            </div>
-            <div className="hm-field narrow">
-              <label htmlFor="hm-cur">Paid in</label>
-              <select id="hm-cur" value={currency}
+              <select aria-label="Currency paid in" value={currency}
                       onChange={(e) => setF({ ...f, cost_currency: e.target.value })}>
                 {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
@@ -218,12 +230,6 @@ export default function HoldingModal({ holding, initialSymbol = "", onClose }) {
               <span>Enter digits only — <code>88784.00</code>, not <code>$88,784.00</code>.</span>
             </div>
           )}
-
-          <div className="hm-field">
-            <label htmlFor="hm-date">Purchase date <span className="opt">— optional</span></label>
-            <input id="hm-date" value={f.purchase_date} placeholder="2024-02-03"
-                   onChange={(e) => setF({ ...f, purchase_date: e.target.value })} />
-          </div>
 
           {/* THE ARITHMETIC, SHOWN BOTH WAYS. Whichever number you typed, the
               other one is the one you did not — and it is the one that will

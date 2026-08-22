@@ -1498,7 +1498,7 @@ a.sp-meta-item:hover { background: var(--muted); }
    none strips the native chrome so the background-image arrow (a plain
    chevron, drawn as an SVG data URI so it needs no asset file) is the only
    one shown, and it recolors with --tmut so it isn't stuck OS-white. */
-.field select, .model-picker {
+.field select, .model-picker, .hm-field select, .hm-combo select, .pf-ef select {
   appearance: none; -webkit-appearance: none;
   background-color: var(--muted); background-repeat: no-repeat;
   background-position: right 12px center;
