@@ -662,29 +662,55 @@ a.sp-meta-item:hover { background: var(--muted); }
 .hm-head h3 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
 .hm-head p { font-size: 12.5px; color: var(--tmut); line-height: 1.55; margin-top: 5px; }
 .hm-body {
-  padding: 18px 20px; display: flex; flex-direction: column; gap: 14px;
+  padding: 18px 20px; display: flex; flex-direction: column; gap: 15px;
   flex: 1 1 auto; min-height: 0; overflow-y: auto;
 }
 .hm-field { display: flex; flex-direction: column; min-width: 0; }
+/* FIXED HEIGHT, so a label carrying a toggle does not push its own input out
+   of line with the one beside it. This was the whole reason the field row read
+   as crooked. */
 .hm-field > label {
-  display: flex; align-items: center; gap: 7px;
+  display: flex; align-items: center; gap: 8px; min-height: 22px;
   font-size: 12px; color: var(--tmut); margin-bottom: 6px;
 }
-.hm-field .opt { opacity: 0.75; }
+.hm-field .opt { opacity: 0.6; font-size: 11px; }
 .hm-field input, .hm-field select {
-  width: 100%; background: var(--muted); border: 1px solid var(--border);
-  border-radius: 9px; padding: 10px 12px; font-family: var(--mono);
+  width: 100%; height: 40px; background: var(--muted); border: 1px solid var(--border);
+  border-radius: 9px; padding: 0 12px; font-family: var(--mono);
   font-size: 13.5px; color: var(--text); outline: none;
   font-variant-numeric: tabular-nums;
 }
-.hm-field select { padding-right: 26px; }
+.hm-field input::placeholder { color: var(--tmut); opacity: 0.55; }
 .hm-field input:focus, .hm-field select:focus { border-color: var(--accent); }
 /* Read-only, not disabled: the value must stay selectable and readable — it is
    the thing telling you which holding you are editing. */
-.hm-field input.locked { opacity: 0.6; cursor: default; }
-.hm-row { display: flex; gap: 11px; flex-wrap: wrap; }
-.hm-row .grow { flex: 1 1 130px; }
-.hm-row .narrow { flex: 0 0 108px; }
+.hm-field input.locked { opacity: 0.55; cursor: default; }
+/* Two equal columns. Equal, not content-sized, so the modal reads as a grid
+   rather than as fields that happen to sit near each other. */
+.hm-row { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+
+/* Amount and its currency as ONE control. The currency is a unit on this
+   number, not a separate question — and a third box in the row was what made
+   the form feel cramped. */
+.hm-combo {
+  display: flex; align-items: stretch; background: var(--muted);
+  border: 1px solid var(--border); border-radius: 9px; overflow: hidden;
+}
+.hm-combo:focus-within { border-color: var(--accent); }
+.hm-combo input {
+  flex: 1; min-width: 0; height: 40px; background: none; border: none;
+  border-radius: 0; padding: 0 12px; font-family: var(--mono); font-size: 13.5px;
+  color: var(--text); outline: none; font-variant-numeric: tabular-nums;
+}
+.hm-combo input::placeholder { color: var(--tmut); opacity: 0.55; }
+.hm-combo select {
+  flex: 0 0 auto; width: 86px; height: 40px; border: none;
+  border-left: 1px solid var(--border); border-radius: 0;
+  background-color: transparent; background-position: right 10px center;
+  padding: 0 28px 0 11px; font-family: var(--mono); font-size: 12.5px;
+  color: var(--tmut); outline: none;
+}
+.hm-combo select:hover { color: var(--text); }
 .hm-note {
   display: flex; align-items: center; gap: 6px;
   font-size: 11.5px; color: var(--tmut); margin-top: 6px; line-height: 1.5;
@@ -731,9 +757,14 @@ a.sp-meta-item:hover { background: var(--muted); }
 }
 .hm-privacy svg { flex-shrink: 0; margin-top: 2px; }
 .hm-foot {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; row-gap: 9px;
+  display: flex; align-items: center; gap: 9px; flex-wrap: wrap; row-gap: 9px;
   padding: 14px 20px; border-top: 1px solid var(--border); flex-shrink: 0;
+  background: var(--bg);
 }
+/* Cancel is a way out, not an option of equal weight — it should not out-shout
+   a primary button that happens to be disabled while the form is empty. */
+.hm-foot .btn:not(.primary):not(.hm-remove) { background: none; color: var(--tmut); }
+.hm-foot .btn:not(.primary):not(.hm-remove):hover { background: var(--muted); color: var(--text); }
 .hm-spacer { flex: 1; }
 .hm-remove { border-color: rgba(252, 165, 165, 0.3); color: #fca5a5; background: none; }
 .hm-remove:hover { background: rgba(252, 165, 165, 0.08); }
