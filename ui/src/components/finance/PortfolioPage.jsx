@@ -15,12 +15,13 @@
 // narrow pane, and the edit bar needs to span the full width beneath its row —
 // both are one attribute in a table and a fight in a grid.
 import React, { useEffect, useState } from "react";
-import { AlertTriangle, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { AlertTriangle, Download, Pencil, Plus, RefreshCw, Trash2, Upload } from "lucide-react";
 import { useFinance } from "../../stores/finance";
 import { useConfirm } from "../../stores/confirm";
 import { useChat } from "../../stores/chat";
 import { useConversations } from "../../stores/conversations";
 import HoldingModal from "./HoldingModal";
+import ImportModal from "./ImportModal";
 
 const CURRENCIES = ["USD", "CAD", "EUR", "GBP", "JPY", "AUD", "CHF", "HKD", "INR"];
 
@@ -234,12 +235,13 @@ function Row({ h, loading, onOpen, onEdit, onRemove, onSuspect }) {
 export default function PortfolioPage() {
   const {
     holdings, totals, pfLoaded, pfLoading, pfPricingFailed, pfError,
-    loadPortfolio, removeHolding, symbols, open, setView,
+    loadPortfolio, removeHolding, symbols, open, setView, exportPortfolio,
   } = useFinance();
   const ask = useConfirm((s) => s.ask);
   const send = useChat((s) => s.send);
   const activeId = useConversations((s) => s.activeId);
   const [modal, setModal] = useState(null);   // {holding} | {initialSymbol} | null
+  const [importing, setImporting] = useState(false);
   const [editing, setEditing] = useState(null);
 
   useEffect(() => { loadPortfolio(); }, [loadPortfolio]);
@@ -300,9 +302,16 @@ export default function PortfolioPage() {
               Type what you hold and Arthur values it against the current price.
               Three fields per holding, about thirty seconds.
             </p>
-            <button className="btn primary" onClick={() => setModal({})}>
-              <Plus size={13} strokeWidth={2} /> Add a holding
-            </button>
+            <div className="pf-empty-actions">
+              <button className="btn primary" onClick={() => setModal({})}>
+                <Plus size={13} strokeWidth={2} /> Add a holding
+              </button>
+              {/* Anyone arriving with a portfolio already somewhere else should
+                  not have to type it in one row at a time. */}
+              <button className="btn" onClick={() => setImporting(true)}>
+                <Upload size={13} strokeWidth={1.8} /> Import a CSV
+              </button>
+            </div>
             {symbols.length > 0 && (
               <>
                 <div className="pf-or">Or start from something on your watchlist:</div>
@@ -320,6 +329,7 @@ export default function PortfolioPage() {
           </div>
         </div>
         {modal && <HoldingModal {...modal} onClose={() => setModal(null)} />}
+        {importing && <ImportModal onClose={() => setImporting(false)} />}
       </div>
     );
   }
@@ -334,6 +344,16 @@ export default function PortfolioPage() {
           <span className="pf-count">
             {holdings.length} holding{holdings.length === 1 ? "" : "s"}, entered by you
           </span>
+          {/* Export before import, left to right: the safe one first, and the
+              one you should do BEFORE the destructive one. */}
+          <button className="icon-btn-sm" title="Export holdings as CSV"
+                  disabled={!holdings.length} onClick={exportPortfolio}>
+            <Download size={13} strokeWidth={1.9} />
+          </button>
+          <button className="icon-btn-sm" title="Import holdings from CSV"
+                  onClick={() => setImporting(true)}>
+            <Upload size={13} strokeWidth={1.9} />
+          </button>
           <button className="icon-btn-sm" title="Refresh prices" disabled={pfLoading}
                   onClick={loadPortfolio}>
             <RefreshCw size={13} strokeWidth={1.9} className={pfLoading ? "spin" : ""} />
@@ -503,6 +523,7 @@ export default function PortfolioPage() {
       </div>
 
       {modal && <HoldingModal {...modal} onClose={() => setModal(null)} />}
+      {importing && <ImportModal onClose={() => setImporting(false)} />}
     </div>
   );
 }

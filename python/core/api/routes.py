@@ -40,6 +40,7 @@ from core.api.schemas import (
     WorkspaceRequest,
 )
 from core.code_apply import apply_changeset
+from core import portfolio_io
 from core.holdings import value_holdings
 from research import citations as research_citations
 from research import engine as research_engine
@@ -816,6 +817,96 @@ async def delete_holding(request: Request, hid: str) -> dict:
     # rather than offering to reverse afterwards.
     await state(request).holdings.remove(hid)
     return {"ok": True}
+
+
+@router.get("/finance/portfolio/export")
+async def export_portfolio(request: Request) -> Response:
+    """The whole portfolio as a CSV download.
+
+    Valued, not raw: the file carries the same figures that were on screen when
+    the user clicked Export. The valuation columns are commentary for whoever
+    opens the file — import ignores them, because a price from last Tuesday is
+    not a fact about a holding.
+
+    Best-effort pricing. If the quote fetch fails the file is still produced
+    with the hand-entered columns intact, because those are the ones that
+    cannot be recovered from anywhere else and are the entire point of a backup.
+    """
+    s = state(request)
+    holdings = await s.holdings.list_all()
+    quotes: dict = {}
+    if holdings:
+        known = await s.db.get_setting(NAMES_KEY, {}) or {}
+        result = await s.watchlist.fetch(await s.holdings.symbols(), names=known)
+        if result.ok:
+            quotes = json.loads(result.content)
+    rows = value_holdings(holdings, quotes)["holdings"]
+    return Response(
+        content=portfolio_io.export_csv(rows),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition":
+                 f'attachment; filename="{portfolio_io.export_filename()}"'},
+    )
+
+
+@router.post("/finance/portfolio/import/preview")
+async def preview_import(request: Request, file: UploadFile) -> dict:
+    """Parse an uploaded CSV and report what it WOULD do. Writes nothing.
+
+    Split from the apply step on purpose. Import is the one operation here that
+    can damage data the user cannot get back, so it is always two steps: see
+    the rows and the complaints, then decide.
+    """
+    raw = await file.read()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        # Excel on Windows still writes cp1252 by default in some locales.
+        text = raw.decode("cp1252", errors="replace")
+    parsed = portfolio_io.parse_csv(text)
+    existing = await state(request).holdings.list_all()
+    return {
+        **parsed,
+        "count": len(parsed["rows"]),
+        "existing": len(existing),
+    }
+
+
+@router.post("/finance/portfolio/import")
+async def apply_import(request: Request, file: UploadFile, replace: bool = False) -> dict:
+    """Commit a parsed CSV.
+
+    `replace=false` (the default) APPENDS. Replace is opt-in and irreversible,
+    so the caller has to ask for it explicitly and the UI confirms first —
+    defaulting to replace would let one misread click delete a portfolio that
+    exists nowhere else.
+
+    Rows that failed to parse are skipped and reported. A single typo must not
+    cost the user the other twenty rows.
+    """
+    raw = await file.read()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("cp1252", errors="replace")
+    parsed = portfolio_io.parse_csv(text)
+    if not parsed["rows"]:
+        raise BadRequestError(
+            "Nothing importable in that file.",
+            detail={"errors": parsed["errors"][:10]},
+        )
+
+    s = state(request)
+    removed = 0
+    if replace:
+        for h in await s.holdings.list_all():
+            await s.holdings.remove(h["id"])
+            removed += 1
+    for r in parsed["rows"]:
+        await s.holdings.add(r["symbol"], r["quantity"], r["cost_basis"],
+                             r["purchase_date"], r["cost_currency"])
+    return {"ok": True, "added": len(parsed["rows"]), "removed": removed,
+            "skipped": len(parsed["errors"]), "errors": parsed["errors"][:10]}
 
 
 @router.get("/finance/symbol/{symbol}")

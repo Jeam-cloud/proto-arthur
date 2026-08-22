@@ -6,7 +6,7 @@
 // fills in when it arrives. Waiting for both would leave the panel blank for
 // several seconds on every mount.
 import { create } from "zustand";
-import { api } from "../api/client";
+import { api, apiUrl, authHeaders } from "../api/client";
 import { useToasts } from "./toasts";
 
 // The feed is ~15 min delayed and the backend caches for ~15 min on top, so a
@@ -185,6 +185,71 @@ export const useFinance = create((set, get) => ({
       const res = await api.get(`/finance/resolve/${sym}`);
       return res.ok ? res : { ok: false, symbol: sym, unknown: !!res.unknown };
     } catch {
+      return null;
+    }
+  },
+
+  // ---- export / import ---------------------------------------------------
+  // Hand-entered data that lives in one file on one computer needs a way out.
+  // See core/portfolio_io.py for why the format is CSV and not JSON.
+
+  /** Streams the CSV to a file the user picks up in their downloads.
+   *
+   *  Fetched as a BLOB rather than opened in a new tab: this is Electron with
+   *  a bearer token, so a bare window.open would arrive unauthenticated and
+   *  render a 401 instead of saving a file.
+   */
+  async exportPortfolio() {
+    try {
+      const res = await fetch(apiUrl("/finance/portfolio/export"), { headers: authHeaders() });
+      if (!res.ok) throw new Error(`Export failed (${res.status})`);
+      // The server names the file (dated); fall back only if the header is
+      // missing, which it is not on any path we control.
+      const disp = res.headers.get("content-disposition") || "";
+      const named = /filename="?([^"]+)"?/.exec(disp);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = named ? named[1] : "arthur-portfolio.csv";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      // Revoked on the next tick, not immediately: releasing the object URL in
+      // the same frame as the click can cancel the download in Chromium.
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      useToasts.getState().push("Portfolio exported.", "success");
+    } catch (e) {
+      useToasts.getState().push(`Couldn't export: ${e.message}`, "error");
+    }
+  },
+
+  /** Parses a file WITHOUT saving it, so the UI can show what would happen. */
+  async previewImport(file) {
+    const fd = new FormData();
+    fd.append("file", file);
+    try {
+      return await api.postForm("/finance/portfolio/import/preview", fd);
+    } catch (e) {
+      return { count: 0, rows: [], errors: [{ line: 0, reason: e.message }] };
+    }
+  },
+
+  async applyImport(file, replace = false) {
+    const fd = new FormData();
+    fd.append("file", file);
+    try {
+      const res = await api.postForm(
+        `/finance/portfolio/import${replace ? "?replace=true" : ""}`, fd);
+      await get().loadPortfolio();
+      useToasts.getState().push(
+        `${res.added} holding${res.added === 1 ? "" : "s"} imported`
+        + (res.removed ? `, ${res.removed} replaced` : "")
+        + (res.skipped ? `, ${res.skipped} skipped` : "") + ".",
+        res.skipped ? "info" : "success");
+      return res;
+    } catch (e) {
+      useToasts.getState().push(`Import failed: ${e.message}`, "error");
       return null;
     }
   },

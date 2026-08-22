@@ -647,6 +647,7 @@ a.sp-meta-item:hover { background: var(--muted); }
 .pf-empty { padding: 40px 0 8px; max-width: 560px; }
 .pf-empty h3 { font-size: 17px; font-weight: 600; margin-bottom: 8px; }
 .pf-empty p { font-size: 13px; color: var(--tmut); line-height: 1.65; margin-bottom: 16px; }
+.pf-empty-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .pf-or { font-size: 12px; color: var(--tmut); margin: 14px 0 8px; }
 .pf-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 /* Said once, permanently, rather than as a badge on every row. */
@@ -768,6 +769,57 @@ a.sp-meta-item:hover { background: var(--muted); }
 .hm-spacer { flex: 1; }
 .hm-remove { border-color: rgba(252, 165, 165, 0.3); color: #fca5a5; background: none; }
 .hm-remove:hover { background: rgba(252, 165, 165, 0.08); }
+
+/* ---------- finance: import ---------- */
+/* The drop zone and the file button are one control — dragging a file onto a
+   dialog is the first thing people try. */
+.im-drop {
+  display: flex; align-items: center; gap: 11px; padding: 18px 16px;
+  border: 1px dashed var(--border); border-radius: 11px; background: var(--muted);
+  color: var(--tmut); cursor: pointer; text-align: left;
+  transition: border-color 0.16s var(--ease), background 0.16s var(--ease);
+}
+.im-drop:hover, .im-drop.over { border-color: var(--accent); background: var(--emph); }
+.im-drop svg { flex-shrink: 0; }
+.im-drop strong { color: var(--text); font-weight: 500; font-size: 13px; }
+.im-drop span { font-size: 11.5px; }
+
+.im-status { display: flex; align-items: center; gap: 9px; font-size: 12.5px; color: var(--tmut); }
+
+.im-summary { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px; color: var(--tmut); }
+.im-count { font-family: var(--mono); font-size: 20px; font-weight: 600; color: var(--text); }
+
+/* THE ROWS THEMSELVES, not just a count. "12 holdings found" is a promise;
+   showing the tickers is evidence the user can check before committing. */
+.im-rows {
+  border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+  max-height: 190px; overflow-y: auto;
+}
+.im-row {
+  display: grid; grid-template-columns: 1fr auto auto; gap: 12px;
+  padding: 7px 12px; font-family: var(--mono); font-size: 12px;
+  border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums;
+}
+.im-rows .im-row:last-child { border-bottom: none; }
+.im-sym { font-weight: 600; }
+.im-qty, .im-cost { color: var(--tmut); }
+.im-more { padding: 7px 12px; font-size: 11.5px; color: var(--tmut); }
+
+/* Skipped rows are named with their LINE NUMBER, so the file can be fixed
+   rather than guessed at. */
+.im-errors {
+  border: 1px solid rgba(252, 211, 77, 0.28); border-radius: 10px;
+  background: rgba(252, 211, 77, 0.05); overflow: hidden;
+}
+.im-errors-head {
+  display: flex; align-items: center; gap: 7px; padding: 9px 12px 5px;
+  font-size: 11.5px; font-weight: 600; color: var(--yellow);
+}
+.im-err {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  padding: 3px 12px 6px; font-size: 11.5px; color: var(--tmut); line-height: 1.5;
+}
+.im-line { font-family: var(--mono); font-size: 10.5px; opacity: 0.8; flex-shrink: 0; }
 
 /* ---------- finance: chart in the transcript ---------- */
 .chart-card {
