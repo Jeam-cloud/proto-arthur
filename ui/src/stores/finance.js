@@ -213,12 +213,16 @@ export const useFinance = create((set, get) => ({
     }
   },
 
+  // Returns whether it stuck, so a form can stay open on failure rather than
+  // closing over an error the user never sees.
   async updateHolding(id, patch) {
     try {
       await api.patch(`/finance/portfolio/${id}`, patch);
       await get().loadPortfolio();
+      return true;
     } catch (e) {
       useToasts.getState().push(e.message, "error");
+      return false;
     }
   },
 
@@ -229,8 +233,10 @@ export const useFinance = create((set, get) => ({
     try {
       await api.del(`/finance/portfolio/${id}`);
       await get().loadPortfolio();
+      return true;
     } catch (e) {
       useToasts.getState().push(e.message, "error");
+      return false;
     }
   },
 

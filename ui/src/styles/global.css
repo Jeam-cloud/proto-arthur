@@ -447,213 +447,202 @@ a.sp-meta-item:hover { background: var(--muted); }
 
 /* ---------- finance: portfolio ---------- */
 .pf-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
-.pf-head h2 { font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
-/* "entered by you" is the whole product boundary in three words: nothing here
-   came from a broker. */
+.pf-head h2 { font-size: 19px; font-weight: 600; letter-spacing: -0.02em; }
+/* "entered by you" is the product boundary in three words: nothing here came
+   from a broker. */
 .pf-count { font-size: 12.5px; color: var(--tmut); margin-right: auto; }
 
-/* NAMES WHICH HALF IS PENDING. A bare spinner over a portfolio reads as "your
-   holdings are loading" — the one thing that would be alarming, and untrue. */
+/* ---- the three totals ---- */
+.pf-totals {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 11px; margin-bottom: 16px;
+}
+.pf-total {
+  border: 1px solid var(--border); border-radius: 13px; background: var(--bg2);
+  padding: 15px 16px; min-width: 0;
+}
+.pf-total-label {
+  display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap;
+  font-size: 11.5px; color: var(--tmut); margin-bottom: 7px;
+}
+/* "3 of 5 priced" next to the headline figure, so a total built on part of the
+   portfolio never looks like the whole of it. */
+.pf-chip {
+  font-family: var(--mono); font-size: 10px; color: var(--tmut);
+  border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px; flex-shrink: 0;
+}
+.pf-total-value {
+  font-family: var(--mono); font-size: 26px; font-weight: 600; letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.pf-total-sub { font-family: var(--mono); font-size: 11.5px; margin-top: 4px; }
+.pf-total-sub.mut { color: var(--tmut); }
+.pf-total-note { font-size: 11px; color: var(--tmut); line-height: 1.5; margin-top: 6px; }
+.pf-total-note.warn { color: var(--yellow); }
+
+/* ---- loading ---- */
+/* Names which half is pending: quantities are local and final, only the
+   valuation is in flight. A bare spinner over a portfolio reads as "your
+   holdings are loading", which would be alarming and is untrue. */
 .pf-loading-note {
   display: flex; align-items: center; gap: 9px; margin-bottom: 12px;
   font-size: 12.5px; color: var(--tmut);
 }
 .pf-loading-note .spinner { flex-shrink: 0; }
-
 .pf-sk {
-  height: 26px; width: 130px; border-radius: 7px; background: var(--emph);
-  animation: sk-pulse 1.4s ease-in-out infinite;
+  display: block; height: 30px; width: 130px; border-radius: 7px;
+  background: var(--emph); animation: sk-pulse 1.5s ease-in-out infinite;
 }
-.pf-sk.sm { height: 10px; width: 100%; max-width: 74px; margin-left: auto; }
-/* Except in the first column, which is left-aligned like its ticker. */
-.pf-sym .pf-sk.sm { margin-left: 0; }
+.pf-sk.cell { height: 14px; width: 64px; margin-left: auto; }
+.pf-sk.cell.sm { width: 48px; animation-delay: 0.1s; }
+.pf-sk.cell.wide { width: 110px; margin-left: 0; }
 
-/* ONE BLOCK PER CURRENCY. Never summed across — see value_holdings() for why
-   a converted total would be a guess. */
-.pf-totals {
-  display: flex; flex-wrap: wrap; gap: 0; margin-bottom: 10px;
+/* ---- the holdings card ---- */
+.pf-card {
   border: 1px solid var(--border); border-radius: 13px; background: var(--bg2);
-  overflow: hidden;
+  overflow: hidden; margin-bottom: 14px;
 }
-.pf-total { flex: 1; min-width: 160px; padding: 12px 15px; border-right: 1px solid var(--border); }
-.pf-total:last-child { border-right: none; }
-.pf-total-label { font-size: 11px; color: var(--tmut); margin-bottom: 5px; }
-.pf-total-value { font-family: var(--mono); font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
-.pf-total-note {
-  flex-basis: 100%; padding: 9px 15px; font-size: 11.5px; color: var(--tmut);
-  border-top: 1px solid var(--border); background: var(--muted);
+.pf-card-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 13px 16px; border-bottom: 1px solid var(--border);
 }
-.pf-fx-note { font-size: 11.5px; color: var(--tmut); line-height: 1.55; margin-bottom: 12px; }
+.pf-card-title { font-size: 13px; font-weight: 600; flex: 1; }
+/* Eight columns do not fit a narrow pane. Scrolling the TABLE rather than
+   letting columns collapse keeps every figure readable at its natural width. */
+.pf-scroll { overflow-x: auto; }
+.pf-table {
+  width: 100%; min-width: 856px; border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+.pf-table th {
+  padding: 9px 10px; font-size: 10px; font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--tmut);
+  border-bottom: 1px solid var(--border); white-space: nowrap; text-align: right;
+  cursor: help;
+}
+.pf-table th:first-child { text-align: left; padding-left: 16px; }
+.pf-table th:last-child { width: 60px; cursor: default; }
+.pf-table td { padding: 11px 10px; border-bottom: 1px solid var(--border); }
+.pf-tr { cursor: pointer; transition: background 0.16s var(--ease); }
+.pf-tr:hover, .pf-tr:focus-within { background: var(--muted); }
+/* A holding with no price keeps its row and its typed figures — dimming says
+   "not valued", which is true; hiding would say "gone", which is not. */
+.pf-tr.dim td { opacity: 0.62; }
+.pf-table tbody tr:last-child td { border-bottom: none; }
 
-/* Direction carries an arrow as well as a colour — same rule as the watchlist. */
+.c-sym { padding-left: 16px !important; }
+.c-num, .c-pl { font-family: var(--mono); font-size: 12.5px; text-align: right; }
+.c-num.mut { color: var(--tmut); }
+.c-act { width: 60px; padding-left: 4px !important; padding-right: 14px !important; }
+
+.pf-symline { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.pf-sym-t { font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
+.pf-sym-cur { font-family: var(--mono); font-size: 10px; color: var(--tmut); }
+.pf-sym-name {
+  font-size: 10.5px; color: var(--tmut); margin-top: 2px; max-width: 190px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* The currency the cost was PAID in, when it differs from the quote's. */
+.pf-costcur { font-size: 10px; color: var(--tmut); margin-left: 4px; }
+
+.pf-pl { font-weight: 600; }
+.pf-plpct { font-size: 11px; color: var(--tmut); margin-top: 2px; }
 .pf-up { color: var(--green); }
 .pf-down { color: var(--red); }
-.pf-flat { color: var(--tmut); }
-.pf-pct { font-size: 0.82em; opacity: 0.85; }
-
-.pf-add {
-  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px;
-  padding: 13px 15px; margin-bottom: 12px;
-  border: 1px solid var(--border); border-radius: 13px; background: var(--bg2);
-}
-.pf-field { display: flex; flex-direction: column; gap: 5px; }
-.pf-field label { font-size: 11px; color: var(--tmut); display: flex; align-items: center; gap: 7px; }
-/* A two-state switch, sized to sit inside the field's own label — it changes
-   how ONE box is read, so it belongs to that box rather than to the form. */
-.pf-mode { display: inline-flex; gap: 1px; background: var(--emph); border-radius: 6px; padding: 1px; }
-.pf-mode button {
-  font-family: inherit; font-size: 10px; padding: 1px 7px; border-radius: 5px;
-  border: none; background: none; color: var(--tmut); line-height: 1.5;
-  transition: background 0.14s var(--ease), color 0.14s var(--ease);
-}
-.pf-mode button:hover { color: var(--text); }
-.pf-mode button.on { background: var(--bg2); color: var(--text); font-weight: 600; }
-/* The derived per-unit figure. Quiet: it is a readback, not an input. */
-.pf-add-note.derived { color: var(--text); font-family: var(--mono); font-size: 11.5px; }
-.pf-derived {
-  font-family: var(--mono); font-size: 11px; color: var(--tmut);
-  padding-bottom: 8px; white-space: nowrap;
-}
-.pf-field input {
-  width: 130px; height: 33px; padding: 0 10px; border-radius: 9px;
-  border: 1px solid var(--border); background: var(--bg); color: var(--text);
-  font-family: var(--mono); font-size: 12.5px;
-}
-.pf-field input:focus { outline: none; border-color: var(--accent); }
-.pf-field.narrow input, .pf-field.narrow select { width: 84px; }
-/* The CLOSED control, styled to match every other input. `appearance: none`
-   strips the platform chrome (the grey bevel and the OS arrow) so the only
-   thing left is ours — otherwise a select sits in a row of Arthur inputs
-   looking like it belongs to a different application. The arrow is an inline
-   SVG background rather than a pseudo-element because `select` cannot have
-   children rendered inside it. */
-.pf-field select, select.pf-edit-input {
-  appearance: none; -webkit-appearance: none;
-  padding-right: 24px;
-  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none' stroke='%238b9099' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 8px center;
-}
-.pf-field select {
-  height: 33px; padding: 0 24px 0 9px; border-radius: 9px;
-  border: 1px solid var(--border); background-color: var(--bg); color: var(--text);
-  font-family: var(--mono); font-size: 12.5px;
-}
-.pf-field select:hover, select.pf-edit-input:hover { border-color: var(--emph); }
-.pf-field select:focus, select.pf-edit-input:focus { outline: none; border-color: var(--accent); }
-/* Not an error state — the holding is fine and its value is real, only the
+.pf-flat, .pf-noprice { color: var(--tmut); }
+.pf-noprice { font-family: var(--sans); font-size: 11px; }
+/* Not an error — the position is fine and its value is real, only the
    cost-derived figure is withheld. Muted, not amber. */
-.pf-fx-blocked { font-family: var(--sans); font-size: 11px; color: var(--tmut); cursor: help; }
-.pf-add-note { flex-basis: 100%; font-size: 11px; color: var(--tmut); }
-/* Beside the fields, not as a toast after a round-trip. */
-.pf-add-error {
-  flex-basis: 100%; font-size: 11.5px; line-height: 1.55; color: var(--yellow);
-  padding: 8px 11px; border-radius: 10px;
-  background: rgba(252, 211, 77, 0.08); border: 1px solid rgba(252, 211, 77, 0.28);
-}
-.pf-add-error code {
-  font-family: var(--mono); font-size: 11px; background: var(--emph);
-  color: var(--text); padding: 1px 5px; border-radius: 5px; margin: 0 3px;
-}
-/* What the ticker resolved to. Informational, not a warning — most of the time
-   it is a quiet confirmation that you typed the right thing. */
-.pf-resolved {
-  flex-basis: 100%; font-size: 11.5px; color: var(--tmut); line-height: 1.55;
-  padding: 9px 11px; border-radius: 10px; background: var(--muted);
-  border: 1px solid var(--border);
-}
-.pf-resolved strong { color: var(--text); font-family: var(--mono); font-weight: 600; }
-.pf-resolved code {
-  font-family: var(--mono); font-size: 11px; background: var(--emph);
-  padding: 1px 5px; border-radius: 5px;
-}
+.pf-fx-blocked { font-size: 11.5px; color: var(--tmut); cursor: help; }
 
-/* The implausible-arithmetic flag. Amber, never red: nothing has failed and
-   the user may well be right — it is an invitation to look, not an error. */
+/* Amber, never red: nothing failed and the user may be right. An invitation to
+   look, not a verdict. */
 .pf-suspect {
-  display: inline-flex; align-items: center; gap: 4px; margin-top: 3px;
-  align-self: flex-start; font-family: inherit; font-size: 10.5px;
-  padding: 2px 7px; border-radius: 6px;
-  background: rgba(252, 211, 77, 0.09); border: 1px solid rgba(252, 211, 77, 0.3);
+  display: inline-flex; align-items: center; gap: 5px; margin-top: 6px;
+  font-family: inherit; font-size: 10.5px; padding: 2px 7px; border-radius: 6px;
+  border: 1px solid rgba(252, 211, 77, 0.38); background: rgba(252, 211, 77, 0.08);
   color: var(--yellow);
 }
 .pf-suspect:hover { background: rgba(252, 211, 77, 0.16); }
 
-/* CSS grid, not a <table>: the columns must stay aligned across rows while
-   each cell holds arbitrary markup (a link, an arrow, a button). */
-.pf-table {
-  border: 1px solid var(--border); border-radius: 13px; background: var(--bg2); overflow: hidden;
+/* Visible at rest, brightening on hover. Hidden-until-hover made the controls a
+   guessing game, and keyboard users never hover at all. */
+.pf-acts { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
+.pf-acts button {
+  width: 26px; height: 26px; border-radius: 7px; border: none; background: none;
+  color: var(--tmut); display: flex; align-items: center; justify-content: center;
+  opacity: 0.45; flex-shrink: 0; transition: opacity 0.14s var(--ease), background 0.14s var(--ease);
 }
-.pf-row {
-  display: grid; grid-template-columns: minmax(0, 2fr) repeat(5, minmax(0, 1fr)) 60px;
-  /* 60px, not 34: the actions cell holds TWO 26px buttons plus a gap. At 34
-     they overflowed their track and sat on top of the P/L figure — the one
-     number in the row you least want covered. */
-  align-items: center; gap: 10px; padding: 10px 15px;
-  border-bottom: 1px solid var(--border); font-size: 12.5px;
-}
-.pf-row:last-child { border-bottom: none; }
-.pf-header { font-size: 10.5px; color: var(--tmut); text-transform: uppercase;
-  letter-spacing: 0.05em; background: var(--muted); }
-.pf-header span[title] { cursor: help; }
+.pf-acts button:hover { opacity: 1; background: var(--emph); color: var(--text); }
+.pf-acts button.danger:hover { color: #fca5a5; }
+.pf-acts button:focus-visible { opacity: 1; }
 
-/* ALIGNMENT IS SET BY COLUMN POSITION, NOT BY CLASS.
-   The header cells are bare <span>s and the data cells carry .pf-num, so the
-   headers defaulted to left while every figure under them sat right — the
-   columns visibly did not line up. Targeting the grid position instead means a
-   header and its data cannot disagree: there is one rule, and it applies to
-   whatever is in that slot. Columns 2-6 are figures; 1 is the ticker, 7 the
-   row actions. */
-.pf-row > *:nth-child(n + 2):nth-child(-n + 6) { text-align: right; }
-/* Fixed-width digits, so a column of figures forms straight edges instead of
-   drifting with whichever glyphs happen to be in each number. */
-.pf-row { font-variant-numeric: tabular-nums; }
-/* A holding with no price keeps its row and its typed-in figures — dimming it
-   says "not valued", which is true; hiding it would say "gone", which is not. */
-.pf-row.unpriced { opacity: 0.62; }
-.pf-sym { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.pf-link {
-  font-family: var(--mono); font-size: 13px; font-weight: 700; text-align: left;
-  background: none; border: none; color: var(--text); padding: 0;
-}
-.pf-link:hover { color: var(--accent); text-decoration: underline; }
-.pf-name { font-size: 11px; color: var(--tmut); overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap; }
-.pf-num { font-family: var(--mono); font-size: 12.5px; text-align: right; }
-.pf-unpriced-note { font-family: var(--sans); font-size: 11px; color: var(--tmut); }
-.pf-actions { display: flex; justify-content: flex-end; gap: 2px; opacity: 0; transition: opacity 0.16s var(--ease); }
-.pf-row:hover .pf-actions { opacity: 1; }
-/* Keyboard users never hover, so the actions must appear on focus too —
-   otherwise Edit and Remove are unreachable without a mouse. */
-.pf-row:focus-within .pf-actions { opacity: 1; }
-
-/* Editing detaches from the table grid — see EditRow for why forcing a form
-   into seven fixed columns produced giant inputs and homeless controls. */
-.pf-row.editing {
-  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px;
-  background: var(--muted);
-  /* A left edge marks which row is open, so a wide table still tells you where
-     you are without re-reading the ticker. */
+/* ---- the edit bar ---- */
+/* A full-width row BENEATH the holding, not in place of it: the figures being
+   corrected stay on screen while you correct them. The accent edge marks which
+   row is open in a table wide enough to scroll. */
+.pf-editrow > td {
+  padding: 0 !important; background: var(--muted);
   box-shadow: inset 2px 0 0 var(--accent);
 }
-.pf-edit-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.pf-edit-field.grow { flex: 1; min-width: 130px; max-width: 220px; }
-.pf-edit-field.narrow { width: 78px; flex-shrink: 0; }
-.pf-edit-field label {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 10px; color: var(--tmut); text-transform: uppercase; letter-spacing: 0.05em;
+.pf-editbar {
+  display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; padding: 14px 16px;
 }
-.pf-edit-input {
-  width: 100%; height: 30px; padding: 0 9px; border-radius: 8px;
-  border: 1px solid var(--border); background: var(--bg); color: var(--text);
-  font-family: var(--mono); font-size: 12.5px; text-align: right;
+.pf-ef { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.pf-ef label {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 10.5px; color: var(--tmut);
 }
-.pf-edit-input.sym { text-align: left; font-weight: 700; text-transform: uppercase; }
-.pf-edit-input:focus { outline: none; border-color: var(--accent); }
-.pf-edit-input.cur { text-align: left; padding-right: 22px; }
-/* Pushed to the far end so Save/Cancel are always in the same place no matter
-   how many fields the row happens to show. */
-.pf-edit-actions { display: flex; gap: 6px; margin-left: auto; align-items: center; }
+/* The symbol is shown, not edited — see HoldingModal for why a ticker
+   change is a different holding, not an edit. */
+.pf-ef.static { flex: 0 0 auto; }
+.pf-ef.qty { flex: 0 0 118px; }
+.pf-ef.paid { flex: 0 0 168px; }
+.pf-ef.cur { flex: 0 0 104px; }
+.pf-ef input, .pf-ef select {
+  width: 100%; height: 34px; background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 9px; padding: 0 11px; font-family: var(--mono); font-size: 13px;
+  color: var(--text); outline: none; text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.pf-ef select { text-align: left; padding-right: 24px; }
+.pf-ef input:focus, .pf-ef select:focus { border-color: var(--accent); }
+.pf-ef-static { display: flex; align-items: baseline; gap: 6px; height: 34px; }
+.pf-ef-sym { font-family: var(--mono); font-size: 13px; font-weight: 600; }
+.pf-ef-cur { font-size: 11px; color: var(--tmut); }
+/* The arithmetic the user did NOT type — whichever way round they entered it. */
+.pf-ef-derived {
+  flex: 1 1 210px; min-width: 0; font-size: 11.5px; color: var(--tmut);
+  line-height: 1.5; padding-bottom: 9px;
+}
+.pf-ef-actions { display: flex; gap: 8px; margin-left: auto; flex-shrink: 0; }
+.pf-edithint { padding: 0 16px 12px; font-size: 11px; color: var(--tmut); }
+
+/* A two-state switch inside its field's own label: it changes how ONE box is
+   read, so it belongs to that box rather than to the form. */
+.pf-mode { display: inline-flex; gap: 2px; background: var(--bg2);
+  border: 1px solid var(--border); border-radius: 7px; padding: 2px; }
+.pf-mode button {
+  font-family: inherit; font-size: 10px; padding: 1px 7px; border-radius: 5px;
+  border: none; background: none; color: var(--tmut); line-height: 1.6;
+  transition: background 0.14s var(--ease), color 0.14s var(--ease);
+}
+.pf-mode button:hover { color: var(--text); }
+.pf-mode button.on { background: var(--emph); color: var(--text); font-weight: 600; }
+
+/* ---- other currencies ---- */
+/* Stated beneath the table rather than repeating the whole card group: three
+   more cards for a minor holding buries the portfolio you actually have. */
+.pf-otherccy {
+  display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+  padding: 11px 16px; border-top: 1px solid var(--border);
+}
+.pf-otherccy-label { font-size: 12px; color: var(--tmut); }
+.pf-otherccy-val { font-family: var(--mono); font-size: 12.5px; }
+.pf-otherccy-pct { font-family: var(--mono); font-size: 11.5px; color: var(--tmut); }
+.pf-otherccy-note {
+  font-size: 11.5px; color: var(--tmut); flex: 1 1 200px; min-width: 0; line-height: 1.5;
+}
 
 .pf-empty { padding: 40px 0 8px; max-width: 560px; }
 .pf-empty h3 { font-size: 17px; font-weight: 600; margin-bottom: 8px; }
@@ -662,7 +651,92 @@ a.sp-meta-item:hover { background: var(--muted); }
 .pf-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 /* Said once, permanently, rather than as a badge on every row. */
 .pf-privacy { margin-top: 16px; font-size: 11px; color: var(--tmut); line-height: 1.5; }
-.pf-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+.pf-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+
+/* ---------- finance: add / edit holding modal ---------- */
+.hold-modal {
+  width: 100%; max-width: 452px; display: flex; flex-direction: column;
+  max-height: calc(100vh - 48px); padding: 0; overflow: hidden;
+}
+.hm-head { padding: 17px 20px 14px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.hm-head h3 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.hm-head p { font-size: 12.5px; color: var(--tmut); line-height: 1.55; margin-top: 5px; }
+.hm-body {
+  padding: 18px 20px; display: flex; flex-direction: column; gap: 14px;
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+}
+.hm-field { display: flex; flex-direction: column; min-width: 0; }
+.hm-field > label {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 12px; color: var(--tmut); margin-bottom: 6px;
+}
+.hm-field .opt { opacity: 0.75; }
+.hm-field input, .hm-field select {
+  width: 100%; background: var(--muted); border: 1px solid var(--border);
+  border-radius: 9px; padding: 10px 12px; font-family: var(--mono);
+  font-size: 13.5px; color: var(--text); outline: none;
+  font-variant-numeric: tabular-nums;
+}
+.hm-field select { padding-right: 26px; }
+.hm-field input:focus, .hm-field select:focus { border-color: var(--accent); }
+/* Read-only, not disabled: the value must stay selectable and readable — it is
+   the thing telling you which holding you are editing. */
+.hm-field input.locked { opacity: 0.6; cursor: default; }
+.hm-row { display: flex; gap: 11px; flex-wrap: wrap; }
+.hm-row .grow { flex: 1 1 130px; }
+.hm-row .narrow { flex: 0 0 108px; }
+.hm-note {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11.5px; color: var(--tmut); margin-top: 6px; line-height: 1.5;
+}
+
+/* The lookup result. Three outcomes, three weights — a confirmation should not
+   look like a warning, and neither should look like a failure. */
+.hm-resolve {
+  display: flex; align-items: flex-start; gap: 9px; margin-top: 9px;
+  padding: 10px 12px; border-radius: 10px; font-size: 12.5px; line-height: 1.55;
+}
+.hm-resolve svg { flex-shrink: 0; margin-top: 2px; }
+.hm-resolve > div { min-width: 0; }
+.hm-resolve span { color: var(--tmut); }
+.hm-resolve strong { font-family: var(--mono); font-weight: 600; }
+.hm-resolve code {
+  font-family: var(--mono); font-size: 11.5px; background: var(--emph);
+  padding: 1px 5px; border-radius: 5px; color: var(--text);
+}
+.hm-resolve.ok { border: 1px solid rgba(110, 231, 183, 0.28); background: rgba(110, 231, 183, 0.05); }
+.hm-resolve.ok svg { color: var(--green); }
+.hm-resolve.warn { border: 1px solid rgba(252, 211, 77, 0.34); background: rgba(252, 211, 77, 0.05); }
+.hm-resolve.warn svg { color: var(--yellow); }
+.hm-resolve.muted { border: 1px solid var(--border); background: var(--muted); color: var(--tmut); }
+.hm-resolve.muted svg { color: var(--tmut); }
+
+.hm-badnum {
+  display: flex; align-items: flex-start; gap: 8px; margin-top: -4px;
+  font-size: 11.5px; color: var(--yellow); line-height: 1.5;
+}
+.hm-badnum svg { flex-shrink: 0; margin-top: 2px; }
+.hm-badnum code {
+  font-family: var(--mono); background: var(--emph); padding: 1px 5px;
+  border-radius: 5px; color: var(--text);
+}
+.hm-derived {
+  background: var(--muted); border: 1px solid var(--border); border-radius: 11px;
+  padding: 11px 13px; font-size: 12.5px; line-height: 1.55;
+}
+.hm-derived strong { font-family: var(--mono); font-weight: 600; }
+.hm-privacy {
+  display: flex; align-items: flex-start; gap: 8px;
+  font-size: 11.5px; color: var(--tmut); line-height: 1.55;
+}
+.hm-privacy svg { flex-shrink: 0; margin-top: 2px; }
+.hm-foot {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; row-gap: 9px;
+  padding: 14px 20px; border-top: 1px solid var(--border); flex-shrink: 0;
+}
+.hm-spacer { flex: 1; }
+.hm-remove { border-color: rgba(252, 165, 165, 0.3); color: #fca5a5; background: none; }
+.hm-remove:hover { background: rgba(252, 165, 165, 0.08); }
 
 /* ---------- finance: chart in the transcript ---------- */
 .chart-card {
