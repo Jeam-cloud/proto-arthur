@@ -1,12 +1,31 @@
 # Arthur
 
-A prototype of Arthur, a personal agentic AI assistant that runs on your own computer.
+Arthur is a personal agentic AI assistant that runs on your own computer. 
 
 Arthur is a desktop app. You chat with a local AI model, and it can remember things across conversations and use tools: search the web, write a research paper, read and edit code, look up stock prices, send email, and click and type on your desktop. Risky actions ask for your approval first.
 
 <img width="1919" height="1079" alt="image" src="https://github.com/user-attachments/assets/0bb33814-5638-48e2-a14e-9147d354502b" />
 <img width="1206" height="820" alt="image" src="https://github.com/user-attachments/assets/3728dc2c-0736-4f98-a46e-271075d4745e" />
 <img width="1826" height="1078" alt="image" src="https://github.com/user-attachments/assets/6c049979-5f93-433c-b53e-6ca7807577b2" />
+
+
+## How it works
+ 
+- **The app** is Electron with a React interface.
+- **The brain** is a Python (FastAPI) backend that the app starts for you.
+- **The AI models** run locally through [Ollama](https://ollama.com). No account or subscription needed.
+- **Memory** is stored in SQLite (exact chat history) and ChromaDB (search by meaning). You can view, edit, and delete it in Settings.
+## What "local" means
+ 
+Most AI apps send what you type to a company's servers. A big computer there runs the model and sends the answer back.
+ 
+Arthur doesn't. Everything runs on your own computer:
+ 
+1. **The model runs on your machine.** Ollama loads the model (for example Llama or Qwen) into your own RAM and GPU. The app talks to it at `127.0.0.1:11434`. `127.0.0.1` means "this computer". Traffic to it never reaches your network, let alone the internet.
+2. **The backend runs on your machine.** The Python server also listens only on `127.0.0.1`. Other devices on your Wi-Fi can't connect to it. Every request also needs a random password (a token) that the app creates each time it starts. That stops a website open in your browser from secretly talking to Arthur.
+3. **The interface can only talk to the backend.** The app's security policy (CSP) lets the window connect to `127.0.0.1` and nowhere else. Even buggy UI code can't send your chats to a website.
+4. **Your data is stored on your disk.** Chat history (SQLite), memory (ChromaDB) and logs are kept in your app-data folder. On Windows that is `%LOCALAPPDATA%\Arthur`. ChromaDB normally sends usage stats to its makers, and that is switched off in the code.
+So once the model is downloaded, a normal chat works with your Wi-Fi turned off.
 
 
 ## How it works
